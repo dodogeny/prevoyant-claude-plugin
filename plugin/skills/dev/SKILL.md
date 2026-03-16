@@ -230,7 +230,23 @@ Read the identified files and produce:
 - Show **only the code that needs to change** (diff-style or clear before/after blocks)
 - Explain each change and why it's needed
 
-#### 7c. DB Migration (if needed)
+#### 7c. Apply Fix to Feature Branch (Interactive)
+
+After presenting the proposed solution, ask the developer:
+
+> **Would you like me to apply these changes to the feature branch now?**
+> - `yes` — apply all proposed changes directly to the files on the current feature branch
+> - `no` — skip; the developer will apply manually
+> - `partial` — ask which specific changes to apply
+
+If the developer answers **yes** or **partial**:
+- Use the Edit tool to apply changes to each identified file
+- After each file is modified, confirm: "Applied change to `{file}:{line}`"
+- Do NOT commit — leave the changes staged for the developer to review and commit using the suggested message from Step 9c
+
+If the developer answers **no**, continue to Step 8 without modifying any files.
+
+#### 7d. DB Migration (if needed)
 If the fix requires schema changes, provide the upgrade script template:
 ```sql
 -- v1.XX.XXX.sql / .pg
@@ -320,13 +336,111 @@ IV3672_Resolving_Cases_should_Resolve_Alerts_1.26.064 IV3672 Mustakeem Lee
 
 ---
 
+### Step 10 — Generate PDF Analysis Report
+
+After Step 9 is complete, generate a full PDF report of the analysis and save it to disk.
+
+#### 10a. Configuration
+
+Resolve the output folder using this priority order:
+
+1. If the environment variable `CLAUDE_REPORT_DIR` is set, use it
+2. Otherwise default to: `$HOME/Documents/Claude-Analyzed-Tickets/`
+
+```bash
+REPORT_DIR="${CLAUDE_REPORT_DIR:-$HOME/Documents/Claude-Analyzed-Tickets}"
+mkdir -p "$REPORT_DIR"
+```
+
+#### 10b. Generate Markdown Source
+
+Write a temporary Markdown file at `/tmp/{TICKET_KEY}-analysis.md` containing the full analysis from all steps:
+
+```
+# {TICKET_KEY} — {Ticket Summary}
+
+**Date:** {today's date}
+**Branch:** {feature branch name}
+**Analyst:** Claude (Prevoir Dev Skill)
+
+---
+
+## Step 1 — Jira Ticket
+{content}
+
+## Step 2 — Problem Understanding
+{content}
+
+## Step 3 — Comments & Context
+{content}
+
+## Step 4 — Branch Created
+{content}
+
+## Step 5 — Affected Code
+{content}
+
+## Step 6 — Replication Guide
+{content}
+
+## Step 7 — Proposed Fix
+{content}
+
+## Step 8 — Impact Analysis
+{content}
+
+## Step 9 — Change Summary
+{content}
+```
+
+#### 10c. Convert to PDF
+
+Use Python to convert the Markdown file to PDF. Try these methods in order until one succeeds:
+
+**Method 1 — `weasyprint` (preferred):**
+```python
+import subprocess
+subprocess.run([
+    "python3", "-c",
+    "import weasyprint, markdown2; "
+    "html = '<style>body{font-family:sans-serif;margin:40px;line-height:1.6}pre{background:#f4f4f4;padding:10px;border-radius:4px}code{background:#f4f4f4;padding:2px 4px}</style>' + markdown2.markdown(open('/tmp/{TICKET_KEY}-analysis.md').read(), extras=['fenced-code-blocks','tables']); "
+    "weasyprint.HTML(string=html).write_pdf('{REPORT_DIR}/{TICKET_KEY}-analysis.pdf')"
+], check=True)
+```
+
+**Method 2 — `reportlab` fallback:**
+```python
+from reportlab.lib.pagesizes import A4
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Preformatted
+from reportlab.lib.styles import getSampleStyleSheet
+# read markdown, write plain-text-formatted PDF
+```
+
+**Method 3 — HTML file fallback** (if neither library is available):
+Save an HTML file instead: `{REPORT_DIR}/{TICKET_KEY}-analysis.html` with the same content wrapped in basic HTML+CSS. Inform the developer the HTML was saved instead of a PDF.
+
+#### 10d. Archive and Confirm
+
+After saving, display the following to the developer (always show both the folder and the full file path):
+
+```
+📄 Analysis Report Generated
+   Folder : {REPORT_DIR}/
+   File   : {REPORT_DIR}/{TICKET_KEY}-analysis.pdf
+   Format : PDF  ← (or "HTML (PDF libraries unavailable)" if Method 3 was used)
+```
+
+Then end with:
+
+> **Ready to code.** Branch is created. Start with `{primary file}:{line number}`. Refer to Step 9 for the change summary and suggested commit message when done.
+
+---
+
 ---
 
 ## Output Format
 
-Present output in clearly labelled sections matching the 9 steps above. Use markdown headings. Keep each section concise but complete. After Step 9, end with:
-
-> **Ready to code.** Branch is created. Start with `{primary file}:{line number}`. Refer to Step 9 for the change summary and suggested commit message when done.
+Present output in clearly labelled sections matching the 10 steps above. Use markdown headings. Keep each section concise but complete. Step 10 produces the final confirmation message and report path — that replaces the closing "Ready to code" statement.
 
 ---
 
