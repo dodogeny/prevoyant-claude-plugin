@@ -258,7 +258,7 @@ ALTER TABLE ...
 
 ### Step 8 — Impact Analysis
 
-Assess the full consequences of the proposed fix across the system. This step is separate from the fix itself — it forces deliberate review of what else could be affected.
+Assess the full consequences of the proposed fix across the entire application. This step requires active codebase searching — do not rely on assumptions. Use Grep to find every reference to changed symbols before drawing conclusions.
 
 #### 8a. Files Changed
 List every file touched by the fix with a one-line description of what changed and why:
@@ -268,29 +268,73 @@ List every file touched by the fix with a one-line description of what changed a
 | `fcfrontend/.../CaseManager.java` | Added `pendingAlertResolve` flag and async callback chain | Core fix for alert resolution |
 | `fcbuild/scripts/upgrades/v1.XX.XXX.sql` | New table / column | Schema required for fix |
 
-#### 8b. Regression Risks
+#### 8b. Usage Reference Search (mandatory)
+
+For **every method, class, field, or API endpoint** modified by the fix, search the full codebase for all callers and references:
+
+```
+Grep: {modified method or class name} → across {REPO_DIR}/
+```
+
+For each symbol changed, produce a reference table:
+
+| Symbol Changed | Type | Callers / References Found | Files |
+|----------------|------|---------------------------|-------|
+| `resolveAlertCentral(...)` | method | 3 callers | `CaseManager.java`, `AlertCentral.java`, `CaseDetailsPanel.java` |
+| `pendingAlertResolve` | field | local to `CaseManager` | `CaseManager.java` only |
+
+Rules:
+- If a changed method is `public` or `protected` — always search for all callers across the full repo
+- If a changed method is `private` — confirm it is only called within the same class
+- If a changed interface or abstract method — find all implementing classes
+- If a DB column or table is changed — grep for all SQL references and ORM mappings to that table/column
+- If a GWT RPC service method signature changes — find all client call sites and the corresponding server-side implementation
+
+#### 8c. Application-Wide Impact
+
+Based on the usage reference search, describe the impact across each application layer:
+
+| Layer | Impact | Detail |
+|-------|--------|--------|
+| GWT Frontend | e.g. Medium | `CaseManager` change affects resolve flow; 2 other panels call same service |
+| Backend API | e.g. Low | No API signature change; internal logic only |
+| Plugin / Workers | e.g. None | No worker classes reference changed code |
+| DB / Schema | e.g. High | Column rename affects 4 SQL queries across 3 upgrade scripts |
+| Shared Utilities | e.g. Low | `RecordHelper` change only affects timed-wait resume path |
+
+If a layer is not affected, state "None — confirmed by grep (0 references found)."
+
+#### 8d. Regression Risks
 For each change, identify what existing behaviour could break:
 - Which existing flows pass through the modified code?
-- Are there other callers of modified methods / APIs?
 - Could the DB change affect existing data or other screens that read the same table?
 - Flag any race conditions, null pointer risks, or async timing concerns introduced
+- Flag any callers found in 8b that may behave differently after the change
 
-#### 8c. Affected Clients / Environments
+#### 8e. Affected Clients / Environments
 State whether the fix is:
 - **Generic** — affects all clients running this version
 - **Client-specific** — only affects a named client (e.g. FNB, VCL, DRC) due to config or data differences
 - **DB-specific** — behaviour differs between Oracle and PostgreSQL implementations
 
-#### 8d. Related Areas to Retest
-List screens, flows, or features outside the primary fix that should be smoke-tested:
+#### 8f. Related Areas to Retest
+List screens, flows, or features outside the primary fix that should be smoke-tested — derived from the callers found in 8b:
 - e.g. "Alert Central resolve button should still work independently"
 - e.g. "Case Details tab resolve should behave the same as All Cases tab"
 
-#### 8e. Estimated Risk Level
-Rate the overall risk of the change:
-- **Low** — isolated change, no shared code paths, easy to revert
-- **Medium** — touches shared logic; regression testing recommended
-- **High** — modifies core flow, shared utilities, or DB schema; thorough QA required
+#### 8g. Risk Level
+
+Rate the overall risk of the change based on the usage reference search results:
+
+| Rating | Criteria |
+|--------|----------|
+| **Low** | Change is isolated; 0–1 callers found; no shared utilities or DB touched; easy to revert |
+| **Medium** | 2–5 callers found; touches shared logic or a secondary screen; regression testing recommended |
+| **High** | 6+ callers found; modifies a public API, shared utility, or DB schema; thorough QA required before release |
+
+State the rating prominently:
+
+> **Risk Level: Medium** — 3 callers of `resolveAlertCentral` found across 2 screens; existing Alert Central resolve path must be retested.
 
 ---
 
