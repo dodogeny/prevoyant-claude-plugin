@@ -372,45 +372,28 @@ Edit `plugin/skills/dev/SKILL.md`, commit, and push to GitHub.
 
 ### For team members
 
-Choose whichever method matches how you installed the plugin:
+#### Option A — Claude plugin update command (recommended)
 
-#### Option A — Git pull (recommended, fastest)
-
-If you cloned the marketplace repository during installation:
-
-**macOS / Linux:**
-```bash
-git -C ~/.claude/plugins/marketplaces/prevoir pull
-```
-
-**Windows (PowerShell):**
-```powershell
-git -C "$env:USERPROFILE\.claude\plugins\marketplaces\prevoir" pull
-```
-
-No restart or reinstall required — Claude reads the skill from disk on every invocation, so the update takes effect immediately.
-
-#### Option B — Claude plugin update command
+Claude Code manages the marketplace directory internally. Always use the Claude-managed command to update — do **not** run `git pull` directly inside `~/.claude/plugins/marketplaces/prevoir` as Claude Code may wipe the folder when it detects external changes.
 
 ```bash
 claude plugin update prevoir@prevoir
 ```
 
-#### Option C — Re-clone
+#### Option B — Reinstall (if Option A fails)
 
-If you encounter issues with the above, re-clone the marketplace directory:
+If the update command fails or the plugin appears broken:
 
 **macOS / Linux:**
 ```bash
-rm -rf ~/.claude/plugins/marketplaces/prevoir
-git clone https://github.com/dodogeny/prevoir-skill-internal-dev.git \
-  ~/.claude/plugins/marketplaces/prevoir
+claude plugin uninstall prevoir@prevoir
+claude plugin install prevoir@prevoir
 ```
 
 **Windows (PowerShell):**
 ```powershell
-Remove-Item -Recurse -Force "$env:USERPROFILE\.claude\plugins\marketplaces\prevoir"
-git clone https://github.com/dodogeny/prevoir-skill-internal-dev.git "$env:USERPROFILE\.claude\plugins\marketplaces\prevoir"
+claude plugin uninstall prevoir@prevoir
+claude plugin install prevoir@prevoir
 ```
 
 #### Verify the update
@@ -420,8 +403,6 @@ claude plugin list
 ```
 
 The version number next to `prevoir@prevoir` should reflect the latest release.
-
-> **Not sure of the marketplace path?** Run `ls ~/.claude/plugins/marketplaces/` (macOS/Linux) or `dir $env:USERPROFILE\.claude\plugins\marketplaces\` (Windows) to confirm the folder name.
 
 ---
 
@@ -495,13 +476,15 @@ git commit -m "vX.Y.Z — short description of change"
 git push origin main
 ```
 
-### 6. Team members update
+### 6. Notify team to update
 
 After pushing, notify the team to run:
 
 ```bash
 claude plugin update prevoir@prevoir
 ```
+
+> Do **not** advise running `git pull` directly inside `~/.claude/plugins/marketplaces/prevoir` — Claude Code manages that directory and may wipe it if it detects external git changes.
 
 ---
 
