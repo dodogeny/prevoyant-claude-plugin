@@ -186,7 +186,14 @@ pip3 install markdown2 weasyprint
 
 ### 1. Register the marketplace
 
-Add the following to `~/.claude/settings.json`:
+Locate your Claude Code `settings.json` file:
+
+| OS | Path |
+|----|------|
+| macOS / Linux | `~/.claude/settings.json` |
+| Windows | `C:\Users\<username>\AppData\Roaming\Claude\settings.json` |
+
+Add the following to the file:
 
 ```json
 {
@@ -201,7 +208,7 @@ Add the following to `~/.claude/settings.json`:
 }
 ```
 
-> If `extraKnownMarketplaces` already exists in your settings, add the `"prevoir"` entry inside it.
+> If `extraKnownMarketplaces` already exists in your settings, add the `"prevoir"` entry inside it. If `settings.json` does not exist, create it with the content above.
 
 ### 2. Install the plugin
 
