@@ -63,6 +63,28 @@ source "$CREDENTIALS_FILE"
 
 touch "$CACHE_FILE"
 
+# ── Build Jira MCP config for the Claude invocation ───────────────────────────
+# The Atlassian MCP is scoped to the insight project directory; poll-jira.sh
+# runs from Scripts so we inject the config explicitly via --mcp-config.
+MCP_CONFIG_FILE="$(mktemp /tmp/poll-jira-mcp-XXXXXX.json)"
+python3 -c "
+import json, sys
+print(json.dumps({
+  'mcpServers': {
+    'jira': {
+      'type': 'stdio',
+      'command': 'npx',
+      'args': ['-y', 'raalarcon-jira-mcp-server'],
+      'env': {
+        'JIRA_HOST': sys.argv[1],
+        'JIRA_EMAIL': sys.argv[2],
+        'JIRA_API_TOKEN': sys.argv[3]
+      }
+    }
+  }
+}))
+" "$JIRA_BASE" "$JIRA_USER" "$JIRA_TOKEN" > "$MCP_CONFIG_FILE"
+
 # ── Query Jira ────────────────────────────────────────────────────────────────
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') Polling Jira for To Do/Open/Parked/Blocked tickets..." >> "$LOG_FILE"
@@ -119,14 +141,74 @@ for TICKET in $TICKETS; do
 
   notify "Prevoir Dev Skill" "Starting analysis for $TICKET…"
 
-  # Run the dev skill in headless/analysis-only mode
-  # --dangerously-skip-permissions is required so that non-interactive Bash tool calls
-  # (pandoc / Chrome PDF generation in Step 11) are not blocked by permission prompts.
+  # Run the dev skill in headless/analysis-only mode.
+  # --dangerously-skip-permissions: allows non-interactive Bash tool calls
+  #   (pandoc / Chrome PDF generation in Step 11) without permission prompts.
+  # --mcp-config: injects the Jira MCP since it is only scoped to the insight
+  #   project directory and is not available when running from Scripts/.
+  # --output-format stream-json: streams output as JSON lines so each token
+  #   is written to the log immediately, avoiding the silent-exit issue where
+  #   --print (text mode) produces zero output on headless early exit.
   echo "$(date '+%Y-%m-%d %H:%M:%S') ── Claude output start ──────────────────────" >> "$LOG_FILE"
   AUTO_MODE=true \
-    claude --dangerously-skip-permissions --print "/prevoir:dev $TICKET" \
-    >> "$LOG_FILE" 2>&1
-  EXIT_CODE=$?
+    claude --dangerously-skip-permissions \
+           --print "/prevoir:dev $TICKET" \
+           --mcp-config "$MCP_CONFIG_FILE" \
+           --output-format stream-json \
+           --verbose \
+    2>&1 | python3 -u -c "
+import sys, json, datetime
+
+def ts():
+    return datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+for raw in sys.stdin:
+    raw = raw.rstrip()
+    if not raw:
+        continue
+    try:
+        ev = json.loads(raw)
+    except Exception:
+        # Non-JSON line (e.g. stderr text) — log as-is
+        print(f'{ts()} {raw}', flush=True)
+        continue
+
+    t = ev.get('type', '')
+    sub = ev.get('subtype', '')
+
+    if t == 'assistant':
+        # Extract text content from assistant message
+        for block in ev.get('message', {}).get('content', []):
+            if isinstance(block, dict):
+                if block.get('type') == 'text':
+                    for line in block['text'].splitlines():
+                        if line.strip():
+                            print(f'{ts()} [Claude] {line}', flush=True)
+                elif block.get('type') == 'tool_use':
+                    name = block.get('name', '?')
+                    inp = block.get('input', {})
+                    # Show a compact one-line summary of the tool call
+                    summary = ', '.join(f'{k}={repr(v)[:60]}' for k, v in list(inp.items())[:3])
+                    print(f'{ts()} [Tool] {name}({summary})', flush=True)
+    elif t == 'tool_result':
+        pass  # skip verbose tool results
+    elif t == 'result':
+        sub_type = ev.get('subtype', '')
+        cost = ev.get('cost_usd')
+        turns = ev.get('num_turns')
+        parts = [f'subtype={sub_type}']
+        if turns is not None:
+            parts.append(f'turns={turns}')
+        if cost is not None:
+            parts.append(f'cost=\${cost:.4f}')
+        print(f'{ts()} [Result] {\" \".join(parts)}', flush=True)
+    elif t == 'system' and sub in ('init',):
+        model = ev.get('session', {}).get('model', ev.get('model', ''))
+        if model:
+            print(f'{ts()} [System] model={model}', flush=True)
+    # Skip: hook_started, hook_response, system/other — pure noise
+" >> "$LOG_FILE"
+  EXIT_CODE=${PIPESTATUS[0]}
   echo "$(date '+%Y-%m-%d %H:%M:%S') ── Claude output end ────────────────────────" >> "$LOG_FILE"
 
   if [ $EXIT_CODE -eq 0 ]; then
@@ -140,3 +222,5 @@ for TICKET in $TICKETS; do
 done
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') Done. $NEW_COUNT new ticket(s) processed." >> "$LOG_FILE"
+
+rm -f "$MCP_CONFIG_FILE"
