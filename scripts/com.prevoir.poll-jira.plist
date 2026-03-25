@@ -2,7 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!--
   macOS launchd schedule for poll-jira.sh
-  Runs every 60 minutes; compatible with Power Nap when plugged in.
+  Runs at the top of every hour (StartCalendarInterval); reliable after sleep/wake.
 
   SETUP:
   1. Replace /Users/YOUR_USERNAME below with your actual home directory path
@@ -21,9 +21,12 @@
         <string>/Users/YOUR_USERNAME/Documents/Prevoir/Scripts/poll-jira.sh</string>
     </array>
 
-    <!-- Run every 60 minutes; works with Power Nap when plugged in -->
-    <key>StartInterval</key>
-    <integer>3600</integer>
+    <!-- Run at the top of every hour; more reliable than StartInterval after sleep -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
 
     <!-- UPDATE: replace /Users/YOUR_USERNAME with your actual home path -->
     <key>StandardOutPath</key>
@@ -31,8 +34,7 @@
     <key>StandardErrorPath</key>
     <string>/Users/YOUR_USERNAME/Documents/Prevoir/Scripts/poll-jira-error.log</string>
 
-    <!-- Only run when the user is logged in -->
     <key>RunAtLoad</key>
-    <false/>
+    <true/>
 </dict>
 </plist>
