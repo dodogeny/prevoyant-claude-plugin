@@ -67,14 +67,17 @@ touch "$CACHE_FILE"
 
 echo "$(date '+%Y-%m-%d %H:%M:%S') Polling Jira for To Do/Open/Parked/Blocked tickets..." >> "$LOG_FILE"
 
-ENCODED_JQL=$(python3 -c "import urllib.parse, sys; print(urllib.parse.quote(sys.argv[1]))" "$JQL")
+JSON_BODY=$(python3 -c "import json, sys; print(json.dumps({'jql': sys.argv[1], 'fields': ['key','summary','status'], 'maxResults': 50}))" "$JQL")
 
 HTTP_RESPONSE=$(curl -s -w "\n%{http_code}" \
   -u "$JIRA_USER:$JIRA_TOKEN" \
   -H "Accept: application/json" \
-  "$JIRA_BASE/rest/api/3/search?jql=${ENCODED_JQL}&fields=key,summary,status&maxResults=50")
+  -H "Content-Type: application/json" \
+  -X POST \
+  -d "$JSON_BODY" \
+  "$JIRA_BASE/rest/api/3/search/jql")
 
-HTTP_BODY=$(echo "$HTTP_RESPONSE" | head -n -1)
+HTTP_BODY=$(echo "$HTTP_RESPONSE" | sed '$d')
 HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -n 1)
 
 if [ "$HTTP_CODE" != "200" ]; then
@@ -117,10 +120,14 @@ for TICKET in $TICKETS; do
   notify "Prevoir Dev Skill" "Starting analysis for $TICKET…"
 
   # Run the dev skill in headless/analysis-only mode
+  # --dangerously-skip-permissions is required so that non-interactive Bash tool calls
+  # (pandoc / Chrome PDF generation in Step 11) are not blocked by permission prompts.
+  echo "$(date '+%Y-%m-%d %H:%M:%S') ── Claude output start ──────────────────────" >> "$LOG_FILE"
   AUTO_MODE=true \
-    claude --print "/prevoir:dev $TICKET" \
+    claude --dangerously-skip-permissions --print "/prevoir:dev $TICKET" \
     >> "$LOG_FILE" 2>&1
   EXIT_CODE=$?
+  echo "$(date '+%Y-%m-%d %H:%M:%S') ── Claude output end ────────────────────────" >> "$LOG_FILE"
 
   if [ $EXIT_CODE -eq 0 ]; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') Analysis complete for $TICKET (exit $EXIT_CODE)" >> "$LOG_FILE"
