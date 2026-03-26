@@ -74,6 +74,8 @@ This is the primary token-saving measure — reading a 40-line method costs ~60 
 
 Claude builds a **file map** — a table of every affected file, its role in the fix, and the specific method or line range identified. The map also notes recent git history on primary files to surface related recent changes.
 
+For **enhancement tickets that add new fields or methods**, Claude performs a mandatory **class hierarchy check**: it greps for the target class's inheritance chain, identifies the abstract base class (if any), and finds all sibling subclasses. This determines whether the new infrastructure (fields, getters/setters, utility methods) belongs in the concrete class or in the abstract base — where it would be inherited automatically by all current and future subclasses. Only config wiring (`getConfig()` items, `setAttribute()` cases) stays in the concrete class.
+
 A **confidence gate** runs after the file map: if Claude cannot locate the relevant code with reasonable certainty, it pauses and asks for guidance rather than generating a speculative fix on the wrong files.
 
 ---
@@ -103,7 +105,7 @@ This is the most rigorous step in the workflow. A four-person senior engineering
 | **Lead Developer** | **Morgan** | 20 yrs Java, ex-systems architect, deep GWT/Spring/Oracle | Chairs. Sets schedule. Reviews hypotheses. Asks probing questions. Facilitates debate. Gives binding verdict. Approves the Root Cause Statement. |
 | Senior Engineer | Alex | 12 yrs Java/GWT | Code archaeology & regression forensics — *"Every bug has a birthday."* |
 | Senior Engineer | Sam | 10 yrs full-stack Java, Spring, GWT RPC | Runtime data flow & logic — *"Follow the data to the divergence point."* |
-| Senior Engineer | Jordan | 15 yrs Java, architect background | Defensive patterns & structural anti-patterns — *"I've catalogued every way Java devs shoot themselves in the foot."* |
+| Senior Engineer | Jordan | 15 yrs Java, architect background | Defensive patterns & structural anti-patterns — *"I've catalogued every way Java devs shoot themselves in the foot."* For enhancements, Jordan also checks class hierarchy: are new fields/methods placed in the correct class, or should they live in an abstract base? |
 
 Morgan is not competing — Morgan arbitrates. Morgan's verdict is binding and may endorse, refine, or override any engineer's hypothesis.
 
@@ -200,7 +202,7 @@ Team note : [any nuance raised in debate that the fix author must
 
 #### 7g. Morgan Reviews the Proposed Fix (Step 8 gate)
 
-After the fix is proposed in Step 8, Morgan vets it against the Root Cause Statement across five checks: mechanism alignment, surgical scope, regression risk, team note honoured, and DB safety. Verdict is one of:
+After the fix is proposed in Step 8, Morgan vets it against the Root Cause Statement across **six checks**: mechanism alignment, surgical scope, regression risk, team note honoured, DB safety, and **abstract class ownership** (if new fields or methods are added to a concrete class, Morgan confirms whether the abstract base is the correct owner — greps for sibling subclasses and flags if infrastructure should be moved up). Verdict is one of:
 
 - **✅ APPROVED** — fix is correct, surgical, and safe to apply
 - **⚠️ APPROVED WITH CONDITIONS** — apply after addressing a specific requirement
@@ -471,43 +473,70 @@ tail -f ~/prevoir-scripts/poll-jira.log                # WSL
 
 ### Jira MCP
 
-The skill uses the **Atlassian MCP server** to read Jira tickets, download attachments, and search issues. This must be installed and authenticated before the skill will work.
+The skill uses the **Atlassian MCP server** (`mcp-atlassian`) to read Jira tickets, download attachments, and search issues. The MCP server is configured via a `.mcp.json` file placed in the project root — this is the recommended approach as it keeps credentials local to the project and does not require the Claude Code Atlassian plugin.
 
-#### 1. Install the Atlassian plugin in Claude Code
-
-```bash
-claude plugin install atlassian
-```
-
-#### 2. Generate a Jira API token
+#### 1. Generate a Jira API token
 
 1. Log in to [https://id.atlassian.com/manage-profile/security/api-tokens](https://id.atlassian.com/manage-profile/security/api-tokens)
 2. Click **Create API token**
 3. Give it a name (e.g. `Claude Code - V1`) and click **Create**
 4. Copy the token — it will not be shown again
 
-#### 3. Configure the MCP server
+#### 2. Install the MCP server dependency
 
-When Claude Code first invokes the Atlassian MCP, it will prompt for credentials. Enter:
+The MCP server runs via `uvx` (part of the `uv` Python package manager). Install `uv` if you don't have it:
 
-| Field | Value |
-|-------|-------|
-| Jira URL | `https://prevoirsolutions.atlassian.net` |
-| Email | your Atlassian account email (e.g. `you@prevoir.mu`) |
-| API Token | the token generated in step 2 |
+```bash
+# macOS / Linux
+curl -LsSf https://astral.sh/uv/install.sh | sh
 
-Credentials are stored securely in your local Claude Code config and are not committed to any repository.
+# Windows (PowerShell)
+powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
+```
+
+`uvx` is included with `uv` — no separate install needed.
+
+#### 3. Create the `.mcp.json` file
+
+A `.mcp.json.example` file is included in the repository root. Copy it and fill in your credentials:
+
+```bash
+cp .mcp.json.example .mcp.json
+```
+
+Then edit `.mcp.json` and replace the placeholder values with your real credentials:
+
+```json
+{
+  "mcpServers": {
+    "jira": {
+      "command": "uvx",
+      "args": ["mcp-atlassian"],
+      "env": {
+        "JIRA_URL": "https://prevoirsolutions.atlassian.net",
+        "JIRA_USERNAME": "your.name@prevoir.mu",
+        "JIRA_API_TOKEN": "your-api-token-here"
+      }
+    }
+  }
+}
+```
+
+> **Security:** `.mcp.json` is listed in `.gitignore` and will not be committed. Never commit a file containing a real API token.
 
 #### 4. Verify the connection
 
-In a Claude Code session, ask:
+Open a Claude Code session in the project directory and ask:
 ```
 search for Jira issue IV-1
 ```
 
-If the Atlassian MCP is configured correctly, Claude will return the issue details. If you see an authentication error, re-check your API token and Jira URL.
+If the MCP server is configured correctly, Claude will return the issue details. If you see a tool-not-found or authentication error:
+- Confirm `uvx` is on your `PATH` (`uvx --version`)
+- Re-check your Jira URL, username, and API token in `.mcp.json`
+- Ensure your Atlassian account has at minimum read access to the `IV` project
 
-> **Note:** The API token grants the same permissions as your Atlassian account. Ensure your account has at minimum read access to the `IV` project in `prevoirsolutions.atlassian.net`.
+> **Note:** The API token grants the same permissions as your Atlassian account. The `.mcp.json` file is loaded automatically by Claude Code when you open a session in the project directory — no further setup is required.
 
 ### Git
 The repository must be present at `$HOME/git/insight/` locally. The skill resolves this path dynamically at runtime using `$HOME`. The skill creates branches there.
@@ -1095,12 +1124,15 @@ If you want the script to re-analyse tickets it has already processed, clear the
 │   ├── poll-jira.sh                  # Jira polling script (macOS / Linux / Windows WSL)
 │   ├── com.prevoir.poll-jira.plist   # macOS launchd schedule template
 │   └── .jira-credentials.example    # Credentials template (safe to commit — dummy values)
+├── .mcp.json                             # Jira MCP server config (gitignored — contains your API token)
+├── .mcp.json.example                     # Template for .mcp.json — copy and fill in your credentials
 ├── .gitignore
 └── README.md
 ```
 
 > **Not in the repo (gitignored):**
-> - `scripts/.jira-credentials` — your real API token; created locally from `.jira-credentials.example`
+> - `.mcp.json` — Jira MCP server config containing your API token; create from the template in the Jira MCP Prerequisites section
+> - `scripts/.jira-credentials` — your real API token for the polling script; created locally from `.jira-credentials.example`
 > - `scripts/.jira-seen-tickets` — runtime cache of processed ticket keys
 > - `scripts/poll-jira.log` / `poll-jira-error.log` — runtime logs
 
@@ -1255,6 +1287,15 @@ claude plugin update prevoir@prevoir
 | 13 | Step 8 — Propose Fix | Root Cause Statement quoted verbatim as mandatory anchor. Each code change annotated with which mechanism it addresses. Alternative approaches table added. |
 | 14 | Step 10 — Change Summary | PR description template updated to include Root Cause Statement with winning engineer attribution and Morgan's approval. |
 | 15 | Steps renumbered | New dedicated RCA step inserted as Step 7 (SKILL). Old Step 7 (Propose Fix) → Step 8. Old Step 8 (Impact) → Step 9. Old Step 9 (Summary) → Step 10. Old Step 10 (Stats) → Step 11. Old Step 11 (PDF) → Step 12. Total: 12 SKILL steps. |
+
+#### Analysis Quality — Enhancements & Abstract Class Ownership
+
+| # | Area | Change |
+|---|------|--------|
+| 16 | Step 5 — Locate Code | **Class hierarchy check (mandatory for enhancements)** — when an enhancement ticket adds new fields or methods, Claude now greps the full inheritance chain of the target class, identifies the abstract base and all sibling subclasses, and explicitly determines whether the new infrastructure belongs in the concrete class or the abstract base. The abstract base (if applicable) is added to the file map with role "Abstract base — owns shared infrastructure". |
+| 17 | Step 7 — Jordan (Defensive Patterns) | **New pattern #11: Wrong Ownership Level** — Jordan now checks whether new fields, getters/setters, or utility methods are placed in the correct class. If the concrete class has an abstract base that already owns similar state, the new infrastructure belongs in the base; only `getConfig()` items and `setAttribute()` cases stay in the concrete class. Priority order updated: Enhancements → {11, 7}. |
+| 18 | Step 8 — Morgan's Fix Review | **New check #6: Abstract class ownership** — Morgan now explicitly verifies whether new infrastructure added to a concrete class should be moved to its abstract base. Runs `grep "extends {AbstractBase}"` to find siblings. Fix Review output updated with new `Abstract class ownership` field. |
+| 19 | Prerequisites — Jira MCP | **Replaced plugin-based MCP setup with `.mcp.json` approach** — the Atlassian MCP server is now configured via a project-level `.mcp.json` file using `uvx mcp-atlassian`. The file is gitignored. Setup instructions updated with `uv` install steps and credential template. |
 
 #### Automation & Headless Mode
 

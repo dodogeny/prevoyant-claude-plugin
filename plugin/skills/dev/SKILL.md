@@ -276,6 +276,14 @@ Based on the ticket description, comments, and labels, search the codebase at `{
 2. **Entry point** — where does the flow start? (API endpoint, UI event handler, worker, scheduled job)
 3. **Data flow** — trace the relevant path through the layers (Frontend → API → DataSource → DB, or Worker → Plugin → etc.)
 4. **Related files** — any model, DTO, or DB script changes that will likely be needed
+5. **Class hierarchy** *(mandatory for enhancement tickets adding new fields or methods)* — identify the full inheritance chain of the target class:
+   ```bash
+   grep -rn "extends {TargetClass}\|class {TargetClass} extends" --include="*.java" {REPO_DIR}/
+   ```
+   - Confirm the abstract base class (if any) and grep for all sibling subclasses
+   - Ask: does the new infrastructure (fields, getters/setters, utility methods) belong in the concrete class, or in the abstract base so future subclasses inherit it automatically?
+   - **Rule:** If the abstract base already owns similar state for other listeners/workers in the same family, the new state belongs there too. Keep only the concrete-class-specific config wiring (`getConfig()` items, `setAttribute()` cases) in the concrete class.
+   - Add the abstract base class to the file map with role "Abstract base — owns shared infrastructure"
 
 #### Grep-First, Read-Second Rule (mandatory)
 
@@ -523,8 +531,9 @@ Jordan checks patterns in priority order driven by the decision tree classificat
 | 8 | **Wrong Layer Call** | UI code directly accessing DAO or utility, bypassing the service layer |
 | 9 | **DB Dialect Gap** | `ROWNUM` vs `LIMIT`, `NVL` vs `COALESCE`, `SYSDATE` vs `NOW()` etc. |
 | 10 | **Thread Safety** | Shared field read/written from multiple threads without synchronisation |
+| 11 | **Wrong Ownership Level** | New fields or methods placed in a concrete class when the abstract base is the correct owner. Check: does the concrete class extend an abstract base that already owns similar infrastructure (e.g. fields, utility methods, config helpers)? `grep "extends {AbstractBase}"` to find all siblings — if siblings exist or would benefit, the new state belongs in the abstract base; only config wiring (`getConfig()` items, `setAttribute()` cases) stays in the concrete class. |
 
-Priority order by classification: UI issues → {1, 2, 3, 4}; Data issues → {1, 5, 6, 9}; Async issues → {3, 7, 10}; Regressions → {2, 8}.
+Priority order by classification: UI issues → {1, 2, 3, 4}; Data issues → {1, 5, 6, 9}; Async issues → {3, 7, 10}; Regressions → {2, 8}; Enhancements → {11, 7}.
 
 ---
 
@@ -783,18 +792,23 @@ Before applying anything, Morgan vetted the proposed fix against the adopted roo
 3. **Regression risk** — does the fix introduce any new null risks, flag side effects, or break the complementary code path?
 4. **Team note honoured** — if a nuance was flagged in Step 7i, is it handled?
 5. **DB safety** — if a schema change is included, is it safe on both Oracle and PostgreSQL?
+6. **Abstract class ownership** — if the fix adds new fields, getters/setters, or utility methods to a concrete class: confirm whether the abstract base class is the correct owner. Run `grep "extends {AbstractBase}" --include="*.java"` to find all subclasses. If the abstract base already owns similar state for sibling classes, move the new infrastructure there. Only `getConfig()` config item registrations and `setAttribute()` switch cases are concrete-class concerns — everything else belongs in the abstract base when a suitable one exists.
 
 ```
 ─── Morgan's Fix Review ───────────────────────────────────────────
 
-Mechanism alignment : [Confirmed / Issue: {what is misaligned}]
-Surgical scope      : [Confirmed — N files, M lines changed /
-                       Concern: {what is unnecessarily wide}]
-Regression risk     : [Low — no new risks introduced /
-                       Flag: {specific risk Morgan identified}]
-Team note honoured  : [Yes / Not applicable / No — {what is missing}]
-DB safety           : [Confirmed / N/A — no schema change /
-                       Issue: {dialect problem spotted}]
+Mechanism alignment      : [Confirmed / Issue: {what is misaligned}]
+Surgical scope           : [Confirmed — N files, M lines changed /
+                            Concern: {what is unnecessarily wide}]
+Regression risk          : [Low — no new risks introduced /
+                            Flag: {specific risk Morgan identified}]
+Team note honoured       : [Yes / Not applicable / No — {what is missing}]
+DB safety                : [Confirmed / N/A — no schema change /
+                            Issue: {dialect problem spotted}]
+Abstract class ownership : [N/A — no new fields or methods added /
+                            Confirmed — concrete class is correct owner /
+                            Moved to {AbstractBase} — {N} sibling subclasses
+                            benefit; config wiring stays in concrete class]
 
 Morgan's verdict:
   ✅ APPROVED — fix is correct, surgical, and safe to apply.

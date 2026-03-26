@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "jira": {
+      "command": "uvx",
+      "args": ["mcp-atlassian"],
+      "env": {
+        "JIRA_URL": "https://your-org.atlassian.net",
+        "JIRA_USERNAME": "your.email@example.com",
+        "JIRA_API_TOKEN": "your-api-token-here"
+      }
+    }
+  }
+}
