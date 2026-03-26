@@ -521,7 +521,7 @@ Jordan checks patterns in priority order driven by the decision tree classificat
 
 | Pri | Pattern | What Jordan checks |
 |-----|---------|-------------------|
-| 1 | **Null Pointer** | Object dereferenced without a prior null guard — especially after a service call or collection lookup |
+| 1 | **Null Pointer** | Object dereferenced without a prior null guard. Jordan checks all six sub-cases: **(a) Service/RPC return** — result of a service call, RPC, or REST response used directly without null check; **(b) Map.get() result** — `map.get(key)` used without null guard (key may be absent); **(c) Method chain** — `a.getB().getC().getValue()` with no intermediate null guard — any link can be null; **(d) Null unboxing** — `Integer`/`Long`/`Boolean` field auto-unboxed in an arithmetic or boolean expression while the wrapper is null; **(e) String comparison** — `str.equals("literal")` where `str` may be null — should be `"literal".equals(str)` or an explicit null guard; **(f) For-each on null collection** — enhanced `for` loop over a field or return value that could be null (no empty-collection guard, distinct from pattern #5 which covers size/`.get(0)` on a non-null list). |
 | 2 | **Boolean Flag Not Reset** | Flag set in one path but never cleared in the complementary path |
 | 3 | **GWT Async Callback Lost** | Async callback result used outside its own closure scope |
 | 4 | **Silent Exception Swallow** | Catch block empty or logging only — masking the real failure |
@@ -532,8 +532,17 @@ Jordan checks patterns in priority order driven by the decision tree classificat
 | 9 | **DB Dialect Gap** | `ROWNUM` vs `LIMIT`, `NVL` vs `COALESCE`, `SYSDATE` vs `NOW()` etc. |
 | 10 | **Thread Safety** | Shared field read/written from multiple threads without synchronisation |
 | 11 | **Wrong Ownership Level** | New fields or methods placed in a concrete class when the abstract base is the correct owner. Check: does the concrete class extend an abstract base that already owns similar infrastructure (e.g. fields, utility methods, config helpers)? `grep "extends {AbstractBase}"` to find all siblings — if siblings exist or would benefit, the new state belongs in the abstract base; only config wiring (`getConfig()` items, `setAttribute()` cases) stays in the concrete class. |
+| 12 | **Resource Leak** | `Connection`, `InputStream`, `ResultSet`, or other `Closeable` opened but not closed in a `finally` block or `try-with-resources` — especially in exception paths where the happy-path close is bypassed. |
+| 13 | **Mutable Static State** | Static fields that are non-final and mutable — in a servlet container these are shared across requests and threads, causing cross-request contamination. Non-final statics are a silent shared-state bug. |
+| 14 | **Leaking Abstraction** | Implementation-specific types (e.g., a DAO exception class, an ORM entity) surfacing in the service or UI layer — the layer boundary was breached at the type level, not just the call level. Complements pattern #8 (Wrong Layer Call). |
+| 15 | **Circular Dependency** | Package A imports package B which imports package A — violates clean layering and signals a design split that was never completed. Check for cycles at the package level when a new import is added. |
+| 16 | **Breaking API Change** | Public method signature changed (parameter added/removed, type changed, checked exception added) without a backward-compatible overload — any existing caller becomes a compile or runtime failure. |
+| 17 | **equals/hashCode Contract Broken** | `equals()` overridden without `hashCode()` (or vice versa), or `hashCode()` includes a mutable field — objects placed in `HashSet` or `HashMap` silently misbehave. |
+| 18 | **Serialization Mismatch** | `Serializable` class had fields added or removed without updating `serialVersionUID` — relevant in GWT where DTOs cross the wire and persisted sessions may deserialize stale versions. |
+| 19 | **Unchecked Cast Without Guard** | `(SomeType) obj` cast not preceded by an `instanceof` check — a `ClassCastException` waiting on a non-obvious code path, typically in a generic handler or polymorphic dispatch. |
+| 20 | **Hardcoded Environment Value** | IP addresses, port numbers, timeouts, or threshold values baked into logic rather than pulled from config — breaks silently when deployed to a different environment. |
 
-Priority order by classification: UI issues → {1, 2, 3, 4}; Data issues → {1, 5, 6, 9}; Async issues → {3, 7, 10}; Regressions → {2, 8}; Enhancements → {11, 7}.
+Priority order by classification: UI issues → {1, 2, 3, 4}; Data issues → {1, 5, 6, 9, 12, 13}; Async issues → {3, 7, 10}; Regressions → {2, 8, 17, 18}; Enhancements → {11, 7, 16}; Architecture → {14, 15, 19, 20}.
 
 ---
 
