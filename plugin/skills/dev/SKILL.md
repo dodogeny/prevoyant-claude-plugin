@@ -1,7 +1,7 @@
 ---
 name: dev
-description: Prevoir internal developer workflow skill. Use when a developer provides a Jira ticket URL or ticket key (e.g. IV-1234) and wants to start development work. Handles the full workflow from reading the Jira ticket to proposing a code fix — including reading the description, understanding the problem, checking comments, creating a git branch, locating affected code, and proposing a fix with explanation.
-version: 1.2.0
+description: Prevoir internal developer workflow skill. Supports two modes — (1) Dev mode: use when a developer provides a Jira ticket URL or ticket key (e.g. IV-1234) and wants to start development work; handles the full workflow from reading the Jira ticket to proposing a code fix. (2) PR Review mode: use when a developer wants to review code changes for a Jira ticket; analyses the ticket context plus all code changes on the associated feature branch, then outputs findings and recommendations as a PDF report.
+version: 1.2.1
 ---
 
 # Prevoir Dev Workflow Skill
@@ -41,14 +41,28 @@ In headless mode, Steps 1–10 run and produce full output with all interactive 
 
 ---
 
+## Mode Selection
+
+This skill operates in two modes. Detect the mode from the invocation:
+
+| Mode | Trigger phrases | What runs |
+|------|----------------|-----------|
+| **Dev Mode** | `IV-XXXX`, `start dev on IV-XXXX`, `pick up IV-XXXX`, `/dev IV-XXXX` | Steps 1–12 (full dev workflow → proposed fix → PDF analysis report) |
+| **PR Review Mode** | `review IV-XXXX`, `PR review IV-XXXX`, `code review IV-XXXX`, `/dev review IV-XXXX` | Steps R1–R8 (ticket context + code diff review → PDF review report) |
+
+**→ If the invocation contains the word `review` before or near the ticket key, enter PR Review Mode. Otherwise enter Dev Mode.**
+
+---
+
 ## When to Use This Skill
 
 Invoke when the developer provides:
 - A Jira ticket URL: `https://prevoirsolutions.atlassian.net/browse/IV-XXXX`
 - A Jira ticket key: `IV-XXXX`
 - A phrase like `/prevoir:dev IV-3672` or `/dev IV-3672` or "start dev on IV-3672" or "pick up IV-3672"
+- A phrase like `review IV-3672` or `PR review IV-3672` or `/dev review IV-3672` for code review
 
-Do NOT invoke for general code questions, PR reviews, or questions unrelated to starting work on a Jira ticket.
+Do NOT invoke for general code questions unrelated to a Jira ticket.
 
 ## Workflow Steps
 
@@ -1208,7 +1222,7 @@ Print a single summary line covering elapsed time, estimated token usage, and es
 {TICKET_KEY} | ~{N}m elapsed | ~{X} in / ~{Y} out tokens | est. cost ${Z} (Sonnet 4.6)
 ```
 
-Pricing reference (Sonnet 4.6 as of skill version 1.2.0):
+Pricing reference (Sonnet 4.6 as of skill version 1.2.1):
 - Input: $3.00 / 1M tokens
 - Output: $15.00 / 1M tokens
 
@@ -1247,7 +1261,7 @@ Write a temporary Markdown file at `/tmp/{TICKET_KEY}-analysis.md`. Populate eve
 | Field | Value |
 |-------|-------|
 | Date | {today's date} |
-| Analyst | Claude (Prevoir Dev Skill v1.2.0) |
+| Analyst | Claude (Prevoir Dev Skill v1.2.1) |
 | Ticket type | {Bug / Story / Enhancement} |
 | Priority | {priority} |
 | Status | {status} |
@@ -1678,6 +1692,675 @@ If removal fails, note it but do not treat it as a blocking error.
 Then end with:
 
 > **Ready to code.** Branch is created. Start with `{primary file}:{line number}`. Refer to Step 10 for the change summary and suggested commit message when done.
+
+---
+
+---
+
+---
+
+## PR Review Mode
+
+Execute these steps when the invocation triggers **PR Review Mode** (see Mode Selection above). Do not run the Dev Mode steps. Present output for each step as it completes.
+
+---
+
+### Step R1 — Read the Jira Ticket
+
+Identical to Step 1 in Dev Mode. Use `mcp__jira__get_issue` with the ticket key. Request fields: `summary`, `issuetype`, `priority`, `status`, `assignee`, `reporter`, `labels`, `components`, `fixVersions`, `versions`, `description`, `comment`, `attachment`.
+
+Display the same field summary as Step 1.
+
+**If the MCP call fails**, stop and state the error. Do not proceed.
+
+---
+
+### Step R2 — Understand the Problem & Associated Tickets
+
+Execute the full Step 2 from Dev Mode without omission: problem statement, **linked & associated ticket analysis**, attachment analysis, and optional issue diagram.
+
+**Linked tickets are mandatory for review context.** Fetch all issue links (blocked by, blocks, relates to, cloned from, duplicates, is caused by, parent/child epics, sub-tasks). For each linked ticket:
+1. Retrieve the full ticket details (summary, description, status, type, resolution, attachments).
+2. Extract any context relevant to reviewing the code changes:
+   - Prior investigations, root cause findings, or fix details from related bugs
+   - Acceptance criteria or scope changes that affect what the code should do
+   - Design decisions or constraints from parent epics or stories
+   - Known workarounds, regression history, or related failures from "relates to" tickets
+3. Summarise each linked ticket: `[KEY] (type, status) — one-sentence relevance to the code review`
+
+Carry all linked ticket findings forward into Step R5 so reviewers have the full acceptance context — not just what the primary ticket says, but everything that shaped the expected behaviour.
+
+This establishes the acceptance criteria and intended behaviour that the code changes will be reviewed against.
+
+---
+
+### Step R3 — Read Comments for Additional Context
+
+Identical to Step 3 in Dev Mode. Fetch all comments and extract any prior investigation, decisions, constraints, or known issues.
+
+Produce a **Prior Investigation Summary** block if applicable. Carry all findings into Step R5 so reviewers have full context.
+
+---
+
+### Step R4 — Identify & Fetch Code Changes
+
+#### R4a. Locate the Feature Branch
+
+Search for the branch associated with this ticket:
+
+```bash
+git branch --list "Feature/{TICKET_KEY}*"
+git branch -r | grep "Feature/{TICKET_KEY}"
+```
+
+If a single matching branch is found, use it. If multiple branches match, list them and ask the developer which one to review. If no branch is found:
+
+```bash
+git branch --list "*{TICKET_KEY}*"
+git branch -r | grep "{TICKET_KEY}"
+```
+
+If still not found, ask the developer to provide the branch name before continuing.
+
+#### R4b. Determine the Base Branch
+
+Use the same base branch logic as Step 4a in Dev Mode (Fix Version → Affected Version → `development`).
+
+#### R4c. Get the Diff
+
+Fetch the full diff of changes between the feature branch and its base branch:
+
+```bash
+git diff {BASE_BRANCH}...{FEATURE_BRANCH} --stat
+git diff {BASE_BRANCH}...{FEATURE_BRANCH}
+```
+
+Also get the commit log for the branch:
+
+```bash
+git log --oneline {BASE_BRANCH}..{FEATURE_BRANCH}
+```
+
+#### R4d. Present the Change Summary
+
+Display:
+
+| Field | Value |
+|-------|-------|
+| Feature branch | `{feature branch name}` |
+| Base branch | `{base branch name}` |
+| Commits | `{N commits}` |
+| Files changed | `{N files}` |
+
+Then list every changed file with its change type (modified / added / deleted) and lines changed (+X -Y):
+
+| File | Change type | +/- lines |
+|------|-------------|-----------|
+| `fcfrontend/.../CaseManager.java` | Modified | +42 −18 |
+
+If the diff is empty (no changes found), state: "No code changes found on this branch relative to `{BASE_BRANCH}`. Confirm the branch name and base branch are correct." and stop.
+
+---
+
+### Step R5 — Engineering Panel Code Review
+
+The same team from Dev Mode convenes to review the code changes, with adjusted mandates:
+
+| Role | Name | Review Focus |
+|------|------|-------------|
+| **Lead Reviewer** | **Morgan** | Chairs. Sets review schedule. Cross-examines. Scores engineers. Gives binding verdict: Approve / Request Changes / Reject. |
+| Senior Reviewer | Alex | Code quality, readability, commit hygiene, architecture alignment, adherence to project conventions |
+| Senior Reviewer | Sam | Logic correctness, data flow accuracy, correct fix for the stated root cause / enhancement |
+| Senior Reviewer | Jordan | Defensive patterns (full 20-pattern checklist), structural anti-patterns, class hierarchy ownership |
+| **Lead QA Reviewer** | **Riley** | Test coverage assessment, testability of the changes, regression surface, missing edge cases, acceptance criteria coverage |
+
+Engineers (Alex, Sam, Jordan) are competing for **Best Review** distinction. Riley and Morgan are not competing.
+
+#### R5a. Morgan Opens — Lead Briefing
+
+```
+┌─ Morgan — Review Briefing ──────────────────────────────────────┐
+│ Ticket     : {TICKET_KEY} — {summary}                            │
+│ Type       : {Bug fix / Enhancement}                             │
+│ Branch     : {feature branch}                                    │
+│ Changes    : {N files, N commits}                                │
+│                                                                  │
+│ Review assignments:                                              │
+│   Alex  → Code quality, naming, structure, commit messages.      │
+│            Flag anything that violates project conventions or    │
+│            is harder to read/maintain than it needs to be.       │
+│   Sam   → Logic correctness. Does the fix actually address the   │
+│            root cause / acceptance criteria? Trace the data      │
+│            flow through the changed code.                        │
+│   Jordan → Run your full 20-pattern checklist on every changed   │
+│            file. Flag any defensive pattern violations.          │
+│   Riley → Test coverage. Does the change have tests? Are the     │
+│            acceptance criteria verifiable? What regression       │
+│            surface is introduced? What edge cases are uncovered? │
+│                                                                  │
+│ Schedule:                                                        │
+│   T+2 min : Mid-point check-in (all four report progress)       │
+│   T+4 min : Final findings due                                   │
+│   T+5 min : Riley's questions + Morgan's cross-examination       │
+│   T+6 min : Debate round + verdict                              │
+│                                                                  │
+│ Rules: Cite file:line for every finding. Unsupported claims      │
+│ will be challenged. Focus on the diff — do not re-investigate    │
+│ the root cause from scratch.                                     │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+#### R5b. Parallel Review — All Four Reviewers (4-minute block)
+
+Each reviewer has a **4-minute window** capped at **8 targeted operations** (reads of specific diff hunks, greps for callers/usages, reads of surrounding context for a changed method). Riley is capped at **6 operations**. The Grep-First, Read-Second rule applies.
+
+---
+
+**Alex — Code Quality & Conventions**
+*"Clean code is code your team can still understand in six months."*
+
+Alex reviews in priority order (stop early on High confidence findings):
+1. Naming conventions — do new classes, methods, and fields follow the project's existing naming style?
+2. Code structure — is the change well-organised? Is logic in the right layer?
+3. Duplication — does the change introduce duplicated logic that should be extracted?
+4. Commit hygiene — do commit messages follow the project format? Are there unnecessary or partial commits?
+5. Dead code — are there commented-out lines, unused variables, or TODO markers left in the diff?
+6. Readability — are complex sections adequately clear given the existing comment style in the codebase?
+7. Consistency — does the code style (spacing, bracket style, logging pattern) match the surrounding file?
+8. Architecture alignment — does the change fit the established layering and responsibility model?
+
+---
+
+**Sam — Logic Correctness & Root Cause Alignment**
+*"The fix must actually fix the thing. Follow the data to confirm it does."*
+
+Sam reviews in priority order:
+1. Re-read the Enhancement Statement or Root Cause Statement from Step R2/R3 — what was the fix supposed to do?
+2. Trace the changed code path — does the new logic produce the correct outcome for the primary case?
+3. Check boundary conditions in the diff — does the fix handle nulls, empty collections, and edge values?
+4. Check whether the fix is complete — are there other call sites or paths where the same issue could still occur?
+5. Check for unintended side effects — does any changed method affect behaviour for callers not related to the reported issue?
+6. Check the data flow end-to-end through the diff — is the correct value produced at each transition?
+7. Verify acceptance criteria coverage — for each criterion listed in Step R2, confirm a code path exists that satisfies it
+8. Confirm the fix does not silently degrade any related functionality
+
+---
+
+**Jordan — Defensive Patterns & Structural Anti-Patterns**
+*"I've catalogued every way Java developers shoot themselves in the foot."*
+
+Jordan applies the full 20-pattern checklist (same table as Step 7) to every changed file in the diff. For each pattern, Jordan checks only the changed code (additions and modifications) — not unchanged surrounding code, unless it is called by the new code.
+
+Report findings in this format:
+```
+Pattern N — {Pattern Name}: {Finding}
+  File: {file:line}
+  Code: {one-line quote from diff}
+  Severity: Critical / Major / Minor
+  Recommendation: {what to change}
+```
+
+If a pattern has no finding in the diff, state: `Pattern N — {Pattern Name}: No issue found in diff.`
+
+---
+
+**Riley — Test Coverage & Acceptance Criteria**
+*"A fix that can't be verified is a fix that can't be trusted."*
+
+Riley reviews in priority order (stop when impact picture is clear):
+1. Are there any new or modified tests in the diff? If yes, do they cover the primary fix path?
+2. Do the tests cover at least one negative case (null input, empty input, error path)?
+3. For each acceptance criterion from Step R2 — is there a test that would catch a regression of that criterion?
+4. What is the regression surface of the change? List flows that pass through the changed code that are not covered by the tests in the diff.
+5. Identify any edge cases that are not tested: concurrent access, DB dialect differences, multi-client data isolation, session boundaries.
+6. Assess testability: can the fix be verified from the UI/API, or does it require DB-level verification? Flag anything that is not observable without internal access.
+
+Riley submits a **Test Coverage Assessment** in this format:
+```
+┌─ Riley — Test Coverage Assessment ─────────────────────────────┐
+│ Tests in diff      : {Yes — N tests / No — none added}          │
+│ Primary path       : {Covered / Not covered}                    │
+│ Negative cases     : {Covered / Not covered / Partial}          │
+│ Acceptance criteria: {All covered / N of M covered / None}      │
+│ Regression surface : {list of flows not covered by diff tests}  │
+│ Edge cases missing : {list or "None identified"}                │
+│ Testability        : {UI-observable / Requires DB verification / │
+│                      Requires log analysis}                     │
+│ Coverage rating    : Adequate / Partial / Insufficient          │
+│ Open question      : {one targeted question to a named reviewer  │
+│                      or Morgan — must be answered before        │
+│                      the review is approved}                    │
+│ Ops used           : [N / 6]                                    │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+---
+
+#### R5c. Mid-Point Check-In — T+2 minutes
+
+```
+─── Mid-Point Check-In ────────────────────────────────────────────
+
+Alex (ops used: N/8):
+  Status: [e.g. "Found dead code in the diff — commented-out block
+           at CaseManager.java:2310. Checking naming next." or
+           "No quality issues so far — moving to architecture check."]
+
+Sam (ops used: N/8):
+  Status: [e.g. "Logic traces correctly for the primary case.
+           Checking null handling on the new callback chain." or
+           "Fix addresses root cause. Verifying acceptance criteria."]
+
+Jordan (ops used: N/8):
+  Status: [e.g. "Pattern #1b matched — Map.get() result used without
+           null guard at AlertHelper.java:88. Checking remaining
+           patterns." or "Patterns 1–10 clear on this diff.
+           Continuing to 11–20."]
+
+Riley (ops used: N/6):
+  Status: [e.g. "No tests added. Primary path is not covered.
+           Flagging coverage gap." or "Two tests added — primary
+           path covered. Checking negative cases now."]
+
+─── Morgan's Response ─────────────────────────────────────────────
+
+[Morgan reads all four statuses and responds — same format as Step 7d]
+
+────────────────────────────────────────────────────────────────────
+```
+
+---
+
+#### R5d. Final Review Submissions — T+4 minutes
+
+```
+┌─ Alex — Code Quality Findings ─────────────────────────────────┐
+│ Issues found : {N issues — list each with file:line, severity,  │
+│                and one-line description}                        │
+│ Positives    : {what is well done — e.g. "clean separation of   │
+│                callback chain, consistent naming"}              │
+│ Recommendation: Approve / Request Changes                       │
+│ Ops used     : [N / 8]                                          │
+└────────────────────────────────────────────────────────────────────┘
+
+┌─ Sam — Logic Correctness Findings ─────────────────────────────┐
+│ Root cause addressed : {Yes / No / Partially — explanation}     │
+│ Acceptance criteria  : {All met / N of M met — which are not}   │
+│ Issues found : {N issues — list each with file:line, severity,  │
+│                and one-line description}                        │
+│ Recommendation: Approve / Request Changes                       │
+│ Ops used     : [N / 8]                                          │
+└────────────────────────────────────────────────────────────────────┘
+
+┌─ Jordan — Defensive Pattern Findings ──────────────────────────┐
+│ Patterns checked : 20                                           │
+│ Issues found     : {N issues — reproduce each Pattern N report  │
+│                   block from the investigation above}           │
+│ Recommendation   : Approve / Request Changes                    │
+│ Ops used         : [N / 8]                                      │
+└────────────────────────────────────────────────────────────────────┘
+
+[Reproduce Riley's Test Coverage Assessment block from R5b]
+```
+
+---
+
+#### R5e. Riley's Question + Morgan's Cross-Examination — T+5 minutes
+
+Same format as Step 7f in Dev Mode. Riley poses the Open question. Morgan cross-examines the most important uncertainties across all four submissions. Engineers/Riley respond in one paragraph backed by evidence.
+
+---
+
+#### R5f. Debate Round — One Round
+
+Same format as Step 7g in Dev Mode. Any reviewer or Riley may mount one challenge on code or coverage grounds. The challenged party responds once. Morgan moderates and closes.
+
+---
+
+#### R5g. Morgan's Review Verdict — T+6 minutes
+
+Morgan weighs all findings and delivers a binding verdict using this scoring rubric:
+
+| Criterion | Points |
+|-----------|--------|
+| Specific `file:line` cited with code evidence | +3 |
+| Finding is directly actionable (clear recommendation) | +2 |
+| Finding survived cross-examination without revision | +2 |
+| Finding is corroborated by another reviewer independently | +2 |
+| Found efficiently (≤ 5 ops used) | +1 |
+| Debate challenge successfully deflected with evidence | +1 |
+| Finding is testability-relevant and Riley corroborates it | +1 |
+
+Maximum score: 12 pts per reviewer. Morgan scores Alex, Sam, and Jordan. Riley is not scored.
+
+```
+─── Morgan's Review Verdict ───────────────────────────────────────
+
+Scores:
+  Alex   : {N} / 12 pts — [one-line assessment]
+  Sam    : {N} / 12 pts — [one-line assessment]
+  Jordan : {N} / 12 pts — [one-line assessment]
+
+Coverage view (Riley):
+  [Morgan addresses Riley's coverage assessment — one to two sentences.
+   Must state whether any Insufficient coverage concerns block approval.]
+
+My assessment:
+  [Morgan weighs in personally — 2–4 sentences. Morgan may endorse
+   the highest-scoring reviewer's findings, refine them, or add
+   independent findings from up to 4 additional targeted reads.]
+
+Overall verdict:
+  ✅ APPROVED — changes are correct, clean, and safe to merge.
+
+  — or —
+
+  ⚠️  APPROVED WITH CONDITIONS — merge after addressing:
+     [{list of specific conditions — file:line and what to change}]
+
+  — or —
+
+  🔄 REQUEST CHANGES — [{summary of blocking issues}].
+     Required before re-review:
+     [{bulleted list of required changes with file:line references}]
+
+  — or —
+
+  ❌ REJECT — [{reason — fundamental approach is wrong or introduces
+     unacceptable risk}]. Recommended path:
+     [{what should be done instead}]
+────────────────────────────────────────────────────────────────────
+```
+
+**Best Review** distinction:
+
+```
+╔══════════════════════════════════════════════════════════════════╗
+║  🏆  BEST REVIEW: {Reviewer Name}        Score: {N} / 12 pts    ║
+║  Reason: {One sentence — why this review was superior}           ║
+║  Morgan: "{One sentence endorsement or refinement note}"         ║
+║  Riley:  "{Coverage status: Adequate / Partial / Insufficient}"  ║
+╚══════════════════════════════════════════════════════════════════╝
+```
+
+---
+
+### Step R6 — Consolidated Review Report
+
+Produce a structured findings and recommendations block consolidating all reviewer input:
+
+```
+REVIEW FINDINGS
+────────────────────────────────────────────────────────────────────
+Ticket      : {TICKET_KEY} — {summary}
+Branch      : {feature branch}
+Reviewed by : Claude Review Panel (Morgan, Alex, Sam, Jordan, Riley)
+Date        : {today's date}
+Verdict     : ✅ APPROVED / ⚠️ APPROVED WITH CONDITIONS /
+              🔄 REQUEST CHANGES / ❌ REJECT
+────────────────────────────────────────────────────────────────────
+
+CRITICAL ISSUES  ({N} — must be resolved before merge)
+────────────────────────────────────────────────────────────────────
+{For each Critical issue:}
+[C{N}] {Pattern or category name}
+  File     : {file:line}
+  Finding  : {description of the issue}
+  Fix      : {specific recommended change}
+  Raised by: {Alex / Sam / Jordan / Riley}
+
+MAJOR ISSUES  ({N} — should be resolved before merge)
+────────────────────────────────────────────────────────────────────
+{For each Major issue:}
+[M{N}] {Pattern or category name}
+  File     : {file:line}
+  Finding  : {description of the issue}
+  Fix      : {specific recommended change}
+  Raised by: {Alex / Sam / Jordan / Riley}
+
+MINOR ISSUES  ({N} — recommended improvements)
+────────────────────────────────────────────────────────────────────
+{For each Minor issue:}
+[m{N}] {Pattern or category name}
+  File     : {file:line}
+  Finding  : {description of the issue}
+  Fix      : {specific recommended change}
+  Raised by: {Alex / Sam / Jordan / Riley}
+
+POSITIVES
+────────────────────────────────────────────────────────────────────
+{Bulleted list of what was done well — specific and constructive}
+
+TEST COVERAGE SUMMARY
+────────────────────────────────────────────────────────────────────
+{Reproduce Riley's Test Coverage Assessment block from R5b verbatim}
+
+CONDITIONS FOR APPROVAL  (if verdict is not ✅ APPROVED)
+────────────────────────────────────────────────────────────────────
+{Numbered list of required changes before the PR can be merged,
+ ordered by priority — Critical first, then Major}
+
+1. {Issue reference [C1/M1/etc.]} — {file:line} — {what to change}
+2. ...
+
+{If verdict is APPROVED: "No conditions — ready to merge."}
+────────────────────────────────────────────────────────────────────
+```
+
+If there are **zero Critical and zero Major issues**, and coverage is Adequate or Partial, confirm:
+> **This change is ready to merge** subject to any listed conditions.
+
+If there are **Critical issues**, confirm:
+> **This change must not be merged** until all Critical issues are resolved. Re-review recommended after changes are applied.
+
+---
+
+### Step R7 — Session Stats
+
+Same format as Step 11 in Dev Mode. Print the single summary line:
+
+```
+{TICKET_KEY} | ~{N}m elapsed | ~{X} in / ~{Y} out tokens | est. cost ${Z} (Sonnet 4.6)
+```
+
+---
+
+### Step R8 — Generate PDF Review Report
+
+After Step R6 is complete, generate a PDF review report and save it to disk.
+
+#### R8a. Configuration
+
+Same as Step 12a in Dev Mode:
+
+```bash
+REPORT_DIR="${CLAUDE_REPORT_DIR:-$HOME/Documents/DevelopmentTasks/Claude-Analyzed-Tickets}"
+mkdir -p "$REPORT_DIR"
+```
+
+#### R8b. Generate Markdown Source
+
+Write a temporary Markdown file at `/tmp/{TICKET_KEY}-review.md`. Populate every section below verbatim from the output already produced — do not summarise or abbreviate.
+
+````
+# {TICKET_KEY} — PR Review Report
+
+| Field | Value |
+|-------|-------|
+| Date | {today's date} |
+| Reviewer | Claude Review Panel (Prevoir Dev Skill v1.2.1) |
+| Ticket type | {Bug fix / Enhancement} |
+| Priority | {priority} |
+| Status | {status} |
+| Feature branch | {feature branch name} |
+| Base branch | {base branch} |
+| Verdict | {✅ APPROVED / ⚠️ APPROVED WITH CONDITIONS / 🔄 REQUEST CHANGES / ❌ REJECT} |
+
+---
+
+## Step R1 — Jira Ticket
+
+| Field | Value |
+|-------|-------|
+| Key | {TICKET_KEY} |
+| Summary | {summary} |
+| Type | {issuetype} |
+| Priority | {priority} |
+| Status | {status} |
+| Assignee | {assignee} |
+| Reporter | {reporter} |
+| Labels | {labels or "None"} |
+| Components | {components or "None"} |
+| Fix Version(s) | {fixVersions or "Not set"} |
+| Affected Version(s) | {versions or "Not set"} |
+
+### Description
+
+{Full ticket description — verbatim}
+
+### Attachments
+
+{List each attachment by name and type, or "No attachments"}
+
+---
+
+## Step R2 — Problem Understanding
+
+### Problem Statement
+
+{Reproduce the problem statement table from Step R2 — What/Who/Expected/Actual/Acceptance criteria}
+
+### Linked Tickets
+
+{Reproduce linked ticket summaries, or "No linked tickets found."}
+
+### Attachment Analysis
+
+{Reproduce attachment findings, or "No attachments — analysis skipped."}
+
+---
+
+## Step R3 — Comments & Context
+
+### Comment Summary
+
+{Reproduce comment summary bullets, or "No comments on ticket."}
+
+### Prior Investigation Summary
+
+{Reproduce Prior Investigation Summary block if found, or "No prior investigation found."}
+
+---
+
+## Step R4 — Code Changes
+
+### Branch & Diff Summary
+
+| Field | Value |
+|-------|-------|
+| Feature branch | {feature branch name} |
+| Base branch | {base branch name} |
+| Commits | {N commits} |
+| Files changed | {N files} |
+
+### Commit Log
+
+{Reproduce git log output — one line per commit}
+
+### Files Changed
+
+| File | Change type | +/- lines |
+|------|-------------|-----------|
+{Reproduce the complete files-changed table from Step R4d}
+
+---
+
+## Step R5 — Engineering Panel Code Review
+
+### R5a. Morgan's Review Briefing
+
+{Reproduce the full Morgan briefing box verbatim}
+
+### R5b. Mid-Point Check-In (T+2)
+
+{Reproduce the full mid-point check-in block verbatim — Alex, Sam, Jordan, Riley statuses and Morgan's response}
+
+### R5c. Final Review Submissions (T+4)
+
+{Reproduce each submission block verbatim:
+  - Alex — Code Quality Findings
+  - Sam — Logic Correctness Findings
+  - Jordan — Defensive Pattern Findings
+  - Riley — Test Coverage Assessment}
+
+### R5d. Riley's Question + Morgan's Cross-Examination (T+5)
+
+{Reproduce the full cross-examination block verbatim}
+
+### R5e. Debate Round
+
+{Reproduce the full debate round verbatim, or "No challenges."}
+
+### R5f. Morgan's Review Verdict (T+6)
+
+{Reproduce the full verdict block verbatim — scores, coverage view, Morgan's assessment, overall verdict, Best Review box}
+
+---
+
+## Step R6 — Consolidated Review Report
+
+{Reproduce the full REVIEW FINDINGS block verbatim — all sections:
+  Critical Issues, Major Issues, Minor Issues, Positives,
+  Test Coverage Summary, Conditions for Approval}
+
+---
+
+## Step R7 — Session Statistics
+
+| Metric | Value |
+|--------|-------|
+| Steps completed | {N / 8} |
+| Elapsed time | {HH:MM} |
+| Estimated token count | {N tokens} |
+| Estimated cost (Sonnet 4.6) | {$X.XX} |
+| Ticket type | {Bug fix / Enhancement} |
+| Verdict | {✅ APPROVED / ⚠️ APPROVED WITH CONDITIONS / 🔄 REQUEST CHANGES / ❌ REJECT} |
+| Issues found | Critical: {N} / Major: {N} / Minor: {N} |
+
+````
+
+#### R8c. Convert to PDF
+
+Same three-method sequence as Step 12c in Dev Mode (pandoc → Chrome headless → HTML fallback). Use filename `{TICKET_KEY}-review` instead of `{TICKET_KEY}-analysis`:
+
+```bash
+pandoc /tmp/{TICKET_KEY}-review.md \
+  -o "{REPORT_DIR}/{TICKET_KEY}-review.pdf" \
+  --pdf-engine=wkhtmltopdf \
+  -V geometry:margin=2cm \
+  -V fontsize=11pt
+```
+
+#### R8d. Archive and Confirm
+
+```
+📄 Review Report Generated
+   Folder : {REPORT_DIR}/
+   File   : {REPORT_DIR}/{TICKET_KEY}-review.pdf
+   Format : PDF  ← (or "HTML (PDF libraries unavailable)" if fallback used)
+   Verdict: {✅ APPROVED / ⚠️ APPROVED WITH CONDITIONS / 🔄 REQUEST CHANGES / ❌ REJECT}
+   Issues : Critical: {N}  Major: {N}  Minor: {N}
+```
+
+#### R8e. Temp File Cleanup
+
+```bash
+rm -f /tmp/{TICKET_KEY}-review.md /tmp/{TICKET_KEY}-review.html
+```
+
+Then end with:
+
+> **Review complete.** See `{REPORT_DIR}/{TICKET_KEY}-review.pdf` for the full findings. {If REQUEST CHANGES or REJECT: "Share the report with the developer and request re-review after issues are addressed."}
 
 ---
 

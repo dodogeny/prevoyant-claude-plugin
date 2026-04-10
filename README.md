@@ -1,10 +1,19 @@
-# Prevoir Internal Dev Skill — Claude Code Plugin `v1.2.0`
+# Prevoir Internal Dev Skill — Claude Code Plugin `v1.2.1`
 
-A [Claude Code](https://claude.ai/code) plugin that gives Claude a structured, end-to-end developer workflow for V1 Jira tickets. Instead of manually reading a ticket, searching for files, and figuring out where to start, you invoke one command and Claude walks through the full cycle — from ticket ingestion to a proposed fix and archived report.
+A [Claude Code](https://claude.ai/code) plugin that gives Claude a structured, end-to-end developer workflow for V1 Jira tickets. The skill has two modes:
+
+- **Dev Mode** — you hand Claude a ticket key and it walks through the full cycle from ticket ingestion to proposed fix and archived PDF report (12 steps).
+- **PR Review Mode** — you hand Claude a ticket key with the word `review` and the team reviews the code changes on the associated feature branch, producing a structured findings report as a PDF (8 steps).
+
+Instead of manually reading a ticket, searching for files, and figuring out where to start (or manually reviewing a diff against acceptance criteria), you invoke one command and Claude handles it end to end.
 
 ---
 
 ## What It Does
+
+The skill runs in one of two modes based on how you invoke it.
+
+### Dev Mode
 
 When you hand Claude a Jira ticket key (`IV-XXXX`), the skill executes **12 steps automatically**, presenting output at each step as it completes.
 
@@ -267,6 +276,48 @@ The PDF is structured in 11 sections, one per step. Every section is fully popul
   3. **HTML fallback** — saves a styled `.html` file and instructs the developer to print to PDF from their browser
 - **Confirmation** — always displays both the output folder and the full file path after saving
 - **Cleanup** — intermediate temp files (`/tmp/{TICKET_KEY}-analysis.md`, `.html`) are removed after the report is saved
+
+---
+
+### PR Review Mode
+
+When you add the word `review` before or near the ticket key, the skill switches to **PR Review Mode** and executes **8 steps** instead:
+
+| Step | What happens |
+|------|-------------|
+| **R1 — Read Ticket** | Fetches the Jira ticket (same as Dev Mode Step 1) |
+| **R2 — Understand Problem & Associated Tickets** | Analyses description, all linked/associated tickets (blocked by, blocks, relates to, cloned from, parent epics, sub-tasks), and attachments — same full analysis as Dev Mode Step 2. All linked ticket context (prior investigations, acceptance criteria changes, design decisions, regression history) is carried forward into the review panel so reviewers understand the full expected behaviour, not just the primary ticket. |
+| **R3 — Read Comments** | Extracts prior investigation, decisions, and constraints from comments (same as Step 3) |
+| **R4 — Fetch Code Changes** | Locates the feature branch (`Feature/{TICKET_KEY}_*`), determines the base branch using the same version logic as Dev Mode, and runs `git diff` to retrieve the full changeset |
+| **R5 — Engineering Panel Code Review** | The same four-person team (Morgan, Alex, Sam, Jordan, Riley) convenes — this time as reviewers, not investigators. Each has a focused mandate: Alex reviews code quality and conventions; Sam checks logic correctness and acceptance criteria coverage; Jordan runs the full 20-pattern defensive checklist on the diff; Riley assesses test coverage, testability, and regression surface. Morgan chairs, cross-examines, scores, and delivers a binding verdict. |
+| **R6 — Consolidated Review Report** | Structured findings block listing all Critical, Major, and Minor issues with `file:line` references and specific fix recommendations, followed by Positives, Test Coverage Summary, and the ordered Conditions for Approval |
+| **R7 — Session Stats** | Elapsed time, estimated tokens, estimated cost |
+| **R8 — PDF Review Report** | Full report saved to `{REPORT_DIR}/{TICKET_KEY}-review.pdf` using the same three-method generation sequence (pandoc → Chrome headless → HTML fallback). Report includes all step output, the consolidated findings, and the Morgan verdict. |
+
+#### Review Verdict
+
+Morgan's verdict is one of four outcomes:
+
+| Verdict | Meaning |
+|---------|---------|
+| ✅ **APPROVED** | No Critical or Major issues — ready to merge |
+| ⚠️ **APPROVED WITH CONDITIONS** | No Critical issues; specific Minor/Major items must be addressed before merge |
+| 🔄 **REQUEST CHANGES** | Blocking issues found — developer must resolve and re-review |
+| ❌ **REJECT** | Fundamental approach is wrong or introduces unacceptable risk — rework required |
+
+#### PDF Report Contents
+
+The review PDF is structured in 7 sections:
+
+| Section | Contents |
+|---------|----------|
+| **R1 — Jira Ticket** | Full field table + ticket description + attachment list |
+| **R2 — Problem Understanding** | Problem statement, acceptance criteria, linked tickets, attachment findings |
+| **R3 — Comments & Context** | Comment summary, Prior Investigation Summary |
+| **R4 — Code Changes** | Branch/diff summary, commit log, files-changed table |
+| **R5 — Engineering Panel** | Full review session — Morgan's briefing, mid-point check-in, all reviewer submissions, Riley's question + cross-examination, debate round, Morgan's scored verdict with Best Review box |
+| **R6 — Consolidated Findings** | All issues (Critical/Major/Minor) with file:line and fix recommendations, Positives, Test Coverage Summary, Conditions for Approval |
+| **R7 — Session Statistics** | Steps completed, elapsed time, tokens, cost, verdict, issue counts |
 
 ---
 
@@ -698,7 +749,9 @@ The version number next to `prevoir@prevoir` should reflect the latest release.
 
 ## Usage
 
-Invoke the skill from any Claude Code session using any of these forms:
+### Dev Mode — start development on a ticket
+
+Invoke using any of these forms:
 
 ```
 /prevoir:dev IV-3672
@@ -716,9 +769,31 @@ pick up IV-3672
 https://prevoirsolutions.atlassian.net/browse/IV-3672
 ```
 
-> `/dev` is the shorthand — it uses just the skill name. `/prevoir:dev` is the fully qualified form that includes the plugin namespace. Both work; use the fully qualified form if another installed plugin also has a skill named `dev`.
-
 Claude will immediately begin executing all 12 steps in order, presenting output for each step as it completes.
+
+### PR Review Mode — review code changes for a ticket
+
+Add the word `review` before or near the ticket key:
+
+```
+/prevoir:dev review IV-3672
+```
+```
+/dev review IV-3672
+```
+```
+review IV-3672
+```
+```
+PR review IV-3672
+```
+```
+code review IV-3672
+```
+
+Claude will execute 8 review steps and save the findings as `{TICKET_KEY}-review.pdf` in the configured report folder.
+
+> `/dev` is the shorthand — it uses just the skill name. `/prevoir:dev` is the fully qualified form that includes the plugin namespace. Both work; use the fully qualified form if another installed plugin also has a skill named `dev`.
 
 ### Example output structure
 
@@ -1262,6 +1337,26 @@ claude plugin update prevoir@prevoir
 ---
 
 ## Changelog
+
+### v1.2.1
+
+#### PR Review Mode — New Mode
+
+| # | Area | Change |
+|---|------|--------|
+| 1 | Skill — Mode Selection | **New PR Review Mode** — the skill now detects the mode from the invocation. Invoking with the word `review` near the ticket key (e.g. `review IV-XXXX`, `PR review IV-XXXX`, `/dev review IV-XXXX`) triggers PR Review Mode (Steps R1–R8). All other invocations remain Dev Mode (Steps 1–12). |
+| 2 | Step R1 — Read Ticket | Fetches the Jira ticket — identical to Dev Mode Step 1 |
+| 3 | Step R2 — Understand Problem | Full Step 2 analysis including all linked/associated tickets — fetches blocked-by, blocks, relates-to, cloned-from, parent epics, and sub-tasks. All linked ticket context (prior investigations, acceptance criteria changes, design decisions, regression history) is carried forward to the review panel for full expected-behaviour context. |
+| 4 | Step R3 — Read Comments | Full Step 3 analysis — extracts prior investigation, decisions, and constraints |
+| 5 | Step R4 — Fetch Code Changes | Locates the feature branch matching `Feature/{TICKET_KEY}_*`, determines the base branch using the same version priority logic as Dev Mode, and runs `git diff {BASE}...{FEATURE}` to retrieve the full changeset. Lists every changed file with change type and line counts. Stops if no branch or no changes are found. |
+| 6 | Step R5 — Engineering Panel Code Review | The same four-person team convenes as code reviewers: Alex (code quality, naming, conventions, commit hygiene), Sam (logic correctness, acceptance criteria coverage, data flow), Jordan (full 20-pattern defensive checklist on the diff), Riley (test coverage, testability, regression surface). Same phased session: Morgan briefing → 4-min review window (8 ops for engineers, 6 for Riley) → mid-point check-in → review submissions → Riley's question + Morgan cross-examination → debate round → Morgan's verdict. |
+| 7 | Step R5 — Review Scoring | 7-criterion scoring rubric (max 12 pts): code evidence (+3), actionable finding (+2), survived cross-examination (+2), corroborated finding (+2), found efficiently ≤ 5 ops (+1), debate challenge deflected (+1), testability-relevant and Riley-corroborated (+1). Morgan also gives a Best Review distinction. |
+| 8 | Step R5 — Review Verdict | Four verdict outcomes: ✅ APPROVED / ⚠️ APPROVED WITH CONDITIONS / 🔄 REQUEST CHANGES / ❌ REJECT. Verdict is binding and includes a Coverage view (Morgan's response to Riley's test coverage assessment). |
+| 9 | Step R6 — Consolidated Report | Structured findings block with all Critical, Major, and Minor issues in `[C1]`/`[M1]`/`[m1]` format — each with `file:line`, finding description, recommended fix, and which reviewer raised it. Also includes Positives, Riley's Test Coverage Assessment verbatim, and an ordered Conditions for Approval list. |
+| 10 | Step R7 — Session Stats | Same format as Dev Mode Step 11 |
+| 11 | Step R8 — PDF Review Report | Generates `{TICKET_KEY}-review.pdf` (not `{TICKET_KEY}-analysis.pdf`) using the same three-method generation sequence (pandoc → Chrome headless → HTML fallback). 7-section report: ticket, problem understanding, comments, code changes, full review panel session, consolidated findings, session stats. Confirmation displays the verdict and issue counts alongside the file path. |
+
+---
 
 ### v1.2.0
 
