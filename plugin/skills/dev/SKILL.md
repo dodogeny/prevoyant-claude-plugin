@@ -2857,7 +2857,15 @@ Use the same base branch logic as Step 4a in Dev Mode (Fix Version → Affected 
 
 #### R4c. Get the Diff
 
-Fetch the full diff of changes between the feature branch and its base branch:
+First, extract the list of files touched by this PR and bind it as `CHANGED_FILES` — all subsequent review operations are scoped to this list only:
+
+```bash
+git diff {BASE_BRANCH}...{FEATURE_BRANCH} --name-only
+```
+
+Store the output as `CHANGED_FILES` (newline-separated paths). This is the authoritative set of files reviewers may read or grep. Any file not in `CHANGED_FILES` must not be read unless it is a direct caller of a changed method identified via grep.
+
+Then fetch the full diff and stats:
 
 ```bash
 git diff {BASE_BRANCH}...{FEATURE_BRANCH} --stat
@@ -2962,6 +2970,8 @@ If JIRA search fails: log `JIRA_SEARCH_WARN:` and continue.
 #### R5b. Parallel Review — All Four Reviewers (4-minute block)
 
 Each reviewer has a **4-minute window** capped at **8 targeted operations** (reads of specific diff hunks, greps for callers/usages, reads of surrounding context for a changed method). Riley is capped at **6 operations**. The Grep-First, Read-Second rule applies.
+
+**Scope constraint:** All read and grep operations are restricted to files in `CHANGED_FILES` (derived in R4c). Reviewers must not open or search files outside this set unless a grep reveals a direct caller of a changed method in another file — in which case that file may be read once, counts as one operation, and must be noted as "outside CHANGED_FILES".
 
 ---
 
