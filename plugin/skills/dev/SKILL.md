@@ -548,13 +548,175 @@ KB_CLONE="${PRX_KB_LOCAL_CLONE:-$HOME/.prx/kb}"
 git clone "$PRX_KB_REPO" "$KB_CLONE"
 ```
 
+**Migrating from local to distributed (solo → team):**
+
+When a developer who has been working in `KB_MODE=local` switches to `KB_MODE=distributed`, their `KNOWLEDGE_DIR` already contains plain `.md` files with no git history. A plain `git clone` would fail on a non-empty directory. The migration must commit the existing local files into the remote KB repo.
+
+This is handled **automatically** by the updated Pull (Step 0a) logic below — no manual steps are required. The agent detects the "directory exists, no `.git`" condition and runs the migration inline. For reference, the manual equivalent is:
+
+> **Key requirement — read before running:** If the team KB repo uses encryption (i.e. other contributors have `PRX_KB_KEY` set), you **must** set the same `PRX_KB_KEY` passphrase in your shell profile before migrating. Migrating without it pushes plain `.md` files that are invisible to every encrypted contributor, and encrypted files they push will be invisible to you. The migration script below detects this mismatch and aborts with instructions if the remote already contains `.md.enc` files and your `PRX_KB_KEY` is unset.
+
+```bash
+KB_CLONE="${PRX_KB_LOCAL_CLONE:-$HOME/.prx/kb}"
+cd "$KB_CLONE"
+git init
+git remote add origin "$PRX_KB_REPO"
+cat > .gitattributes << 'EOF'
+tickets/*.md    merge=union
+shared/*.md     merge=union
+INDEX.md        merge=union
+EOF
+
+# --- Encryption consistency check (must run before committing any files) ---
+REMOTE_MAIN_EXISTS=false
+REMOTE_HAS_ENC=false
+if git ls-remote --exit-code origin main >/dev/null 2>&1; then
+  REMOTE_MAIN_EXISTS=true
+  git fetch origin main --quiet 2>/dev/null
+  if git ls-tree -r origin/main --name-only 2>/dev/null | grep -q '\.md\.enc$'; then
+    REMOTE_HAS_ENC=true
+  fi
+fi
+
+if [ "$REMOTE_HAS_ENC" = true ] && [ -z "$PRX_KB_KEY" ]; then
+  echo "KB_MIGRATE_ERROR: The team KB repo uses encryption (.md.enc files detected on origin/main)."
+  echo "                  PRX_KB_KEY is not set — your local KB files would be pushed as plain"
+  echo "                  Markdown and will NOT be visible to other contributors."
+  echo ""
+  echo "  ACTION REQUIRED before retrying:"
+  echo "  1. Obtain the PRX_KB_KEY passphrase from your team lead."
+  echo "  2. Add it to your shell profile (~/.zshrc or ~/.bash_profile):"
+  echo "       export PRX_KB_KEY='<passphrase>'"
+  echo "  3. Reload your profile:  source ~/.zshrc"
+  echo "  4. Re-run this session."
+  echo ""
+  echo "  Migration aborted. Your local KB files are safe and untouched."
+  exit 1
+fi
+
+if [ -z "$PRX_KB_KEY" ]; then
+  echo "KB_MIGRATE_WARN: PRX_KB_KEY is not set — your KB files will be pushed as plain Markdown."
+  if [ "$REMOTE_MAIN_EXISTS" = false ]; then
+    echo "                 The remote repo has no content yet. If your team uses PRX_KB_KEY you"
+    echo "                 must set the same passphrase before migrating, or your entries will be"
+    echo "                 invisible to encrypted contributors. Confirm with your team lead first."
+  fi
+fi
+# ---------------------------------------------------------------------------
+
+# Re-encrypt existing plain .md files if PRX_KB_KEY is set
+if [ -n "$PRX_KB_KEY" ]; then
+  find tickets shared -name "*.md" 2>/dev/null | while read f; do
+    openssl enc -aes-256-cbc -pbkdf2 -in "$f" -out "${f%.md}.md.enc" -pass env:PRX_KB_KEY && rm "$f"
+  done
+  echo "KB_MIGRATE: existing KB files encrypted."
+fi
+
+git add .
+git commit -m "kb: migrate solo local KB to distributed"
+
+# If the team repo already has content on main, rebase local commits on top of it
+if [ "$REMOTE_MAIN_EXISTS" = true ]; then
+  git rebase origin/main 2>/dev/null || (git add . && git rebase --continue 2>/dev/null) || git rebase --skip
+  git push origin main && echo "KB_MIGRATE: solo KB merged into team repo at ${PRX_KB_REPO}."
+else
+  git push --set-upstream origin main && echo "KB_MIGRATE: solo KB pushed as first content of ${PRX_KB_REPO}."
+fi
+```
+
+**Migration behaviour by scenario:**
+
+| Scenario | Result |
+|---|---|
+| Remote KB repo is empty (dev is first to push) | Local files committed and pushed as-is; team repo initialised with solo history. Soft warning emitted if `PRX_KB_KEY` is unset. |
+| Remote KB repo already has content (joining an existing team) | Local files rebased on top of remote; union merge on `shared/*.md` keeps all entries from both sides |
+| `PRX_KB_KEY` is set (encryption enabled) | Each `.md` is re-encrypted to `.md.enc` and the plain file is deleted before committing; repo never receives plaintext |
+| Remote has `.md.enc` files but `PRX_KB_KEY` is **not set** | **Migration blocked.** `KB_MIGRATE_ERROR` emitted with step-by-step instructions to obtain and set the team passphrase. Local files are untouched. |
+| Remote has plain `.md` files and `PRX_KB_KEY` **is set** | Migration proceeds but `KB_MIGRATE_WARN` notes the inconsistency — the team may not be using encryption; confirm with the team lead |
+| Rebase conflict cannot be auto-resolved | `git rebase --skip` discards the conflicting local commit and logs `KB_MIGRATE_WARN`; run `git log ORIG_HEAD..` to recover |
+
+After a successful migration the agent logs:
+```
+KB_MIGRATE: {N} local KB files migrated to distributed repo {PRX_KB_REPO}.
+```
+Subsequent sessions treat the directory as a normal distributed clone (the `.git` folder now exists) and follow the standard pull/push path.
+
 **Pull (Step 0a — before session, distributed mode only):**
 ```bash
 KB_CLONE="${PRX_KB_LOCAL_CLONE:-$HOME/.prx/kb}"
+
 if [ -d "$KB_CLONE/.git" ]; then
-  cd "$KB_CLONE" && git pull origin main && \
+  # Normal path — already a git repo, just pull latest
+  cd "$KB_CLONE" && git pull --rebase origin main && \
     echo "KB: pulled latest from ${PRX_KB_REPO}."
+
+elif [ -d "$KB_CLONE" ] && [ -n "$(ls -A "$KB_CLONE" 2>/dev/null)" ]; then
+  # Migration path — local-mode KB files exist but no git repo
+  echo "KB_MIGRATE: local KB detected at ${KB_CLONE} — migrating to distributed repo ${PRX_KB_REPO}..."
+  cd "$KB_CLONE"
+  git init
+  git remote add origin "$PRX_KB_REPO"
+  cat > .gitattributes << 'EOF'
+tickets/*.md    merge=union
+shared/*.md     merge=union
+INDEX.md        merge=union
+EOF
+  # --- Encryption consistency check (must run before committing any files) ---
+  REMOTE_MAIN_EXISTS=false
+  REMOTE_HAS_ENC=false
+  if git ls-remote --exit-code origin main >/dev/null 2>&1; then
+    REMOTE_MAIN_EXISTS=true
+    git fetch origin main --quiet 2>/dev/null
+    if git ls-tree -r origin/main --name-only 2>/dev/null | grep -q '\.md\.enc$'; then
+      REMOTE_HAS_ENC=true
+    fi
+  fi
+  if [ "$REMOTE_HAS_ENC" = true ] && [ -z "$PRX_KB_KEY" ]; then
+    echo "KB_MIGRATE_ERROR: The team KB repo uses encryption (.md.enc files detected on origin/main)."
+    echo "                  PRX_KB_KEY is not set — your local KB files would be pushed as plain"
+    echo "                  Markdown and will NOT be visible to other contributors."
+    echo ""
+    echo "  ACTION REQUIRED before retrying:"
+    echo "  1. Obtain the PRX_KB_KEY passphrase from your team lead."
+    echo "  2. Add it to your shell profile (~/.zshrc or ~/.bash_profile):"
+    echo "       export PRX_KB_KEY='<passphrase>'"
+    echo "  3. Reload your profile:  source ~/.zshrc"
+    echo "  4. Re-run this session — migration will resume automatically."
+    echo ""
+    echo "  Migration aborted. Your local KB files are safe and untouched."
+    exit 1
+  fi
+  if [ -z "$PRX_KB_KEY" ]; then
+    echo "KB_MIGRATE_WARN: PRX_KB_KEY is not set — your KB files will be pushed as plain Markdown."
+    if [ "$REMOTE_MAIN_EXISTS" = false ]; then
+      echo "                 The remote repo has no content yet. If your team uses PRX_KB_KEY you"
+      echo "                 must set the same passphrase before migrating, or your entries will be"
+      echo "                 invisible to encrypted contributors. Confirm with your team lead first."
+    fi
+  fi
+  # ---------------------------------------------------------------------------
+  # Re-encrypt existing plain .md files if PRX_KB_KEY is set
+  if [ -n "$PRX_KB_KEY" ]; then
+    find tickets shared -name "*.md" 2>/dev/null | while read f; do
+      openssl enc -aes-256-cbc -pbkdf2 -in "$f" -out "${f%.md}.md.enc" -pass env:PRX_KB_KEY && rm "$f"
+    done
+    echo "KB_MIGRATE: existing KB files encrypted."
+  fi
+  git add .
+  git commit -m "kb: migrate solo local KB to distributed"
+  # Merge with remote if main branch already exists
+  if [ "$REMOTE_MAIN_EXISTS" = true ]; then
+    git rebase origin/main 2>/dev/null || \
+      (git add . && git rebase --continue 2>/dev/null) || git rebase --skip
+    git push origin main
+    echo "KB_MIGRATE: solo KB merged into team repo at ${PRX_KB_REPO}."
+  else
+    git push --set-upstream origin main
+    echo "KB_MIGRATE: solo KB pushed as first content of ${PRX_KB_REPO}."
+  fi
+
 else
+  # Fresh path — directory empty or does not exist, clone from remote
   git clone "$PRX_KB_REPO" "$KB_CLONE" && \
     echo "KB: cloned ${PRX_KB_REPO} → ${KB_CLONE}."
   mkdir -p "$KB_CLONE/tickets" "$KB_CLONE/shared"
