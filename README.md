@@ -52,12 +52,12 @@ Invoke the skill with a Jira ticket key and Claude runs a structured multi-step 
 **macOS / Linux:**
 ```bash
 git clone https://github.com/dodogeny/prx-skill-internal-dev.git \
-  ~/.claude/plugins/marketplaces/prx
+  ~/.claude/plugins/marketplaces/dodogeny
 ```
 
 **Windows (PowerShell):**
 ```powershell
-git clone https://github.com/dodogeny/prx-skill-internal-dev.git "$env:USERPROFILE\.claude\plugins\marketplaces\prx"
+git clone https://github.com/dodogeny/prx-skill-internal-dev.git "$env:USERPROFILE\.claude\plugins\marketplaces\dodogeny"
 ```
 
 Add to `~/.claude/settings.json` (create the file if it does not exist):
@@ -66,8 +66,8 @@ Add to `~/.claude/settings.json` (create the file if it does not exist):
 ```json
 {
   "extraKnownMarketplaces": {
-    "prx": {
-      "source": { "source": "directory", "path": "/Users/<username>/.claude/plugins/marketplaces/prx" }
+    "dodogeny": {
+      "source": { "source": "directory", "path": "/Users/<username>/.claude/plugins/marketplaces/dodogeny" }
     }
   }
 }
@@ -77,8 +77,8 @@ Add to `~/.claude/settings.json` (create the file if it does not exist):
 ```json
 {
   "extraKnownMarketplaces": {
-    "prx": {
-      "source": { "source": "directory", "path": "C:\\Users\\<username>\\.claude\\plugins\\marketplaces\\prx" }
+    "dodogeny": {
+      "source": { "source": "directory", "path": "C:\\Users\\<username>\\.claude\\plugins\\marketplaces\\dodogeny" }
     }
   }
 }
@@ -88,18 +88,19 @@ Add to `~/.claude/settings.json` (create the file if it does not exist):
 ```json
 {
   "extraKnownMarketplaces": {
-    "prx": {
+    "dodogeny": {
       "source": { "source": "github", "repo": "dodogeny/prx-skill-internal-dev" }
     }
   }
 }
 ```
-> With this option, run `claude plugin marketplace update prx` before installing.
+> With this option, run `claude plugin marketplace update dodogeny` before installing.
 
-Then install:
+Then install and enable:
 ```bash
-claude plugin install dodogeny@prx
-claude plugin list   # should show dodogeny@prx
+claude plugin install prx@dodogeny
+claude plugin enable prx@dodogeny
+claude plugin list   # should show prx@dodogeny with ✔ enabled
 ```
 
 ---
@@ -130,7 +131,7 @@ Copy `.env.example` to `.env` **in the same folder where you cloned this repo** 
 
 ```bash
 # Run this from the project root
-cd ~/.claude/plugins/marketplaces/prx   # or wherever you cloned the repo
+cd ~/.claude/plugins/marketplaces/dodogeny   # or wherever you cloned the repo
 cp .env.example .env
 ```
 
@@ -460,10 +461,10 @@ git push origin main
 
 After pushing, update your local installation:
 ```bash
-claude plugin update dodogeny@prx
+claude plugin update prx@dodogeny
 ```
 
-> Do **not** run `git pull` directly inside `~/.claude/plugins/marketplaces/prx` — Claude Code manages that directory.
+> Do **not** run `git pull` directly inside `~/.claude/plugins/marketplaces/dodogeny` — Claude Code manages that directory.
 
 ---
 
@@ -471,11 +472,11 @@ claude plugin update dodogeny@prx
 
 ```bash
 # If registered with a local path:
-git -C ~/.claude/plugins/marketplaces/prx pull
-claude plugin update dodogeny@prx
+git -C ~/.claude/plugins/marketplaces/dodogeny pull
+claude plugin update prx@dodogeny
 
 # If registered with the hosted Git URL:
-claude plugin update dodogeny@prx
+claude plugin update prx@dodogeny
 
 # Verify:
 claude plugin list
@@ -491,7 +492,7 @@ claude plugin list
 - **Distributed KB — first contributor:** Added checks to ensure `PRX_KB_KEY` is set when required (encrypted repos) and that the first-time contributor flow handles an existing remote branch gracefully.
 - **Email reports:** `send-report.py` delivers PDF/HTML analysis and review reports via SMTP immediately after saving. Configure via `PRX_EMAIL_TO` and `PRX_SMTP_*` env vars.
 - **PR Review diff:** Review mode (Step R4) now uses `git diff` to detect changed files precisely, restricting the review panel to only the files actually modified on the feature branch.
-- **Plugin registry:** Published as `dodogeny@prx`.
+- **Plugin registry:** Published as `prx@dodogeny`.
 
 ### v1.2.0
 
