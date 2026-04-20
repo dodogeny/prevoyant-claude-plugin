@@ -293,13 +293,16 @@ team-kb/
 │   ├── architecture.md             # Class hierarchies, data flows, ownership decisions
 │   ├── patterns.md                 # Recurring bug/fix patterns with frequency counters
 │   └── regression-risks.md         # Known fragile areas requiring care on every change
-└── core-mental-map/                # Compressed, always-growing codebase model (codebase-driven)
-    ├── INDEX.md                    # Quick index: topics, entry counts, last-updated
-    ├── architecture.md             # System layers, component boundaries, key class relationships
-    ├── business-logic.md           # Core domain invariants and state machine rules
-    ├── data-flows.md               # Key data flows, RPC contracts, write paths
-    ├── tech-stack.md               # Technologies, frameworks, key library choices
-    └── gotchas.md                  # Non-obvious couplings, footguns, edge-case traps
+├── core-mental-map/                # Compressed, always-growing codebase model (codebase-driven)
+│   ├── INDEX.md                    # Quick index: topics, entry counts, last-updated
+│   ├── architecture.md             # System layers, component boundaries, key class relationships
+│   ├── business-logic.md           # Core domain invariants and state machine rules
+│   ├── data-flows.md               # Key data flows, RPC contracts, write paths
+│   ├── tech-stack.md               # Technologies, frameworks, key library choices
+│   └── gotchas.md                  # Non-obvious couplings, footguns, edge-case traps
+└── lessons-learned/                # Per-developer sprint retrospective entries
+    ├── alice.md                    # Developer's own lessons (pitfalls, hard-won insights)
+    └── bob.md
 ```
 
 In `KB_MODE=distributed` all files on disk are `.md.enc`; the plain `.md` files exist only in a temp working directory during the session.
@@ -308,16 +311,32 @@ In `KB_MODE=distributed` all files on disk are `.md.enc`; the plain `.md` files 
 - **Memory Palace** — vivid trigger phrases mapped to system rooms; primary retrieval (≤ 3 reads regardless of KB size)
 - **Master Index** — flat table greppable by ticket key, component, label, and trigger; fallback if Palace has no match
 
-#### shared/ vs core-mental-map/
+#### Folder purposes
 
-| `shared/*.md` | `core-mental-map/*.md` |
-|---|---|
-| Ticket-driven: what went wrong, root cause, fix | Codebase-driven: how the system works |
-| Verbose: full context, confirmation history | Compressed: key-value facts, ≤ 3 lines per entry |
-| References specific tickets | References source files and contributing sessions |
-| Business rules, patterns, regression risks | Architecture, data flows, tech stack, gotchas |
+| Folder | Driven by | What it contains |
+|--------|-----------|-----------------|
+| `shared/` | Tickets | Root causes, business rules, patterns, regression risks |
+| `core-mental-map/` | Codebase | Architecture, data flows, tech stack, gotchas (compressed facts) |
+| `lessons-learned/` | Developers | Per-person sprint retrospective entries: pitfalls and hard-won insights |
 
-Every session starts by reading relevant `core-mental-map/` sections. Agents emit `[CMM+]` markers when they discover new or corrective codebase facts; these are applied to the map at the end of every session (Step 13g / Step R10 in PR Review Mode). The map grows more accurate with each ticket worked.
+Every session starts by reading relevant `core-mental-map/` sections and all `lessons-learned/` files. Agents emit `[CMM+]` markers for codebase facts and `[LL+]` markers for lessons; both are written back to the KB at the end of every session.
+
+### Lessons Learned
+
+Each developer keeps a personal file at `lessons-learned/{name}.md`. Entries are written in two ways:
+
+- **Manually** — after a sprint retrospective or investigation, append an entry directly to your file using the format below.
+- **Automatically** — agents emit `[LL+]` markers during investigation; these are appended to the current developer's file at session end (Step 13h).
+
+```markdown
+## LL-001 — {short title}
+date: 2026-04-14 | sprint: Sprint 42 | ticket: PROJ-1234
+PITFALL: {the trap to avoid — specific and actionable}
+KEY: {the corrective rule in one line}
+ref: {file:line or "—"}
+```
+
+The developer identity is resolved from `$PRX_DEVELOPER_NAME` (if set) or `git config user.name`. Agents read all developer files at session start and surface matching entries in the Prior Knowledge block so future sessions know which pitfalls to avoid.
 
 ### Multi-developer usage
 
@@ -519,6 +538,7 @@ claude plugin list
 - **Configurability:** `PRX_REPORT_VERBOSITY` (full/compact/minimal) controls terminal output without affecting PDF content; `PRX_ATTACHMENT_MAX_MB` caps non-image attachment size (default: unlimited).
 - **Resilience:** MCP retry-with-backoff (3 attempts, 30 s apart) before failing; PDF tool pre-check at session start with graceful fallback.
 - **KB stale detection:** Opportunistic validation during file reads; auto-heal writes `RELOCATED`/`DELETED` tags in Step 13c rather than silently leaving broken references.
+- **Lessons Learned:** New `lessons-learned/` KB folder — per-developer files for recording pitfalls and sprint retrospective insights. Agents read all files at session start and surface matching entries in the Prior Knowledge block; `[LL+]` markers let agents flag new lessons during investigation (Step 13h / R9h). Works in both local and distributed mode.
 
 ### v1.2.0
 

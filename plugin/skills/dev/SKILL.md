@@ -132,7 +132,7 @@ openssl enc -d -aes-256-cbc -pbkdf2 -iter 310000 -md sha512 \
 **Batch decrypt (Step 0a — pull to session temp dir):**
 ```bash
 KB_WORK_DIR="/tmp/dev-skill-kb-$$"
-mkdir -p "$KB_WORK_DIR/tickets" "$KB_WORK_DIR/shared" "$KB_WORK_DIR/core-mental-map"
+mkdir -p "$KB_WORK_DIR/tickets" "$KB_WORK_DIR/shared" "$KB_WORK_DIR/core-mental-map" "$KB_WORK_DIR/lessons-learned"
 find "$KNOWLEDGE_DIR" -name "*.md.enc" | while read f; do
   rel="${f#$KNOWLEDGE_DIR/}"           # e.g. tickets/IV-3672.md.enc
   out="$KB_WORK_DIR/${rel%.enc}"       # e.g. /tmp/dev-skill-kb-$$/tickets/IV-3672.md
@@ -192,13 +192,15 @@ _(Applies to `KB_MODE=distributed`.)_
 │   ├── architecture.md    (or .md.enc) ← class hierarchies, data flows, ownership decisions
 │   ├── patterns.md        (or .md.enc) ← recurring bug/fix patterns with frequency counters
 │   └── regression-risks.md (or .md.enc)← known fragile areas requiring care on every change
-└── core-mental-map/                    ← compressed codebase mental model (contributed by all agents)
-    ├── INDEX.md   (or INDEX.md.enc)   ← quick index: what topics exist, entry counts, last-updated
-    ├── architecture.md  (or .md.enc)  ← system layers, component boundaries, key class relationships
-    ├── business-logic.md (or .md.enc) ← core domain invariants and state machine rules
-    ├── data-flows.md    (or .md.enc)  ← key data flows, RPC contracts, write paths
-    ├── tech-stack.md    (or .md.enc)  ← technologies, frameworks, key library choices
-    └── gotchas.md       (or .md.enc)  ← non-obvious couplings, footguns, edge-case traps
+├── core-mental-map/                    ← compressed codebase mental model (contributed by all agents)
+│   ├── INDEX.md   (or INDEX.md.enc)   ← quick index: what topics exist, entry counts, last-updated
+│   ├── architecture.md  (or .md.enc)  ← system layers, component boundaries, key class relationships
+│   ├── business-logic.md (or .md.enc) ← core domain invariants and state machine rules
+│   ├── data-flows.md    (or .md.enc)  ← key data flows, RPC contracts, write paths
+│   ├── tech-stack.md    (or .md.enc)  ← technologies, frameworks, key library choices
+│   └── gotchas.md       (or .md.enc)  ← non-obvious couplings, footguns, edge-case traps
+└── lessons-learned/                    ← per-developer sprint retrospective entries; read by all agents
+    └── {developer}.md  (or .md.enc)   ← one file per developer (name from git config or PRX_DEVELOPER_NAME)
 ```
 
 In `KB_MODE=local` all files are plain `.md`. In `KB_MODE=distributed` all files on disk are `.md.enc`; the plain `.md` files exist only in `KB_WORK_DIR=/tmp/dev-skill-kb-{PID}/` during the session.
@@ -288,6 +290,44 @@ At the start of every session (Step 0b) agents **read** the relevant Core Mental
 ```
 
 **Cross-check rule:** If an agent's live code read contradicts an existing Core Mental Map entry, it **must** emit a `[CMM+ ... CORRECT]` marker and update the entry in Step 13g. Do not leave stale facts in the map.
+
+---
+
+### Lessons Learned
+
+The Lessons Learned folder is a **per-developer sprint retrospective record** — pitfalls, surprises, and hard-won insights that developers accumulate over time. Unlike `shared/` (ticket-driven) or `core-mental-map/` (codebase-driven), lessons-learned is **developer-driven**: each person owns their own file and writes to it after investigations or sprint reviews.
+
+Agents read all developer files at session start (Step 0b) and surface relevant entries in the Prior Knowledge block. They also emit `[LL+]` markers during investigation to flag new pitfalls discovered during the session; these are appended to the current developer's file at Step 13h.
+
+#### File per Developer
+
+Each developer's lessons are stored in `lessons-learned/{developer}.md` where `{developer}` is resolved from `$PRX_DEVELOPER_NAME` (if set) or `git config user.name` (normalised to lowercase, spaces replaced with hyphens). Agents write only to their own file; they read all files.
+
+#### Entry Format
+
+```markdown
+## LL-001 — {short title}
+date: 2026-04-14 | sprint: {sprint label or "—"} | ticket: {TICKET_KEY}
+PITFALL: {what to avoid — specific and actionable}
+KEY: {the lesson in one clear line}
+ref: {file:line or "—"}
+```
+
+Fields:
+- **`PITFALL:`** — the trap or mistake to avoid; written so a future agent recognises the warning
+- **`KEY:`** — the corrective rule (one line, ≤ 120 chars)
+- **`ref:`** — optional `file:line` anchor in the codebase that illustrates the pitfall
+- **`sprint:`** — sprint label (e.g. `Sprint 42`) or `"—"` if not tracked
+
+#### [LL+] Marker
+
+Agents emit `[LL+]` markers during investigation (Steps 5, 7, 8) to flag lessons for Step 13h:
+
+```
+[LL+] {short title} | PITFALL: {what to avoid} | KEY: {lesson} | ref: {file:line or "—"}
+```
+
+Developers may also append entries manually to their own file at any time (e.g. after a sprint retrospective) using the entry format above.
 
 ---
 
@@ -519,6 +559,7 @@ The KB repo must have a `.gitattributes` file to prevent git conflicts on `share
 tickets/*.md              merge=union
 shared/*.md               merge=union
 core-mental-map/*.md      merge=union
+lessons-learned/*.md      merge=union
 INDEX.md                  merge=union
 ```
 
@@ -666,16 +707,18 @@ The distributed knowledge base lives in a **dedicated private git repository** (
 **First-time setup (once — when creating the KB repo for the team):**
 ```bash
 KB_CLONE="${PRX_KB_LOCAL_CLONE:-$HOME/.dev-skill/kb}"
-mkdir -p "$KB_CLONE/tickets" "$KB_CLONE/shared" "$KB_CLONE/core-mental-map"
+mkdir -p "$KB_CLONE/tickets" "$KB_CLONE/shared" "$KB_CLONE/core-mental-map" "$KB_CLONE/lessons-learned"
 cd "$KB_CLONE"
 git init && git remote add origin "$PRX_KB_REPO"
 echo "# Dev Knowledge Base" > README.md
 
 # Create .gitattributes — union merge prevents conflicts on append-only KB files
 cat > .gitattributes << 'EOF'
-tickets/*.md    merge=union
-shared/*.md     merge=union
-INDEX.md        merge=union
+tickets/*.md              merge=union
+shared/*.md               merge=union
+core-mental-map/*.md      merge=union
+lessons-learned/*.md      merge=union
+INDEX.md                  merge=union
 EOF
 
 git add README.md .gitattributes
@@ -703,9 +746,11 @@ cd "$KB_CLONE"
 git init
 git remote add origin "$PRX_KB_REPO"
 cat > .gitattributes << 'EOF'
-tickets/*.md    merge=union
-shared/*.md     merge=union
-INDEX.md        merge=union
+tickets/*.md              merge=union
+shared/*.md               merge=union
+core-mental-map/*.md      merge=union
+lessons-learned/*.md      merge=union
+INDEX.md                  merge=union
 EOF
 
 # --- Encryption consistency check (must run before committing any files) ---
@@ -798,9 +843,11 @@ elif [ -d "$KB_CLONE" ] && [ -n "$(ls -A "$KB_CLONE" 2>/dev/null)" ]; then
   git init
   git remote add origin "$PRX_KB_REPO"
   cat > .gitattributes << 'EOF'
-tickets/*.md    merge=union
-shared/*.md     merge=union
-INDEX.md        merge=union
+tickets/*.md              merge=union
+shared/*.md               merge=union
+core-mental-map/*.md      merge=union
+lessons-learned/*.md      merge=union
+INDEX.md                  merge=union
 EOF
   # --- Encryption consistency check (must run before committing any files) ---
   REMOTE_MAIN_EXISTS=false
@@ -860,7 +907,7 @@ else
   # Fresh path — directory empty or does not exist, clone from remote
   git clone "$PRX_KB_REPO" "$KB_CLONE" && \
     echo "KB: cloned ${PRX_KB_REPO} → ${KB_CLONE}."
-  mkdir -p "$KB_CLONE/tickets" "$KB_CLONE/shared" "$KB_CLONE/core-mental-map"
+  mkdir -p "$KB_CLONE/tickets" "$KB_CLONE/shared" "$KB_CLONE/core-mental-map" "$KB_CLONE/lessons-learned"
 fi
 ```
 
@@ -995,7 +1042,7 @@ This step runs in two phases. **Phase A** (sync + initialise) runs before Step 1
 
 **Step 1 — Initialise directories (no git sync):**
 ```bash
-mkdir -p "$KNOWLEDGE_DIR/tickets" "$KNOWLEDGE_DIR/shared"
+mkdir -p "$KNOWLEDGE_DIR/tickets" "$KNOWLEDGE_DIR/shared" "$KNOWLEDGE_DIR/core-mental-map" "$KNOWLEDGE_DIR/lessons-learned"
 ```
 Set `KB_WORK_DIR="$KNOWLEDGE_DIR"`. No git operations.
 
@@ -1029,7 +1076,7 @@ if [ -d "$KB_CLONE/.git" ]; then
 else
   git clone "$PRX_KB_REPO" "$KB_CLONE" && \
     echo "KB: cloned ${PRX_KB_REPO} → ${KB_CLONE}."
-  mkdir -p "$KB_CLONE/tickets" "$KB_CLONE/shared" "$KB_CLONE/core-mental-map"
+  mkdir -p "$KB_CLONE/tickets" "$KB_CLONE/shared" "$KB_CLONE/core-mental-map" "$KB_CLONE/lessons-learned"
 fi
 ```
 
@@ -1044,7 +1091,7 @@ rm -rf /tmp/dev-skill-kb-[0-9]* 2>/dev/null
 
 # Decrypt to session temp dir
 KB_WORK_DIR="/tmp/dev-skill-kb-$$"
-mkdir -p "$KB_WORK_DIR/tickets" "$KB_WORK_DIR/shared" "$KB_WORK_DIR/core-mental-map"
+mkdir -p "$KB_WORK_DIR/tickets" "$KB_WORK_DIR/shared" "$KB_WORK_DIR/core-mental-map" "$KB_WORK_DIR/lessons-learned"
 find "$KNOWLEDGE_DIR" -name "*.md.enc" | while read f; do
   rel="${f#$KNOWLEDGE_DIR/}"
   out="$KB_WORK_DIR/${rel%.enc}"
@@ -1126,6 +1173,8 @@ Updated: {today} | Files: 5 | Total entries: 0
 ```
 
 If any `core-mental-map/*.md` content file does not exist, create it with a title-only header (e.g. `# Architecture`). The files will be populated as agents contribute entries during sessions.
+
+The `lessons-learned/` directory requires no skeleton files — developer files are created on first write (Step 13h). No action needed on init if the directory is empty.
 
 **Re-index after pull (distributed mode) or on every init (local mode):**
 
@@ -1229,6 +1278,10 @@ Read `core-mental-map/INDEX.md` to see available topics and entry counts. Then:
 
 If `core-mental-map/INDEX.md` does not exist or all files show `0` entries: state `Core Mental Map: empty — will populate in Step 13g.`
 
+**Layer 4 — Lessons Learned (always runs):**
+
+Read all `lessons-learned/*.md` files. For each entry whose `PITFALL:` or `KEY:` text overlaps with the current ticket's components, labels, or affected area, carry it into the Prior Knowledge block under `LESSONS LEARNED`. Show the author and date so the agent knows the source. If the directory is empty or no files exist: state `Lessons Learned: none recorded yet.`
+
 **Present the Prior Knowledge block before Step 2:**
 
 ```
@@ -1270,6 +1323,12 @@ If `core-mental-map/INDEX.md` does not exist or all files show `0` entries: stat
 │ [CMM-GOTCHA-001] "Boolean flag trap in CaseManager"              │
 │   {KEY fact — one line}  ref: {file:line}                        │
 │ ⚠️ CMM-ARCH-002 contradicts live code — flagged for Step 13g     │
+│                                                                   │
+│ LESSONS LEARNED                                                   │
+│ ─────────────────────────────────────────────────────────────────│
+│ [alice / LL-003] "Never skip X when Y is pending" (2026-04-10)   │
+│   PITFALL: {what to avoid}                                        │
+│   KEY: {corrective rule}                                         │
 │                                                                   │
 │ CONFLUENCE                                                        │
 │ ─────────────────────────────────────────────────────────────────│
@@ -3262,6 +3321,7 @@ For every new or updated knowledge entry produced in 13b–13c:
    INDEX.md (Palace): {N triggers added to rooms: {room names}}
    INDEX.md      : {N rows added}
    Mental Map    : {N new / N confirmed / N corrected} (see Step 13g)
+   Lessons       : {N new entries in lessons-learned/{developer}.md} (see Step 13h)
    Git           : local mode — no distribution
 ```
 
@@ -3314,6 +3374,7 @@ On success display (no encryption):
    INDEX.md (Palace): {N triggers added to rooms: {room names}}
    INDEX.md      : {N rows added / N re-indexed from disk}
    Mental Map    : {N new / N confirmed / N corrected} (see Step 13g)
+   Lessons       : {N new entries in lessons-learned/{developer}.md} (see Step 13h)
    Git           : pushed to origin/main ({short hash}) {or "branch created" on first push}
 ```
 
@@ -3362,6 +3423,39 @@ Display:
 ```
 
 Then close with the ready-to-code message from Step 12.
+
+#### 13h. Save Lessons Learned
+
+Collect all `[LL+]` markers emitted during the session (Steps 5, 7, 8, 9). Identify the current developer:
+
+```bash
+DEVELOPER="${PRX_DEVELOPER_NAME:-$(git config user.name | tr '[:upper:]' '[:lower:]' | tr ' ' '-')}"
+LL_FILE="$KB_WORK_DIR/lessons-learned/${DEVELOPER}.md"
+```
+
+If the file does not exist, create it:
+```markdown
+# Lessons Learned — {DEVELOPER}
+```
+
+For each `[LL+]` marker, append a new entry using the next sequential ID:
+```markdown
+## LL-{NNN} — {title}
+date: {today} | sprint: — | ticket: {TICKET_KEY}
+PITFALL: {pitfall from marker}
+KEY: {key lesson from marker}
+ref: {ref from marker, or "—"}
+```
+
+If there are no `[LL+]` markers, skip this step — do not create an empty file.
+
+Display:
+```
+📝 Lessons Learned
+   Developer    : {DEVELOPER}
+   File         : lessons-learned/{DEVELOPER}.md
+   New entries  : {N} (LL-NNN … LL-NNN)
+```
 
 ---
 
@@ -4181,6 +4275,10 @@ Apply the same process as Step 13g in Dev Mode. Scan all `[CMM+]` markers emitte
 
 PR Review sessions are especially well-suited to confirming (or correcting) existing CMM entries because reviewers read the actual code changes — they can verify whether a CMM fact is still accurate in the patched version.
 
+#### R9h. Save Lessons Learned
+
+Apply the same process as Step 13h in Dev Mode. Collect `[LL+]` markers emitted during Steps R4 and R5, and append them to `lessons-learned/{developer}.md`.
+
 **If `KB_MODE=local`:** Skip all git and encryption steps. Files are already written to `KNOWLEDGE_DIR` in steps R9b–R9g. Display:
 ```
 📚 Knowledge Base Updated (local)
@@ -4194,6 +4292,7 @@ PR Review sessions are especially well-suited to confirming (or correcting) exis
    Palace            : {N triggers added to rooms: {room names}}
    INDEX.md          : {N rows added}
    Mental Map        : {N new / N confirmed / N corrected} (see Step R9g)
+   Lessons           : {N new entries in lessons-learned/{developer}.md} (see Step R9h)
    Git               : local mode — no distribution
 ```
 
