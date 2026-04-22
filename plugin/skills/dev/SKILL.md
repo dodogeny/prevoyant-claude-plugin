@@ -3577,10 +3577,11 @@ Bryan runs after every Dev Mode session, immediately after Step 13h. Bryan is a 
 
 | Responsibility | What Bryan does |
 |---|---|
-| **Token audit** | Compares Step 11 stats against budget targets; builds a step-level breakdown; flags hotspots |
+| **Token audit** | Records per-ticket token cost; compares against the 5-session rolling average; builds a step-level breakdown; flags hotspots |
+| **Token intervention** | When session cost > 150% of rolling avg (**TOKEN_ALERT**) or monthly spend > 80% (**BUDGET_ALERT**), Bryan escalates to Intervention Mode: proposes up to 3 targeted SKILL.md changes aimed directly at the expensive steps, with dollar-savings estimates per change |
 | **Process audit** | Identifies friction, unclear instructions, repeated work, or steps that produced low-value output |
 | **DoD guardian** | Checks that no required step was silently skipped or abbreviated without justification |
-| **Skill sharpening** | Proposes one targeted SKILL.md edit per session — tighter wording, removed redundancy, collapsed steps — to make the skill sharper and cheaper over time |
+| **Skill sharpening** | Proposes one targeted SKILL.md edit per session (or up to 3 in Intervention Mode) — tighter wording, removed redundancy, collapsed steps — to make the skill sharper and cheaper over time |
 | **Backlog management** | Maintains a prioritised improvement backlog in `process-efficiency.md`; recurrent issues get promoted to HIGH and jump the queue |
 | **Impact tracking** | After each approved change, measures whether the next session actually cost less; records the delta |
 | **Compaction pass** | Every `PRX_SKILL_COMPACTION_INTERVAL` sessions (default: 10), runs a deep SKILL.md review — eliminates dead weight, compresses verbose prose, merges redundant instructions, removes gates that are never triggered; requires full five-member approval |
@@ -3593,13 +3594,19 @@ Bryan runs after every Dev Mode session, immediately after Step 13h. Bryan is a 
 
 Before running the audit, Bryan:
 
-**A. Gets actual monthly spend from ccusage:**
+**A. Gets realtime token stats from ccusage:**
+
+ccusage reads Claude Code's local JSONL logs — no network call, no auth required. Run both commands:
 
 ```bash
-npx --yes ccusage@latest monthly --json 2>/dev/null
+npx --yes ccusage@latest monthly --json 2>/dev/null   # month-to-date spend
+npx --yes ccusage@latest daily   --json 2>/dev/null   # today's spend (for session delta)
 ```
 
-Parse the current calendar month's `totalCost` (or `cost`) field from the JSON. If ccusage is unavailable or returns no data for this month, fall back to summing the `cost: $N` values from all `[S-NNN]` rows in `shared/process-efficiency.md` for the current month.
+- **Monthly spend** — current calendar month's `totalCost` (or `cost`) from the monthly command.
+- **Session cost** — today's `totalCost` from the daily command minus the session-start baseline written by `scripts/check-budget.sh` to `/tmp/.prx-session-start-spend`. If the baseline file is missing, use the session cost already computed in Step 11 (which ran the same calculation).
+
+If ccusage is unavailable (npx not found or command fails): fall back to the session cost figure from Step 11 and the manual sum of `cost: $N` values from all `[S-NNN]` rows in `shared/process-efficiency.md` for the current month. Label fallback figures with `~`.
 
 **B. Then reads `shared/process-efficiency.md` for:**
 
@@ -3609,6 +3616,15 @@ Parse the current calendar month's `totalCost` (or `cost`) field from the JSON. 
 4. **Impact check** — if last session had an approved change, compare this session's cost against the pre-change baseline. Record the delta in the backlog row.
 5. **Compaction trigger** — if `Sessions tracked % PRX_SKILL_COMPACTION_INTERVAL == 0`, flag this as a compaction session.
 
+**C. Token spike detection — set alert flags before 14b:**
+
+Using the session cost from Step 11 and the rolling average from process-efficiency.md:
+
+- Set **TOKEN_ALERT** if: this session's cost > 150% of the 5-session rolling average, or this is the single most expensive session in the last 10.
+- Set **BUDGET_ALERT** if: monthly spend > 80% of `PRX_MONTHLY_BUDGET` (already surfaced in B.1 above). Note exact remaining headroom in dollars and estimated sessions remaining at current avg.
+
+If either flag is set, Bryan enters **Intervention Mode** in 14c instead of the normal single-change proposal. If both are set simultaneously, Bryan leads with a direct budget impact statement before any proposals.
+
 #### 14b. Token & Process Audit
 
 ```
@@ -3616,8 +3632,10 @@ Parse the current calendar month's `totalCost` (or `cost`) field from the JSON. 
 
 📊 TOKEN AUDIT
   Total this session  : ~{N} in / ~{N} out | ${cost}
+  vs rolling avg      : ${avg} 5-session avg — this ticket is {Z}% {above ⚠️ / below ✅ / inline with} average
   Monthly budget      : ${spent} spent of ${PRX_MONTHLY_BUDGET:-20.00} ({X}% used, {days} days remaining)
   Status              : ✅ On track / ⚠️ >80% consumed / ❌ Budget exceeded
+  Alert               : ✅ Normal / ⚠️ TOKEN_ALERT (session {Z}% above avg) / 🚨 BUDGET_ALERT ({X}% consumed) / 🚨 BOTH
   Rolling 5-session avg: ${avg} ({↓ improving / ↑ degrading / → stable})
 
   Step breakdown (estimated):
@@ -3708,6 +3726,38 @@ Bryan selects **one** change — either the top HIGH backlog item (if evidence s
     → skill-changelog.md entry written (see Step 14f)
 ──────────────────────────────────────────────────────────────────────
 ```
+
+##### Intervention Mode *(TOKEN_ALERT or BUDGET_ALERT only)*
+
+When either flag is set, Bryan replaces the single-change rule with a focused **token reduction intervention**. The normal consensus + developer confirmation gate (14c) applies to each proposal.
+
+If BUDGET_ALERT is active, Bryan opens with a direct budget impact statement:
+```
+🚨 BUDGET INTERVENTION
+  Monthly spend       : ${spent} of ${PRX_MONTHLY_BUDGET} ({X}% used, {days} days remaining)
+  Projected next session: ~${avg} — {"on track to close within budget" / "will breach budget in ~{N} sessions at current rate"}
+  Immediate action required to stay within budget.
+```
+
+Bryan then identifies the top 3 most expensive steps from the step breakdown and proposes a concrete SKILL.md edit for each — fast-path gates, instruction compression, output truncation, or step merging — ordered by estimated token savings:
+
+```
+⚡ INTERVENTION PROPOSALS  ({N} changes — ranked by token saving)
+
+  [1] Area        : {Step or section}
+      Problem     : {specific reason this step is expensive}
+      Change type : Compress / Fast-path / Remove / Merge
+      Before      : "{exact current wording}"
+      After       : "{proposed replacement}"
+      Est. saving : ~{N}% tokens / ~${saving} per session
+
+  [2] ...  [3] ...
+
+  Consensus required for each proposal independently.
+  Proposals approved by all five members are committed atomically as a single change-set.
+```
+
+If both TOKEN_ALERT and BUDGET_ALERT are active, Bryan presents all three proposals before seeking any consensus votes — the team reviews the full picture before committing to any change.
 
 #### 14d. Compaction Pass *(compaction sessions only)*
 
@@ -4652,6 +4702,7 @@ Identical to Step 14 in Dev Mode with these differences:
 - Consensus panel: Morgan + Riley + the reviewer from Step R5 whose findings were most substantive
 - `process-efficiency.md` Session Log row records the review verdict (✅ / ⚠️ / 🔄 / ❌) in the `Status` column instead of budget status
 - Compaction pass eligibility counts PR Review sessions in the same `Sessions tracked` counter as Dev Mode sessions
+- Token spike detection (TOKEN_ALERT / BUDGET_ALERT) and Intervention Mode apply exactly as in 14c — review sessions are included in the rolling average and monthly spend calculations
 
 ---
 
@@ -4914,6 +4965,7 @@ Identical to Step 14 in Dev Mode with these differences:
   date: {today} | developer: {DEVELOPER} | ticket: {TICKET_KEY} | type: Estimate | cost: ${cost} | estimate: {N}pts ({confidence}, {N} rounds) | status: ✅
   ```
 - No branch creation or code changes — Bryan's SKILL.md improvement proposals focus on the estimation workflow itself
+- Token spike detection (TOKEN_ALERT / BUDGET_ALERT) and Intervention Mode apply exactly as in 14c — estimate sessions count toward the rolling average and monthly spend
 
 ---
 
