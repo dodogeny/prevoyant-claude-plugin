@@ -1,4 +1,4 @@
-# Dev Skill — Claude Code Plugin `v1.2.1`
+# Dev Skill — Claude Code Plugin `v1.2.2`
 
 A [Claude Code](https://claude.ai/code) plugin that gives Claude a structured, end-to-end developer workflow for Jira tickets. Two modes:
 
@@ -24,7 +24,7 @@ Invoke the skill with a Jira ticket key and Claude runs a structured multi-step 
 9. **Propose the fix** — code changes anchored to the Root Cause Statement; Morgan fix review; optional apply to branch
 10. **Impact analysis** — usage reference search, layer-by-layer impact table, regression risks, retest checklist
 11. **Change summary** — files touched, commit message, PR description template ready to paste
-12. **Session stats** — elapsed time, estimated tokens, estimated cost
+12. **Session stats** — elapsed time, actual token usage and cost via ccusage (falls back to estimation if Node.js unavailable)
 13. **PDF report** — full-detail report saved to `CLAUDE_REPORT_DIR`; emailed if `PRX_EMAIL_TO` is set
 14. **Update KB** — write session record; push to shared repo if distributed
 15. **Bryan's retrospective** — Scrum Master audits token spend, flags process friction, proposes one SKILL.md improvement; unanimous team vote; pushes to main after `PRX_SKILL_UPGRADE_MIN_SESSIONS` sessions
@@ -38,7 +38,7 @@ Invoke the skill with a Jira ticket key and Claude runs a structured multi-step 
 5. **Fetch code changes** — locate the feature branch; run `git diff` to retrieve the full changeset
 6. **Engineering Panel review** — same four-person team as Dev Mode, now operating as reviewers: Alex (code quality), Sam (logic + acceptance criteria), Jordan (20-pattern defensive checklist), Riley (test coverage); Morgan scores and delivers a binding verdict
 7. **Consolidated findings** — Critical/Major/Minor issues with `file:line` and fix recommendations; Positives; Conditions for Approval
-8. **Session stats** — elapsed time, estimated tokens, estimated cost
+8. **Session stats** — elapsed time, actual token usage and cost via ccusage (falls back to estimation if Node.js unavailable)
 9. **PDF review report** — saved as `{TICKET_KEY}-review.pdf` in `CLAUDE_REPORT_DIR`
 10. **Update KB** — record review verdict, confirmed rules, pattern bumps; push if distributed
 11. **Bryan's retrospective** — same as Dev Mode; token audit uses review session stats
@@ -107,9 +107,11 @@ claude plugin list   # should show prx@dodogeny with ✔ enabled
 
 ---
 
-### 2. Install `uvx` (required for the Jira MCP server)
+### 2. Install `uvx` (the only MCP dependency)
 
-`uvx` is part of the `uv` Python package manager. The commands below check whether it is already installed and skip the install if so.
+The Jira MCP server (`mcp-atlassian`) is **already configured** in `.mcp.json`, which is committed to this repo. You do not need to install, configure, or edit anything MCP-related — you only need `uvx`, which downloads and runs `mcp-atlassian` automatically on first use.
+
+`uvx` is part of the `uv` Python package manager:
 
 **macOS / Linux:**
 ```bash
@@ -122,6 +124,8 @@ if (-not (Get-Command uvx -ErrorAction SilentlyContinue)) {
   powershell -ExecutionPolicy ByPass -c "irm https://astral.sh/uv/install.ps1 | iex"
 }
 ```
+
+> **How it works:** `.mcp.json` (committed, no credentials) tells Claude Code to run `uvx mcp-atlassian`. On first use `uvx` downloads the package into an isolated cache — no `pip install`, no virtual environment, no version conflicts. Credentials flow in from `.env` automatically.
 
 ---
 
@@ -233,8 +237,8 @@ Set `PRX_EMAIL_TO` to enable. Leave it unset to disable email entirely.
 |----------|---------|-------------|
 | `PRX_INCLUDE_SM_IN_SESSIONS_ENABLED` | `N` | Set to `Y` to activate Bryan's retrospective (Step 14 / R10). Disabled by default. |
 | `PRX_SKILL_UPGRADE_MIN_SESSIONS` | `3` | Sessions with an approved change before Bryan pushes to the plugin repo's main branch. Set to `1` to push after every approved session. |
-| `PRX_BUDGET_BUG` | `0.06` | Target cost ceiling (USD) per bug ticket. Bryan flags sessions over this as ⚠️ Over budget. |
-| `PRX_BUDGET_ENHANCEMENT` | `0.04` | Target cost ceiling (USD) per enhancement ticket. |
+| `PRX_SKILL_COMPACTION_INTERVAL` | `10` | Sessions between full SKILL.md compaction passes. On compaction sessions Bryan deep-reviews the entire file to eliminate redundancy and compress verbose prose; requires all five team members to approve. |
+| `PRX_MONTHLY_BUDGET` | `20.00` | Monthly Claude subscription budget in USD. Actual spend is measured via [ccusage](https://www.npmjs.com/package/ccusage), which reads Claude Code's local JSONL logs — no network call, no auth. Checked at every session start; Bryan uses the real figure in Step 14. Flags ⚠️ at >80% and ❌ at ≥100%. Budget resets on the 1st of each month. |
 
 ---
 
@@ -254,6 +258,22 @@ apt install pandoc        # Linux
 **Chrome headless:** no setup needed if Chrome is already installed.
 
 **HTML fallback:** saves a styled `.html` file — open in any browser and print to PDF.
+
+### Node.js (token budget tracking)
+
+`npx` (bundled with Node.js) runs [ccusage](https://www.npmjs.com/package/ccusage) to measure actual Claude token spend. **ccusage is downloaded automatically on first use** — no `npm install` needed. Node.js itself must be present.
+
+**macOS:** `brew install node` or download from [nodejs.org](https://nodejs.org)
+
+**Linux (Ubuntu/Debian):**
+```bash
+curl -fsSL https://deb.nodesource.com/setup_lts.x | sudo -E bash -
+sudo apt install -y nodejs
+```
+
+**Windows:** Download from [nodejs.org](https://nodejs.org)
+
+> If Node.js is not installed, budget tracking is silently skipped and the skill falls back to manual token estimation. No other functionality is affected.
 
 ### Git
 The repository at `REPO_DIR` must be present locally. The skill creates branches there.
@@ -304,7 +324,8 @@ team-kb/
 │   ├── architecture.md             # Class hierarchies, data flows, ownership decisions
 │   ├── patterns.md                 # Recurring bug/fix patterns with frequency counters
 │   ├── regression-risks.md         # Known fragile areas requiring care on every change
-│   └── process-efficiency.md       # Bryan's session log: cost, budget status, changes applied
+│   ├── process-efficiency.md       # Bryan's session log: cost, budget status, changes applied
+│   └── skill-changelog.md          # Full audit trail of every Bryan SKILL.md change (before/after, commit hash, revert status)
 ├── core-mental-map/                # Compressed, always-growing codebase model (codebase-driven)
 │   ├── INDEX.md                    # Quick index: topics, entry counts, last-updated
 │   ├── architecture.md             # System layers, component boundaries, key class relationships
@@ -428,7 +449,7 @@ tail -20 scripts/poll-jira.log
 | **8** | Propose fix anchored to Root Cause/Enhancement Statement; Morgan fix review; optional apply to branch |
 | **9** | Impact analysis — usage reference search, layer-by-layer impact table, regression risks, retest checklist |
 | **10** | Change summary — files touched, commit message, PR description template |
-| **11** | Session stats — elapsed time, estimated tokens, estimated cost |
+| **11** | Session stats — elapsed time, actual token usage and cost delta via ccusage (fallback: manual estimation) |
 | **12** | Generate PDF report → save to `CLAUDE_REPORT_DIR`; email if `PRX_EMAIL_TO` is set |
 | **13** | Write session record to KB; push if distributed |
 
@@ -443,7 +464,7 @@ tail -20 scripts/poll-jira.log
 | **R4** | Locate feature branch (`Feature/{TICKET_KEY}_*`), run `git diff` to retrieve full changeset |
 | **R5** | Engineering Panel code review — same four-person team; Alex (code quality), Sam (logic + acceptance criteria), Jordan (20-pattern defensive checklist), Riley (test coverage); Morgan scores and delivers binding verdict |
 | **R6** | Consolidated findings — Critical/Major/Minor issues with `file:line`, fix recommendations, Positives, Conditions for Approval |
-| **R7** | Session stats |
+| **R7** | Session stats — same as Step 11 (ccusage actual data, fallback: estimation) |
 | **R8** | PDF review report |
 | **R9** | Update KB with review findings; push if distributed |
 
@@ -464,12 +485,14 @@ tail -20 scripts/poll-jira.log
 │   └── skills/dev/
 │       └── SKILL.md              # All skill logic lives here
 ├── scripts/
+│   ├── check-budget.sh           # SessionStart hook: ccusage monthly budget check + session baseline capture
 │   ├── poll-jira.sh              # Jira polling script (macOS / Linux / Windows WSL)
 │   ├── com.dev-skill.poll-jira.plist  # macOS launchd schedule template
 │   ├── .jira-credentials.example # Credentials template
 │   └── send-report.py            # Email delivery helper
 ├── .claude/
 │   └── settings.local.json       # Per-machine Claude Code permissions and hooks (not committed)
+├── .mcp.json                     # Jira MCP server config (committed — no credentials, just the command)
 ├── .mcp.json.example             # MCP server config template
 ├── .env.example                  # Environment variable template
 └── README.md
@@ -477,7 +500,9 @@ tail -20 scripts/poll-jira.log
 
 All skill logic lives in `plugin/skills/dev/SKILL.md`. No compiled code, no runtime dependencies beyond what Claude Code provides.
 
-> **Note:** `.claude/settings.local.json` stores per-machine permissions and the `SessionStart` hook that loads `.env`. Any `Bash` permission entries referencing `SKILL.md` should use the relative path `plugin/skills/dev/SKILL.md` — not an absolute path — so the config works on any machine.
+> **Jira MCP:** `.mcp.json` is committed to this repo and already configured. It tells Claude Code to run `uvx mcp-atlassian`. You never need to edit it — credentials come from `.env` automatically.
+
+> **Settings:** `.claude/settings.local.json` stores per-machine permissions and the `SessionStart` hook that loads `.env`. Any `Bash` permission entries referencing `SKILL.md` should use the relative path `plugin/skills/dev/SKILL.md` — not an absolute path — so the config works on any machine.
 
 ---
 
@@ -491,6 +516,26 @@ plugin/skills/dev/SKILL.md
 ```
 
 Edit this file to modify workflow steps, prompts, or project context.
+
+### SKILL.md change history
+
+Every change Bryan approves and pushes is recorded in two places:
+
+| Where | What it contains |
+|-------|-----------------|
+| `## Skill Change Log` table at the top of `SKILL.md` | One row per change: SC#, version, date, git commit hash, type, summary, status — visible to anyone reading the file |
+| `shared/skill-changelog.md` in the KB | Full detail: verbatim before/after wording, backlog ref, voter record, and revert status |
+
+To **revert a Bryan change** that caused a regression:
+```bash
+# 1. Find the commit hash in the Skill Change Log table or skill-changelog.md
+git log --oneline | grep "Bryan SC-"
+
+# 2. Safe revert — creates a new commit, no history rewrite
+git revert <COMMIT_HASH>
+git push origin main
+```
+Then append `[REVERTED: {date} — revert-commit: {hash} — reason: ...]` to the matching `[SC-NNN]` entry in `skill-changelog.md`.
 
 ### Bump the version
 
@@ -541,6 +586,14 @@ claude plugin list
 
 ## Changelog
 
+### v1.2.2 — Token Budget Tracking
+
+- **ccusage integration:** Actual Claude token spend is now measured using [ccusage](https://www.npmjs.com/package/ccusage), which reads Claude Code's local JSONL files offline — no network call, no auth required. ccusage is downloaded automatically via `npx --yes` on first use; the only prerequisite is Node.js.
+- **SessionStart budget check:** `scripts/check-budget.sh` runs at every session start. It captures a daily-spend baseline to `/tmp/.prx-session-start-spend` (used by Step 11 for per-session delta) and injects the current month's actual spend and budget status into Claude's session context. A system-level warning is surfaced when spend ≥ 80%.
+- **Step 11 / R7 — actual costs:** Instead of estimating tokens from content volume, Claude now runs `npx ccusage@latest daily --json` and subtracts the session-start baseline to report the exact cost of the current session. Manual estimation is retained as a fallback when Node.js is unavailable.
+- **Step 14 / R10 (Bryan) — actual monthly spend:** Bryan now runs `npx ccusage@latest monthly --json` to get the authoritative monthly figure instead of summing cost fields from `process-efficiency.md` session records. Falls back to the manual sum if ccusage is unavailable.
+- **Permissions:** `Bash(npx --yes ccusage@latest *)` added to `.claude/settings.local.json` allowlist so the budget check runs without prompts.
+
 ### v1.2.1
 
 - **Core Mental Map:** New `core-mental-map/` KB folder — a compressed, always-growing codebase model (architecture, business logic, data flows, tech stack, gotchas) contributed by agents every session via `[CMM+]` markers. Agents read it at session start, cross-check against live code, and write corrections or confirmations back — so the team's collective understanding compounds with every ticket worked.
@@ -556,7 +609,9 @@ claude plugin list
 - **KB stale detection:** Opportunistic validation during file reads; auto-heal writes `RELOCATED`/`DELETED` tags in Step 13c rather than silently leaving broken references.
 - **Lessons Learned:** New `lessons-learned/` KB folder — per-developer files for recording pitfalls and sprint retrospective insights. Agents read all files at session start and surface matching entries in the Prior Knowledge block; `[LL+]` markers let agents flag new lessons during investigation (Step 13h / R9h). Works in both local and distributed mode.
 - **Settings fix:** Removed hardcoded absolute path to `SKILL.md` from `.claude/settings.local.json`; replaced with the relative path `plugin/skills/dev/SKILL.md` so the config works on any machine.
-- **Bryan — Scrum Master:** New team member who observes every session silently and runs a post-session retrospective (Step 14 / R10). Audits token spend against configurable per-ticket-type budgets (`PRX_BUDGET_BUG`, `PRX_BUDGET_ENHANCEMENT`), identifies process friction, and proposes one focused SKILL.md improvement per session. Requires unanimous consensus from Morgan, Riley, and one engineer before applying. Pushes changes to the plugin repo's main branch after `PRX_SKILL_UPGRADE_MIN_SESSIONS` sessions (default: 3). Maintains a running efficiency log in `shared/process-efficiency.md`.
+- **Bryan — Scrum Master:** New team member (opt-in via `PRX_INCLUDE_SM_IN_SESSIONS_ENABLED=Y`) who observes every session silently and runs a structured retrospective (Step 14 / R10). Tracks cumulative monthly spend against `PRX_MONTHLY_BUDGET` (default: $20.00 — matching a standard Claude subscription), flagging ⚠️ at >80% and ❌ at 100%. Maintains a prioritised improvement backlog, tracks recurring blockers, proposes one focused SKILL.md sharpening change per session, and runs a full compaction pass every `PRX_SKILL_COMPACTION_INTERVAL` sessions. Requires unanimous consensus before applying; pushes after `PRX_SKILL_UPGRADE_MIN_SESSIONS` sessions.
+- **SKILL.md internal versioning & audit trail:** Every Bryan change is recorded with its git commit hash in two places: a `## Skill Change Log` table embedded at the top of SKILL.md (SC#, version, date, commit, type, summary, status) and a full `[SC-NNN]` entry in `shared/skill-changelog.md` (verbatim before/after wording, voters, revert status). Any change can be safely rolled back with `git revert <commit>`.
+- **process-efficiency.md merge safety:** Redesigned as an append-only journal (session records, backlog items, blockers expressed as tagged entries, never mutated in-place). Header and velocity dashboard are auto-rebuilt from journal data after every pull — the same pattern as `INDEX.md` — so concurrent pushes from multiple developers are always lossless with `merge=union`.
 
 ### v1.2.0
 

@@ -1,12 +1,18 @@
 ---
 name: dev
 description: "\"Structured Jira-driven developer workflow skill. Supports two modes — (1) Dev mode: use when a developer provides a Jira ticket URL or ticket key (e.g. PROJ-1234) and wants to start development work; handles the full workflow from reading the Jira ticket to proposing a code fix. (2) PR Review mode: use when a developer wants to review code changes for a Jira ticket; analyses the ticket context plus all code changes on the associated feature branch, then outputs findings and recommendations as a PDF report.\""
-version: 1.2.1
+version: 1.2.2
 ---
 
 # Dev Workflow Skill
 
 Full end-to-end developer workflow for Jira tickets. Guides Claude through reading, understanding, branching, locating, and fixing a reported issue or enhancement.
+
+## Skill Change Log
+<!-- Bryan appends one row per approved change. Never edit existing rows — append only. -->
+<!-- Full details (before/after wording, revert status) are in shared/skill-changelog.md in the KB. -->
+| SC# | Version | Date | Commit | Type | Summary | Status |
+|-----|---------|------|--------|------|---------|--------|
 
 ## Configuration
 
@@ -64,10 +70,15 @@ PRX_SKILL_UPGRADE_MIN_SESSIONS    = (optional — number of sessions with an app
                                the plugin repo main branch; default: 3. Set to 1 to push after every session.
                                Only relevant when PRX_INCLUDE_SM_IN_SESSIONS_ENABLED=Y.)
 
-PRX_BUDGET_BUG            = (optional — target cost ceiling per bug ticket in USD; default: 0.06.
-                               Bryan flags sessions that exceed this as ⚠️ Over budget.
-                               Only relevant when PRX_INCLUDE_SM_IN_SESSIONS_ENABLED=Y.)
-PRX_BUDGET_ENHANCEMENT    = (optional — target cost ceiling per enhancement ticket in USD; default: 0.04.
+PRX_SKILL_COMPACTION_INTERVAL = (optional — number of sessions between full SKILL.md compaction passes; default: 10.
+                               On a compaction session Bryan runs a deep review of the entire SKILL.md to eliminate
+                               redundancy, compress verbose prose, and remove dead weight — requires all five team
+                               members to approve. Only relevant when PRX_INCLUDE_SM_IN_SESSIONS_ENABLED=Y.)
+
+PRX_MONTHLY_BUDGET        = (optional — monthly Claude subscription budget in USD; default: 20.00.
+                               Bryan tracks cumulative session costs against this limit, resets on the
+                               first of each calendar month, and flags ⚠️ when spend exceeds 80% of
+                               the budget or ❌ when the budget is fully consumed.
                                Only relevant when PRX_INCLUDE_SM_IN_SESSIONS_ENABLED=Y.)
 ```
 
@@ -206,7 +217,8 @@ _(Applies to `KB_MODE=distributed`.)_
 │   ├── architecture.md    (or .md.enc) ← class hierarchies, data flows, ownership decisions
 │   ├── patterns.md        (or .md.enc) ← recurring bug/fix patterns with frequency counters
 │   ├── regression-risks.md (or .md.enc)← known fragile areas requiring care on every change
-│   └── process-efficiency.md (or .md.enc) ← Bryan's session log: cost, budget, changes applied
+│   ├── process-efficiency.md (or .md.enc) ← Bryan's session log: cost, budget, changes applied
+│   └── skill-changelog.md    (or .md.enc) ← full audit trail of every Bryan SKILL.md change (before/after, commit hash, revert status)
 ├── core-mental-map/                    ← compressed codebase mental model (contributed by all agents)
 │   ├── INDEX.md   (or INDEX.md.enc)   ← quick index: what topics exist, entry counts, last-updated
 │   ├── architecture.md  (or .md.enc)  ← system layers, component boundaries, key class relationships
@@ -612,6 +624,14 @@ INDEX.md                  merge=union
      date from the most recent entry's `date:` field, and extract a one-line summary.
    - Rewrite core-mental-map/INDEX.md with fresh counts, dates, and summaries.
    - Update the Total entries count in the header.
+
+6. Rebuild shared/process-efficiency.md header and Velocity Dashboard (if PRX_INCLUDE_SM_IN_SESSIONS_ENABLED=Y):
+   - Scan all [S-NNN] journal entries: count sessions, changes pushed, sessions since last push
+   - Compute rolling 5-session avg cost per ticket type and trend direction
+   - Identify most frequent hotspot step across last 5 sessions
+   - Compute change acceptance rate (applied / proposed) across last 10 sessions
+   - Overwrite lines 1–separator with fresh header + Velocity Dashboard
+   - Leave the append-only journal (below the ═══ separator) untouched
 ```
 
 **This handles every multi-developer scenario automatically:**
@@ -620,6 +640,77 @@ INDEX.md                  merge=union
 - Two developers push simultaneously → union merge keeps all rows → rebuild de-duplicates
 - Developer pushes from outside the skill → rebuild on next pull reconciles everything
 - Core Mental Map union-merge: two developers both append new CMM entries → union merge keeps both → rebuild recount gives correct entry totals
+
+**process-efficiency.md — Journal Format & Rebuild (distributed mode)**
+
+`process-efficiency.md` follows the same append-only + rebuild-on-pull pattern. The file has two zones:
+
+1. **Auto-generated header** (lines 1–~20) — rebuilt after every pull from journal data; never edited manually
+2. **Append-only journal** (everything below the `═══` separator) — raw entries only ever appended, never mutated in-place
+
+**Journal entry formats:**
+
+```markdown
+## [S-NNN] Session Record
+date: YYYY-MM-DD | developer: {name} | ticket: {KEY} | type: Bug/Enh | cost: $N | budget: $N | status: ✅/⚠️
+hotspot: {Step name} ({N}%) | change: {BL-NNN or "—"} | impact: {+$N saving vs prev / "baseline"}
+
+## [BL-NNN] Backlog Item
+date: YYYY-MM-DD | area: {Step or section} | priority: HIGH/MEDIUM/LOW | seen: 1
+PROBLEM: {one-line description of the inefficiency}
+[SEEN+1: YYYY-MM-DD by {developer}]
+[PROMOTED HIGH: YYYY-MM-DD — seen {N}×]
+[CONSENSUS ❌: YYYY-MM-DD — re-queued]
+[APPLIED: YYYY-MM-DD in v{X.Y.Z}]
+
+## [BK-NNN] Blocker
+date: YYYY-MM-DD | developer: {name} | description: {one-line}
+[COUNT+1: YYYY-MM-DD by {developer}]
+[PROMOTED HIGH: YYYY-MM-DD — seen 3×]
+[RESOLVED: YYYY-MM-DD]
+```
+
+**Rules that make union merge correct and lossless:**
+- **Never edit any existing line** — only append new lines (status tags, count increments, observations)
+- **Never rewrite the header** — it is rebuilt from journal data after pull
+- **Duplicate detection** — if two developers both append `[SEEN+1]` to the same backlog item in the same session, the rebuild de-duplicates by grouping tags by date and developer
+
+**process-efficiency.md rebuild algorithm (runs after every pull, alongside INDEX.md rebuild):**
+
+```
+1. Scan all [S-NNN] Session Records:
+   - Parse date, type, cost, status — collect into session list
+   - Count total sessions, sessions with change applied, sessions since last push
+
+2. Scan all [BL-NNN] Backlog Items:
+   - Parse base fields + all appended tag lines
+   - Derive current priority (last [PROMOTED] tag wins)
+   - Derive current status (last [APPLIED] or [CONSENSUS ❌] tag wins)
+   - Count total [SEEN+1] tags to get current "seen" count
+
+3. Scan all [BK-NNN] Blocker entries:
+   - Count [COUNT+1] tags to get current count
+   - Check for [RESOLVED] tag
+
+4. Rebuild the auto-generated header from computed values:
+   "Sessions tracked: N | Changes pushed: N | Sessions since last push: N | Next compaction: session N"
+
+5. Rebuild Velocity Dashboard:
+   - Sum cost of all [S-NNN] entries in the current calendar month → monthly spend
+   - Compare against PRX_MONTHLY_BUDGET (default 20.00): derive % used and status (✅ / ⚠️ >80% / ❌ exceeded)
+   - Compute rolling avg cost across last 5 sessions and trend direction
+   - Identify most frequent hotspot step across last 5 sessions
+   - Compute change acceptance rate (applied / proposed across last 10 sessions)
+
+6. Write rebuilt header + Velocity Dashboard back to the top of the file
+   (overwrite lines 1–separator; leave append-only journal untouched)
+```
+
+**Multi-developer merge scenarios:**
+- Two developers push in the same session → union merge appends both `[S-NNN]` blocks (different ticket keys, possibly same session number — rebuild assigns final sequential numbers); no information lost
+- Two developers both increment the same backlog item → union merge keeps both `[SEEN+1]` lines; rebuild counts them correctly
+- One developer applies a change, another promotes it in the same push → union merge keeps both tags; rebuild derives the correct current state from the last tag
+- Stale clone catches up after many sessions → pull + union merge + rebuild gives the full picture
 
 ---
 
@@ -1194,11 +1285,36 @@ The `lessons-learned/` directory requires no skeleton files — developer files 
 If `shared/process-efficiency.md` does not exist, create it:
 ```markdown
 # Process Efficiency Log
-Sessions tracked: 0 | Bryan changes pushed: 0 | Sessions since last push: 0
+<!-- AUTO-GENERATED — rebuilt after every pull. Never edit this header manually. -->
+Sessions tracked: 0 | Changes pushed: 0 | Sessions since last push: 0 | Next compaction: session {PRX_SKILL_COMPACTION_INTERVAL}
 
-| Session | Date | Ticket | Type | Cost | Budget | Status | Change |
-|---------|------|--------|------|------|--------|--------|--------|
+<!-- AUTO-GENERATED VELOCITY DASHBOARD — rebuilt after every pull -->
+## Velocity Dashboard
+| Metric | Value | Trend |
+|--------|-------|-------|
+| Monthly spend (current month) | $— of $— | — |
+| Monthly budget status | — | — |
+| Avg cost — last 5 sessions | $— | — |
+| Token hotspot | — | — |
+| Change acceptance rate | — | — |
+
+<!-- ═══════════════════════════════════════════════════════════════════
+     APPEND-ONLY JOURNAL — never edit existing lines; only append new
+     ones. Bryan rebuilds the header and dashboard from these entries
+     after every pull, the same way INDEX.md is rebuilt.
+     ═══════════════════════════════════════════════════════════════════ -->
 ```
+
+If `shared/skill-changelog.md` does not exist, create it:
+```markdown
+# SKILL.md Change Log
+<!-- append-only — Bryan appends one [SC-NNN] block per approved and pushed change -->
+<!-- Cross-reference: each entry links to the git commit so any change can be reverted with `git revert <commit>` -->
+```
+
+> **Merge safety:** `skill-changelog.md` is append-only — entries are never edited, only new blocks and status tags appended. `shared/*.md merge=union` in `.gitattributes` ensures lossless merges from concurrent pushes.
+
+> **Merge safety:** `process-efficiency.md` uses an **append-only journal** below the auto-generated header. All raw data (sessions, backlog items, blockers) is expressed as new appended lines, never edits to existing lines. The header and Velocity Dashboard are rebuilt from the journal after every pull — exactly as `INDEX.md` is rebuilt. This makes `merge=union` correct and lossless for all concurrent pushes.
 
 **Re-index after pull (distributed mode) or on every init (local mode):**
 
@@ -2694,22 +2810,35 @@ Provide a ready-to-paste pull request description:
 
 ### Step 11 — Session Stats
 
-Print a single summary line covering elapsed time, estimated token usage, and estimated cost at current Sonnet 4.6 pricing:
+Retrieve actual token usage from Claude Code's local logs via ccusage, then print the summary line.
 
+**1. Run these two commands:**
+
+```bash
+npx --yes ccusage@latest daily --json 2>/dev/null
+```
+
+```bash
+cat /tmp/.prx-session-start-spend 2>/dev/null || echo "none"
+```
+
+**2. Compute this session's cost** — today's `totalCost` from the first command minus the `totalCost` from the baseline file (second command). If the baseline file is missing or today has no entry in it, use the full daily total as the session cost.
+
+**3. Print the summary line:**
+
+If ccusage data is available:
+```
+{TICKET_KEY} | ~{N}m elapsed | ${session_cost} this session (${daily_total} today) | {input_tokens} in / {output_tokens} out (Sonnet 4.6)
+```
+
+If ccusage is unavailable (npx not found or command fails), fall back to manual estimation from the volume of content processed (Jira fields, attachments, file reads, analysis). Label estimates with `~`:
 ```
 {TICKET_KEY} | ~{N}m elapsed | ~{X} in / ~{Y} out tokens | est. cost ${Z} (Sonnet 4.6)
 ```
 
-Pricing reference (Sonnet 4.6 as of skill version 1.2.1):
+Manual estimation pricing reference (Sonnet 4.6, fallback only):
 - Input: $3.00 / 1M tokens
 - Output: $15.00 / 1M tokens
-
-Estimate token counts from the volume of content processed (Jira fields, attachments, file reads, analysis produced). These are approximations — label them clearly with `~`.
-
-Example:
-```
-IV-3672 | ~14m elapsed | ~5,100 in / ~2,040 out tokens | est. cost $0.0462 (Sonnet 4.6)
-```
 
 ---
 
@@ -2758,7 +2887,7 @@ Write a temporary Markdown file at `/tmp/{TICKET_KEY}-analysis.md`. Populate eve
 | Field | Value |
 |-------|-------|
 | Date | {today's date} |
-| Analyst | Claude (Dev Skill v1.2.1) |
+| Analyst | Claude (Dev Skill v1.2.2) |
 | Ticket type | {Bug / Story / Enhancement} |
 | Priority | {priority} |
 | Status | {status} |
@@ -3488,25 +3617,54 @@ Display:
 
 **Skip condition:** If `PRX_INCLUDE_SM_IN_SESSIONS_ENABLED` is not set or is not `Y`/`YES`/`true` (case-insensitive), skip this step entirely. Display: `⏭️  Step 14 skipped — set PRX_INCLUDE_SM_IN_SESSIONS_ENABLED=Y in .env to activate Bryan's retrospective.`
 
-Bryan runs after every Dev Mode session, immediately after Step 13h. Bryan is a **silent observer** — he does not interrupt Steps 0–13. He now convenes a brief retrospective with the team.
+Bryan runs after every Dev Mode session, immediately after Step 13h. Bryan is a **silent observer** — he does not interrupt Steps 0–13. He now convenes a structured retrospective with the team.
 
 #### Bryan's Mandate
 
-- **Process audit** — identify friction, unclear steps, or repeated work from this session
-- **Token audit** — compare Step 11 stats against budget targets; flag which steps consumed the most tokens
-- **One change rule** — propose exactly one focused SKILL.md improvement per session; if nothing material was observed, state "No change proposed"
-- **Consensus gate** — the change requires unanimous approval from Morgan, Riley, and the highest-scoring engineer from Step 7 (or any one engineer if it was an enhancement)
-- **Push gate** — controlled by `PRX_SKILL_UPGRADE_MIN_SESSIONS` (default: 3); Bryan tracks sessions since last push in `shared/process-efficiency.md`; when the count reaches the threshold, commit and push all accumulated Bryan changes to the plugin repo's main branch
+| Responsibility | What Bryan does |
+|---|---|
+| **Token audit** | Compares Step 11 stats against budget targets; builds a step-level breakdown; flags hotspots |
+| **Process audit** | Identifies friction, unclear instructions, repeated work, or steps that produced low-value output |
+| **DoD guardian** | Checks that no required step was silently skipped or abbreviated without justification |
+| **Skill sharpening** | Proposes one targeted SKILL.md edit per session — tighter wording, removed redundancy, collapsed steps — to make the skill sharper and cheaper over time |
+| **Backlog management** | Maintains a prioritised improvement backlog in `process-efficiency.md`; recurrent issues get promoted to HIGH and jump the queue |
+| **Impact tracking** | After each approved change, measures whether the next session actually cost less; records the delta |
+| **Compaction pass** | Every `PRX_SKILL_COMPACTION_INTERVAL` sessions (default: 10), runs a deep SKILL.md review — eliminates dead weight, compresses verbose prose, merges redundant instructions, removes gates that are never triggered; requires full five-member approval |
+| **Velocity dashboard** | Tracks rolling 5-session avg cost, monthly cumulative spend vs `PRX_MONTHLY_BUDGET`, token trend, and change acceptance rate; alerts when monthly spend exceeds 80% or 100% |
+| **Blocker log** | Records recurring impediments (MCP failures, step skips, unclear outputs); a blocker seen 3+ times is auto-promoted to HIGH backlog priority |
+| **Sprint health report** | Every `PRX_SKILL_COMPACTION_INTERVAL` sessions, generates a summary: tickets worked, avg cost, changes shipped, velocity trend, skill health score (0–100) |
+| **Push gate** | Controlled by `PRX_SKILL_UPGRADE_MIN_SESSIONS` (default: 3); when the threshold is reached, commits and pushes all queued changes to the plugin repo's main branch |
 
-#### Step 14 Output
+#### 14a. Pre-session Check — Backlog & Blockers
+
+Before running the audit, Bryan:
+
+**A. Gets actual monthly spend from ccusage:**
+
+```bash
+npx --yes ccusage@latest monthly --json 2>/dev/null
+```
+
+Parse the current calendar month's `totalCost` (or `cost`) field from the JSON. If ccusage is unavailable or returns no data for this month, fall back to summing the `cost: $N` values from all `[S-NNN]` rows in `shared/process-efficiency.md` for the current month.
+
+**B. Then reads `shared/process-efficiency.md` for:**
+
+1. **Monthly budget** — use the actual ccusage monthly spend (or the manual sum as fallback). If spend > 80% of `PRX_MONTHLY_BUDGET`, flag ⚠️ and note the remaining headroom. If spend ≥ 100%, flag ❌ and state that clearly in the token audit.
+2. **Backlog** — note any HIGH-priority items. If the current session produced evidence for a HIGH item, it gets priority over new observations.
+3. **Blockers** — increment the count for any blocker that recurred this session. Auto-promote to HIGH backlog if count reaches 3.
+4. **Impact check** — if last session had an approved change, compare this session's cost against the pre-change baseline. Record the delta in the backlog row.
+5. **Compaction trigger** — if `Sessions tracked % PRX_SKILL_COMPACTION_INTERVAL == 0`, flag this as a compaction session.
+
+#### 14b. Token & Process Audit
 
 ```
 ── Bryan — Scrum Master Retrospective ────────────────────────────────
 
 📊 TOKEN AUDIT
   Total this session  : ~{N} in / ~{N} out | ${cost}
-  Budget target       : {ticket type} < ${budget}
-  Status              : ✅ Within budget / ⚠️ Over by {X}%
+  Monthly budget      : ${spent} spent of ${PRX_MONTHLY_BUDGET:-20.00} ({X}% used, {days} days remaining)
+  Status              : ✅ On track / ⚠️ >80% consumed / ❌ Budget exceeded
+  Rolling 5-session avg: ${avg} ({↓ improving / ↑ degrading / → stable})
 
   Step breakdown (estimated):
   ┌─────────────────────────────┬──────────┬────────┐
@@ -3514,52 +3672,147 @@ Bryan runs after every Dev Mode session, immediately after Step 13h. Bryan is a 
   ├─────────────────────────────┼──────────┼────────┤
   │ {Step name}                 │ {N}%     │ ✅/⚠️  │
   └─────────────────────────────┴──────────┴────────┘
+  Token hotspot this session: {Step name} ({N}%)
 
 🔍 PROCESS OBSERVATIONS
-  - {Observation 1 — specific friction or inefficiency seen this session}
-  - {Observation 2}
+  DoD check   : ✅ All steps completed / ⚠️ {Step N} was skipped — {reason}
+  Friction    : {specific observation or "None observed"}
+  Redundancy  : {duplicated work or output seen or "None"}
+  Clarity gap : {instruction that produced unexpected output or "None"}
 
-💡 PROPOSED SKILL.md CHANGE  (or "No change proposed this session")
-  Area     : {Step or section}
-  Problem  : {what is slow, unclear, or wasteful}
-  Change   : {the specific edit — one sentence}
-  Est. saving : {token or time impact if measurable}
+🗂️ BACKLOG STATUS
+  HIGH  : {item or "—"}
+  MEDIUM: {item or "—"}
+  (full backlog in shared/process-efficiency.md)
+```
 
-  Before: "{relevant current wording}"
-  After : "{proposed replacement wording}"
+#### 14c. Proposed SKILL.md Change
+
+Bryan selects **one** change — either the top HIGH backlog item (if evidence supports it this session) or the sharpest new observation. The change must be concrete: a specific before/after edit, not a vague suggestion.
+
+**Sharpening heuristics Bryan applies:**
+- Instructions that can say the same thing in half the words
+- Steps that always output "N/A" or "none found" → add a fast-path skip condition
+- Duplicate guidance spread across multiple steps → consolidate to one canonical location
+- Passive voice or hedging that makes intent ambiguous → rewrite as direct imperatives
+- Gates that have never been triggered across the last N sessions → consider removing
+
+```
+💡 PROPOSED SKILL.md CHANGE  (or "No change proposed — backlog unchanged")
+  Area        : {Step or section}
+  Problem     : {what is wasteful, unclear, or redundant}
+  Type        : Compress / Remove / Clarify / Merge / Fast-path
+  Est. saving : ~{N}% tokens / {clearer output / fewer re-reads}
+  Backlog item: {NEW / HIGH-001 / MEDIUM-003}
+
+  Before: "{exact current wording}"
+  After : "{proposed replacement}"
 
 🗳️ CONSENSUS
-  Morgan   : ✅ / ❌ — {one-line reason}
-  Riley    : ✅ / ❌ — {one-line reason}
+  Morgan    : ✅ / ❌ — {one-line reason}
+  Riley     : ✅ / ❌ — {one-line reason}
   {Engineer}: ✅ / ❌ — {one-line reason}
 
-  Result : Consensus reached ✅ / Not reached ❌ — change dropped
+  Result : Consensus reached ✅ / Not reached ❌ — re-queued in backlog
 
 📝 SKILL.md UPDATE  (only if consensus reached)
-  Version bumped: {current} → {new patch}
+  Version bumped : {current} → {new patch}
+  Skill Change Log row appended to SKILL.md (SC-{NNN})
   Queued for push. Sessions since last push: {N} / {PRX_SKILL_UPGRADE_MIN_SESSIONS}
   {If N >= PRX_SKILL_UPGRADE_MIN_SESSIONS}:
-    git commit -m "v{new} — Bryan: {one-line description}" && git push origin main
-    → Pushed ✅
-
+    git commit -m "v{new} — Bryan SC-{NNN}: {one-line description}"
+    COMMIT_HASH=$(git rev-parse --short HEAD)
+    git push origin main
+    → Pushed ✅  commit: {COMMIT_HASH}
+    → skill-changelog.md entry written (see Step 14f)
 ──────────────────────────────────────────────────────────────────────
 ```
 
-#### Consensus Rules
+#### 14d. Compaction Pass *(compaction sessions only)*
 
-- Unanimous approval required (Morgan + Riley + one engineer all vote ✅)
-- If any voter votes ❌, the change is dropped for this session; Bryan may re-raise it in a future session if the same friction recurs
-- If no change is proposed, skip the consensus vote entirely
+On compaction sessions, Bryan replaces the single-change rule with a **full SKILL.md review**. Bryan reads the entire file and produces a compaction diff:
 
-#### process-efficiency.md Update
+- Remove instructions that duplicate content already stated elsewhere
+- Compress step preambles to ≤ 2 sentences — if it takes more to explain what a step does, the step is poorly scoped
+- Collapse any two consecutive steps that share the same file reads or MCP calls
+- Remove or gate any block that has produced zero output across the last `PRX_SKILL_COMPACTION_INTERVAL` sessions (as evidenced by the process-efficiency.md session log)
+- Rewrite any instruction where the output format is inconsistently followed
 
-After every Step 14 (regardless of whether a change was approved), append a row to `shared/process-efficiency.md`:
+Compaction requires **all five team members** to approve (Morgan + Riley + Alex + Sam + Jordan). Version bump is MINOR (x.Y.0). Bryan commits the compaction as a single atomic commit: `"vX.Y.0 — Bryan: compaction pass #{N} (~{X}% token reduction)"`.
 
+#### 14e. process-efficiency.md Update
+
+`process-efficiency.md` uses an **append-only journal** — never edit existing lines, only append new ones. The header and Velocity Dashboard are auto-generated from the journal on every pull (see rebuild algorithm in the KB Sync section). This guarantees lossless `merge=union` in distributed mode regardless of how many developers push concurrently.
+
+After every Step 14, **append** to `shared/process-efficiency.md`:
+
+**1. New session record** (always):
 ```markdown
-| {session N} | {today} | {TICKET_KEY} | {Bug/Enh} | ${cost} | ${budget} | ✅/⚠️ | {change one-liner or "—"} |
+## [S-NNN] Session Record
+date: {today} | developer: {DEVELOPER} | ticket: {TICKET_KEY} | type: {Bug/Enh} | cost: ${cost} | budget: ${budget} | status: ✅/⚠️
+hotspot: {Step name} ({N}%) | change: {BL-NNN or "—"} | impact: {saving vs prev session or "baseline"}
 ```
 
-Also update the header line: increment `Sessions tracked`, `Bryan changes pushed` (if pushed this session), and `Sessions since last push` (reset to 0 on push, increment otherwise).
+**2. New or updated backlog item:**
+- If a **new** issue was observed: append a new `## [BL-NNN] Backlog Item` block
+- If an **existing** item recurred: append `[SEEN+1: {today} by {developer}]` under that item's block (do not edit the original line)
+- If an item was **promoted**: append `[PROMOTED HIGH: {today} — seen {N}×]`
+- If a change was **applied**: append `[APPLIED: {today} in v{X.Y.Z}]`
+- If consensus was **rejected**: append `[CONSENSUS ❌: {today} — re-queued]`
+
+**3. New or updated blocker:**
+- If a **new** blocker was observed: append a new `## [BK-NNN] Blocker` block
+- If an existing blocker **recurred**: append `[COUNT+1: {today} by {developer}]`
+- If a blocker was **resolved**: append `[RESOLVED: {today}]`
+
+The auto-generated header and Velocity Dashboard are then rebuilt from the journal during the next pull (Step 0a), not written here — writing them here would cause merge conflicts.
+
+#### 14f. Skill Audit Trail
+
+Run this step only when a change was approved **and** pushed this session (i.e., `N >= PRX_SKILL_UPGRADE_MIN_SESSIONS`).
+
+**1. Append a row to the `## Skill Change Log` table in SKILL.md:**
+```markdown
+| SC-{NNN} | v{new} | {today} | {COMMIT_HASH} | {Compress/Remove/Clarify/Merge/Fast-path/Compaction} | {one-line summary} | ACTIVE |
+```
+This row lives in SKILL.md itself — anyone reading the file can see the full change history at a glance.
+
+**2. Append a full entry to `shared/skill-changelog.md` in the KB:**
+```markdown
+## [SC-{NNN}] v{new} — {one-line summary}
+date: {today} | commit: {COMMIT_HASH} | backlog-ref: {BL-NNN or "new"} | type: {type}
+PROBLEM: {what was inefficient or unclear}
+BEFORE: "{exact old wording — quote verbatim}"
+AFTER: "{exact new wording — quote verbatim}"
+voters: Morgan ✅ | Riley ✅ | {Engineer} ✅
+```
+
+**3. Revert procedure** — if a Bryan change later causes problems, any developer can:
+```bash
+# 1. Find the commit hash — either from SKILL.md's Skill Change Log table
+#    or from shared/skill-changelog.md SC-{NNN} entry
+git log --oneline | grep "Bryan SC-"
+
+# 2. Revert the specific commit (safe — creates a new revert commit, no history rewrite)
+git revert <COMMIT_HASH>
+git push origin main
+
+# 3. Append revert tag to the SC-{NNN} entry in shared/skill-changelog.md:
+# [REVERTED: {today} — revert-commit: {revert-hash} — reason: {one-line}]
+
+# 4. Update the row in SKILL.md's Skill Change Log: change Status to REVERTED
+#    (this is the only in-place edit Bryan ever makes to the log — acceptable since
+#    it is a revert operation, not a new append, and git history preserves the full story)
+```
+
+If a compaction pass needs to be reverted, the same procedure applies — the compaction commit hash is recorded in the SC-NNN entry.
+
+#### Consensus Rules
+
+- Regular change: unanimous approval from Morgan + Riley + highest-scoring engineer (or any one engineer for enhancements)
+- Compaction pass: unanimous approval from all five team members
+- Rejected change: re-queued in backlog with "seen N times" counter incremented; if seen 3+ times, promoted to HIGH
+- No change proposed: skip consensus; still update process-efficiency.md
 
 ---
 
@@ -4094,11 +4347,7 @@ If there are **Critical issues**, confirm:
 
 ### Step R7 — Session Stats
 
-Same format as Step 11 in Dev Mode. Print the single summary line:
-
-```
-{TICKET_KEY} | ~{N}m elapsed | ~{X} in / ~{Y} out tokens | est. cost ${Z} (Sonnet 4.6)
-```
+Same procedure as Step 11 in Dev Mode — use ccusage daily data and the session-start baseline, falling back to manual estimation if unavailable. Print the summary line in the same format.
 
 ---
 
@@ -4125,7 +4374,7 @@ Write a temporary Markdown file at `/tmp/{TICKET_KEY}-review.md`. Populate every
 | Field | Value |
 |-------|-------|
 | Date | {today's date} |
-| Reviewer | Claude Review Panel (Dev Skill v1.2.1) |
+| Reviewer | Claude Review Panel (Dev Skill v1.2.2) |
 | Ticket type | {Bug fix / Enhancement} |
 | Priority | {priority} |
 | Status | {status} |
@@ -4460,7 +4709,12 @@ If push fails: replace the `Git` line with `Git: KB_PUSH_WARN — committed loca
 
 **Skip condition:** Same as Step 14 — if `PRX_INCLUDE_SM_IN_SESSIONS_ENABLED` is not `Y`/`YES`/`true`, skip entirely.
 
-Identical to Step 14 in Dev Mode. Bryan runs after every PR Review session. The token audit uses the stats from Step R7 (session stats). The consensus panel is Morgan + Riley + one reviewer from Step R5 (the reviewer whose findings were most substantive). The `process-efficiency.md` row records verdict as the review verdict (✅ / ⚠️ / 🔄 / ❌).
+Identical to Step 14 in Dev Mode with these differences:
+- Token audit uses Step R7 session stats
+- DoD check covers Steps R0–R9h (not Steps 0–13h)
+- Consensus panel: Morgan + Riley + the reviewer from Step R5 whose findings were most substantive
+- `process-efficiency.md` Session Log row records the review verdict (✅ / ⚠️ / 🔄 / ❌) in the `Status` column instead of budget status
+- Compaction pass eligibility counts PR Review sessions in the same `Sessions tracked` counter as Dev Mode sessions
 
 ---
 

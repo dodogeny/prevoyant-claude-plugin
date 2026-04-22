@@ -4,7 +4,12 @@
       "Bash(python3 *)",
       "Bash(xargs cat *)",
       "Skill(update-config)",
-      "Bash(grep -n * plugin/skills/dev/SKILL.md)"
+      "Bash(grep -n * plugin/skills/dev/SKILL.md)",
+      "Bash(grep -n * plugin/skills/dev/SKILL.md)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:github.com)",
+      "Bash(chmod +x *)",
+      "Bash(npx --yes ccusage@latest *)"
     ]
   },
   "hooks": {
@@ -15,6 +20,11 @@
             "type": "command",
             "command": "bash .claude/load-env.sh",
             "statusMessage": "Loading .env..."
+          },
+          {
+            "type": "command",
+            "command": "bash scripts/check-budget.sh",
+            "statusMessage": "Checking monthly Claude budget..."
           }
         ]
       }
