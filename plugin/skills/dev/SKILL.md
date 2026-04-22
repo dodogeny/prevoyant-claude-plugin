@@ -3670,7 +3670,8 @@ Bryan selects **one** change — either the top HIGH backlog item (if evidence s
   Result : Consensus reached ✅ / Not reached ❌ — re-queued in backlog
 
 🔒 DEVELOPER CONFIRMATION  (only if consensus reached)
-  Skip this block entirely if AUTO_MODE is Y/YES/true — auto-proceed.
+  Skip this block entirely if AUTO_MODE is Y/YES/true — defer the update (do not apply).
+  Append [DEFERRED AUTO_MODE: {today}] to the backlog item and close Step 14.
   Otherwise pause and present the following before touching any file:
 
   ┌── Proposed SKILL.md edit ─────────────────────────────────────────┐
@@ -3695,7 +3696,7 @@ Bryan selects **one** change — either the top HIGH backlog item (if evidence s
   N          → append [DEFERRED by developer: {today}] to the backlog
                item; skip 📝 SKILL.md UPDATE; close Step 14
 
-📝 SKILL.md UPDATE  (only if consensus reached AND developer confirmed, or AUTO_MODE=Y)
+📝 SKILL.md UPDATE  (only if consensus reached AND developer confirmed)
   Version bumped : {current} → {new patch}
   Skill Change Log row appended to SKILL.md (SC-{NNN})
   Queued for push. Sessions since last push: {N} / {PRX_SKILL_UPGRADE_MIN_SESSIONS}
@@ -3720,9 +3721,9 @@ On compaction sessions, Bryan replaces the single-change rule with a **full SKIL
 
 Compaction requires **all five team members** to approve (Morgan + Riley + Alex + Sam + Jordan). Version bump is MINOR (x.Y.0).
 
-Before applying any edits, Bryan presents the same **🔒 DEVELOPER CONFIRMATION** gate as in 14c — listing the full compaction diff summary, total estimated token reduction, and all five approvals — then asks `→ Proceed with compaction? [Y/n]:`. Skip the prompt if AUTO_MODE=Y. If the developer declines, append `[COMPACTION DEFERRED by developer: {today}]` to `process-efficiency.md` and skip the commit.
+Before applying any edits, Bryan presents the same **🔒 DEVELOPER CONFIRMATION** gate as in 14c — listing the full compaction diff summary, total estimated token reduction, and all five approvals — then asks `→ Proceed with compaction? [Y/n]:`. If AUTO_MODE=Y, skip the prompt and defer the compaction: append `[COMPACTION DEFERRED AUTO_MODE: {today}]` to `process-efficiency.md` and skip the commit. If the developer declines interactively, append `[COMPACTION DEFERRED by developer: {today}]` instead.
 
-If confirmed (or AUTO_MODE=Y), Bryan commits the compaction as a single atomic commit: `"vX.Y.0 — Bryan: compaction pass #{N} (~{X}% token reduction)"`.
+If confirmed, Bryan commits the compaction as a single atomic commit: `"vX.Y.0 — Bryan: compaction pass #{N} (~{X}% token reduction)"`.
 
 #### 14e. process-efficiency.md Update
 
