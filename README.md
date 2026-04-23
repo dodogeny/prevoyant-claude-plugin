@@ -1,4 +1,4 @@
-# Prevoyant - Claude Code Plugin `v1.2.2`
+# Prevoyant - Claude Code Plugin `v1.2.3`
 
 **Prevoyant** is a [Claude Code](https://claude.ai/code) plugin — an AI agent team that runs a structured, end-to-end developer workflow for Jira tickets. Three modes:
 
@@ -209,9 +209,9 @@ Copy `.env.example` to `.env` — Claude Code loads it automatically from the pr
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PRX_KB_MODE` | `local` | `local` — KB on this machine only. `distributed` — KB in a shared private git repo. |
-| `PRX_KNOWLEDGE_DIR` | `$HOME/.dev-skill/knowledge-base` | Override the local KB path (local mode only). |
+| `PRX_KNOWLEDGE_DIR` | `$HOME/.prevoyant/knowledge-base` | Override the local KB path (local mode only). |
 | `PRX_KB_REPO` | — | URL of your team's private KB git repository (distributed mode — required). |
-| `PRX_KB_LOCAL_CLONE` | `$HOME/.dev-skill/kb` | Local clone path for the KB repo (distributed mode). |
+| `PRX_KB_LOCAL_CLONE` | `$HOME/.prevoyant/kb` | Local clone path for the KB repo (distributed mode). |
 | `PRX_KB_KEY` | — | AES-256-CBC passphrase for encrypting KB files at rest (distributed mode, optional). |
 
 ### Source Repository Cross-Check (optional)
@@ -224,7 +224,7 @@ Copy `.env.example` to `.env` — Claude Code loads it automatically from the pr
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CLAUDE_REPORT_DIR` | `$HOME/.dev-skill/reports` | Folder where PDF/HTML reports are saved. Created automatically if it does not exist. |
+| `CLAUDE_REPORT_DIR` | `$HOME/.prevoyant/reports` | Folder where PDF/HTML reports are saved. Created automatically if it does not exist. |
 
 ### Email Delivery (optional)
 
@@ -304,7 +304,7 @@ Every session feeds into a **shared, persistent knowledge base** stored as plain
 
 | Mode | Location | Distribution | Encryption |
 |------|----------|-------------|------------|
-| **local** (default) | `$HOME/.dev-skill/knowledge-base/` | None — private to one machine | None |
+| **local** (default) | `$HOME/.prevoyant/knowledge-base/` | None — private to one machine | None |
 | **distributed** | Local clone of `PRX_KB_REPO` | Via git push/pull to your team's private repo | Optional AES-256-CBC |
 
 **Local mode:** zero setup — the KB is created automatically on the first session.
@@ -315,8 +315,8 @@ Every session feeds into a **shared, persistent knowledge base** stored as plain
 # Set in your shell profile or .env:
 export PRX_KB_MODE=distributed
 export PRX_KB_REPO="git@github.com:myorg/team-kb.git"
-# Optional — default is $HOME/.dev-skill/kb:
-export PRX_KB_LOCAL_CLONE="$HOME/.dev-skill/kb"
+# Optional — default is $HOME/.prevoyant/kb:
+export PRX_KB_LOCAL_CLONE="$HOME/.prevoyant/kb"
 ```
 
 The skill clones the repo and initialises the directory structure automatically on the first session.
@@ -395,7 +395,7 @@ In distributed mode, the skill runs `git pull --rebase` before every push. `INDE
 
 ## Automated Polling (optional)
 
-`scripts/poll-jira.sh` polls Jira every hour for tickets assigned to you with status **To Do**, **Open**, **Parked**, or **Blocked**, and triggers the dev skill automatically for any new ones.
+`scripts/poll-jira.sh` polls Jira every hour for tickets assigned to you with status **To Do**, **Open**, **Parked**, or **Blocked**, and triggers Prevoyant automatically for any new ones.
 
 ### Credentials file
 
@@ -417,9 +417,9 @@ JIRA_TOKEN="your-api-token-here"
 **macOS — launchd:**
 ```bash
 # Edit the plist — replace /Users/YOUR_USERNAME with your home path
-cp scripts/com.dev-skill.poll-jira.plist ~/Library/LaunchAgents/
-launchctl load ~/Library/LaunchAgents/com.dev-skill.poll-jira.plist
-launchctl list | grep com.dev-skill.poll-jira
+cp scripts/com.prevoyant.poll-jira.plist ~/Library/LaunchAgents/
+launchctl load ~/Library/LaunchAgents/com.prevoyant.poll-jira.plist
+launchctl list | grep com.prevoyant.poll-jira
 ```
 
 Enable **Power Nap** (System Settings → Battery → Options) so the job fires while the lid is closed.
@@ -428,13 +428,13 @@ Enable **Power Nap** (System Settings → Battery → Options) so the job fires 
 ```bash
 crontab -e
 # Add:
-0 * * * * DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus /bin/bash $HOME/dev-skill/scripts/poll-jira.sh
+0 * * * * DBUS_SESSION_BUS_ADDRESS=unix:path=/run/user/$(id -u)/bus /bin/bash $HOME/prevoyant/scripts/poll-jira.sh
 ```
 
 **Windows — Task Scheduler (WSL):**
 1. Open Task Scheduler → Create Basic Task
 2. Trigger: Daily, repeat every 1 hour
-3. Action: Program = `wsl`, Arguments = `bash /home/<wsl-user>/dev-skill/scripts/poll-jira.sh`
+3. Action: Program = `wsl`, Arguments = `bash /home/<wsl-user>/prevoyant/scripts/poll-jira.sh`
 
 ### Headless mode
 
@@ -521,7 +521,7 @@ Story points = **Complexity + Risk + Repetition** (not hours). Scale: 1 · 2 · 
 │   ├── setup.cmd                 # One-shot prerequisite installer (Windows — CMD / double-click)
 │   ├── check-budget.sh           # SessionStart hook: ccusage monthly budget check + session baseline capture
 │   ├── poll-jira.sh              # Jira polling script (macOS / Linux / Windows WSL)
-│   ├── com.dev-skill.poll-jira.plist  # macOS launchd schedule template
+│   ├── com.prevoyant.poll-jira.plist  # macOS launchd schedule template
 │   ├── .jira-credentials.example # Credentials template
 │   └── send-report.py            # Email delivery helper
 ├── .claude/
@@ -633,18 +633,18 @@ claude plugin list
 
 The KB accumulates root causes, patterns, regression risks, and lessons learned across every ticket. Back it up before uninstalling if you may want to restore it later.
 
-**Local mode** (default — KB at `~/.dev-skill/knowledge-base/` or `$PRX_KNOWLEDGE_DIR`):
+**Local mode** (default — KB at `~/.prevoyant/knowledge-base/` or `$PRX_KNOWLEDGE_DIR`):
 
 ```bash
 # macOS / Linux — creates a timestamped archive in your home directory
-KB_DIR="${PRX_KNOWLEDGE_DIR:-$HOME/.dev-skill/knowledge-base}"
+KB_DIR="${PRX_KNOWLEDGE_DIR:-$HOME/.prevoyant/knowledge-base}"
 tar -czf "$HOME/prevoyant-kb-backup-$(date +%Y%m%d).tar.gz" -C "$(dirname "$KB_DIR")" "$(basename "$KB_DIR")"
 echo "Backup saved to: $HOME/prevoyant-kb-backup-$(date +%Y%m%d).tar.gz"
 ```
 
 ```powershell
 # Windows (PowerShell)
-$KBDir = if ($env:PRX_KNOWLEDGE_DIR) { $env:PRX_KNOWLEDGE_DIR } else { "$env:USERPROFILE\.dev-skill\knowledge-base" }
+$KBDir = if ($env:PRX_KNOWLEDGE_DIR) { $env:PRX_KNOWLEDGE_DIR } else { "$env:USERPROFILE\.prevoyant\knowledge-base" }
 $Archive = "$env:USERPROFILE\prevoyant-kb-backup-$(Get-Date -Format yyyyMMdd).zip"
 Compress-Archive -Path $KBDir -DestinationPath $Archive
 Write-Host "Backup saved to: $Archive"
@@ -653,7 +653,7 @@ Write-Host "Backup saved to: $Archive"
 **Distributed mode** (KB is already in your private git repo — just confirm the remote is up to date):
 
 ```bash
-git -C "${PRX_KB_LOCAL_CLONE:-$HOME/.dev-skill/kb}" push
+git -C "${PRX_KB_LOCAL_CLONE:-$HOME/.prevoyant/kb}" push
 echo "KB is safely stored in your remote repo."
 ```
 
@@ -661,7 +661,7 @@ echo "KB is safely stored in your remote repo."
 
 ```bash
 # Local mode — extract into the KB directory
-tar -xzf ~/prevoyant-kb-backup-YYYYMMDD.tar.gz -C ~/.dev-skill/
+tar -xzf ~/prevoyant-kb-backup-YYYYMMDD.tar.gz -C ~/.prevoyant/
 
 # Distributed mode — set PRX_KB_REPO in .env; the skill clones it automatically on first run
 ```
@@ -725,10 +725,10 @@ The plugin never writes data outside its own directory and the KB location you c
 
 ```bash
 # Knowledge base (local mode default)
-rm -rf ~/.dev-skill
+rm -rf ~/.prevoyant
 
 # PDF / HTML reports
-rm -rf ~/.dev-skill/reports   # or the path set in CLAUDE_REPORT_DIR
+rm -rf ~/.prevoyant/reports   # or the path set in CLAUDE_REPORT_DIR
 ```
 
 > `.env` and `.claude/settings.local.json` inside the repo directory are also removed when you delete the repository in step 3.
@@ -736,6 +736,16 @@ rm -rf ~/.dev-skill/reports   # or the path set in CLAUDE_REPORT_DIR
 ---
 
 ## Changelog
+
+### v1.2.3 — Prevoyant Server (Ambient Agent) + Path Rebranding
+
+- **Prevoyant Server:** New optional Node.js server (`server/`) that runs as an always-on ambient agent alongside the Claude Code plugin. Start with `cd server && npm install && npm start`. Provides two capabilities:
+  - **Real-time webhooks:** Registers with Jira as a webhook receiver (`POST /jira-events?token=WEBHOOK_SECRET`) and triggers `poll-jira.sh` analysis immediately when a ticket event arrives — no polling delay.
+  - **Scheduled polling fallback:** Runs `poll-jira.sh` on a configurable day interval (`WEBHOOK_POLL_INTERVAL_DAYS`) as a fallback when webhooks are unavailable.
+- **Stats dashboard:** Built-in web dashboard at `http://localhost:3000/dashboard` showing which Jira tickets have been processed, their current status (queued / running / completed / failed), processing duration, and exact disk locations of generated PDF/HTML reports. Auto-refreshes every 30 seconds. JSON API available at `/dashboard/json`.
+- **Health endpoint:** `GET /health` returns server status and timestamp for monitoring integrations.
+- **Path rebranding:** All default paths changed from `~/.dev-skill/` to `~/.prevoyant/` — knowledge base, KB clone, reports directory, and temp session dirs. Existing installations continue to work via the `PRX_KNOWLEDGE_DIR` / `PRX_KB_LOCAL_CLONE` / `CLAUDE_REPORT_DIR` env vars if you have data you want to preserve at the old paths.
+- **launchd plist renamed:** `scripts/com.dev-skill.poll-jira.plist` → `scripts/com.prevoyant.poll-jira.plist` to match the new namespace.
 
 ### v1.2.2 — Token Budget Tracking + Estimate Mode
 

@@ -1,7 +1,7 @@
 #!/bin/bash
 # poll-jira.sh
 # Polls Jira every hour for To Do/Open/Parked/Blocked tickets assigned to the current user
-# and triggers the Prx dev skill analysis for any new ones found.
+# and triggers Prevoyant analysis for any new ones found.
 #
 # macOS  — scheduled via launchd (StartInterval 3600)
 #          See: scripts/com.prx.poll-jira.plist
@@ -104,13 +104,13 @@ fi
 
 if [ -z "$JIRA_BASE" ]; then
   echo "$(date '+%Y-%m-%d %H:%M:%S') ERROR: JIRA_URL is not set. Add it to .env: JIRA_URL=https://yourcompany.atlassian.net" >> "$LOG_FILE"
-  notify "Dev Skill" "JIRA_URL not set — add it to .env and retry."
+  notify "Prevoyant" "JIRA_URL not set — add it to .env and retry."
   exit 1
 fi
 
 if [ -z "$JIRA_USER" ] || [ -z "$JIRA_TOKEN" ]; then
   echo "$(date '+%Y-%m-%d %H:%M:%S') ERROR: JIRA_USERNAME and JIRA_API_TOKEN must be set in .env" >> "$LOG_FILE"
-  notify "Dev Skill" "Jira credentials missing — add JIRA_USERNAME and JIRA_API_TOKEN to .env."
+  notify "Prevoyant" "Jira credentials missing — add JIRA_USERNAME and JIRA_API_TOKEN to .env."
   exit 1
 fi
 
@@ -168,7 +168,7 @@ HTTP_CODE=$(echo "$HTTP_RESPONSE" | tail -n 1)
 if [ "$HTTP_CODE" != "200" ]; then
   echo "$(date '+%Y-%m-%d %H:%M:%S') ERROR: Jira API returned HTTP $HTTP_CODE" >> "$LOG_FILE"
   echo "$HTTP_BODY" >> "$LOG_FILE"
-  notify "Dev Skill" "Jira API error (HTTP $HTTP_CODE) — check poll-jira.log"
+  notify "Prevoyant" "Jira API error (HTTP $HTTP_CODE) — check poll-jira.log"
   exit 1
 fi
 
@@ -280,7 +280,7 @@ Description:
 {'...' if len(desc) == 600 else ''}
 
 ---
-Automated notification from Dev Skill (poll-jira.sh)
+Automated notification from Prevoyant (poll-jira.sh)
 '''
 
 msg = EmailMessage()
@@ -316,10 +316,10 @@ for TICKET in $TICKETS; do
   echo "$TICKET" >> "$CACHE_FILE"
   NEW_COUNT=$((NEW_COUNT + 1))
 
-  notify "Dev Skill" "Starting analysis for $TICKET…"
+  notify "Prevoyant" "Starting analysis for $TICKET…"
   send_ticket_email "$TICKET"
 
-  # Run the dev skill in headless/analysis-only mode.
+  # Run Prevoyant in headless/analysis-only mode.
   # --dangerously-skip-permissions: allows non-interactive Bash tool calls
   #   (pandoc / Chrome PDF generation in Step 11) without permission prompts.
   # --mcp-config: injects the Jira MCP since it is only scoped to the insight
@@ -391,10 +391,10 @@ for raw in sys.stdin:
 
   if [ $EXIT_CODE -eq 0 ]; then
     echo "$(date '+%Y-%m-%d %H:%M:%S') Analysis complete for $TICKET (exit $EXIT_CODE)" >> "$LOG_FILE"
-    notify "Dev Skill" "Analysis complete for $TICKET. PDF saved to DevelopmentTasks folder."
+    notify "Prevoyant" "Analysis complete for $TICKET. PDF saved to DevelopmentTasks folder."
   else
     echo "$(date '+%Y-%m-%d %H:%M:%S') Analysis failed for $TICKET (exit $EXIT_CODE)" >> "$LOG_FILE"
-    notify "Dev Skill" "Analysis failed for $TICKET (exit $EXIT_CODE) — check poll-jira.log"
+    notify "Prevoyant" "Analysis failed for $TICKET (exit $EXIT_CODE) — check poll-jira.log"
   fi
 
 done

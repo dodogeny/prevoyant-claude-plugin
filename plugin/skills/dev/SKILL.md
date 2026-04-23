@@ -22,13 +22,13 @@ Before executing any step, resolve the following variables. Run `echo $PRX_REPO_
 REPO_DIR       = ${PRX_REPO_DIR}   ← set via PRX_REPO_DIR in .env
 
 KB_MODE        = ${PRX_KB_MODE:-local}
-                 ┌─ local        → KNOWLEDGE_DIR = ${PRX_KNOWLEDGE_DIR:-$HOME/.dev-skill/knowledge-base}
-                 └─ distributed  → KNOWLEDGE_DIR = ${PRX_KB_LOCAL_CLONE:-$HOME/.dev-skill/kb}
+                 ┌─ local        → KNOWLEDGE_DIR = ${PRX_KNOWLEDGE_DIR:-$HOME/.prevoyant/knowledge-base}
+                 └─ distributed  → KNOWLEDGE_DIR = ${PRX_KB_LOCAL_CLONE:-$HOME/.prevoyant/kb}
 
 PRX_KB_REPO        = (required when KB_MODE=distributed — URL of the team's dedicated private KB repository)
                           e.g.  git@bitbucket.org:mycompany/prx-kb.git
                                 https://github.com/mycompany/prx-kb.git
-PRX_KB_LOCAL_CLONE = (optional — local clone path for the KB repo; default: $HOME/.dev-skill/kb)
+PRX_KB_LOCAL_CLONE = (optional — local clone path for the KB repo; default: $HOME/.prevoyant/kb)
 PRX_KB_KEY         = (optional when KB_MODE=distributed — AES-256-CBC passphrase for defense-in-depth
                           encryption; omit to push plain Markdown to the private repo)
 
@@ -114,14 +114,14 @@ The knowledge base is a shared, persistent store that grows richer after every D
 
 | Mode | KB location on disk | Distribution | Access control | Encryption | Agent read/write path |
 |------|--------------------|--------------|-----------------|-----------|-----------------------|
-| **local** (default) | `KNOWLEDGE_DIR` (`$HOME/.dev-skill/knowledge-base/`) | None — one machine only | Local filesystem | None | `KNOWLEDGE_DIR` directly |
-| **distributed** | `KNOWLEDGE_DIR` (local clone of `PRX_KB_REPO`) | Via git push/pull to the team's private KB repository | Private repo permissions (Bitbucket, GitHub Enterprise, GitLab, etc.) | Optional AES-256-CBC (`.md.enc` files) | `KNOWLEDGE_DIR` or `/tmp/dev-skill-kb-{PID}/` if encrypted |
+| **local** (default) | `KNOWLEDGE_DIR` (`$HOME/.prevoyant/knowledge-base/`) | None — one machine only | Local filesystem | None | `KNOWLEDGE_DIR` directly |
+| **distributed** | `KNOWLEDGE_DIR` (local clone of `PRX_KB_REPO`) | Via git push/pull to the team's private KB repository | Private repo permissions (Bitbucket, GitHub Enterprise, GitLab, etc.) | Optional AES-256-CBC (`.md.enc` files) | `KNOWLEDGE_DIR` or `/tmp/prevoyant-kb-{PID}/` if encrypted |
 
 **`KB_WORK_DIR`** — the path agents use for all KB reads and writes during a session:
 ```
 KB_WORK_DIR = (KB_MODE=local)                            → {KNOWLEDGE_DIR}
             = (KB_MODE=distributed, no PRX_KB_KEY)   → {KNOWLEDGE_DIR}
-            = (KB_MODE=distributed, PRX_KB_KEY set)  → /tmp/dev-skill-kb-{$$}/   ← decrypted session copy
+            = (KB_MODE=distributed, PRX_KB_KEY set)  → /tmp/prevoyant-kb-{$$}/   ← decrypted session copy
 ```
 
 Resolve `KB_WORK_DIR` in Step 0a and use it consistently for every KB read/write operation thereafter.
@@ -156,11 +156,11 @@ openssl enc -d -aes-256-cbc -pbkdf2 -iter 310000 -md sha512 \
 
 **Batch decrypt (Step 0a — pull to session temp dir):**
 ```bash
-KB_WORK_DIR="/tmp/dev-skill-kb-$$"
+KB_WORK_DIR="/tmp/prevoyant-kb-$$"
 mkdir -p "$KB_WORK_DIR/tickets" "$KB_WORK_DIR/shared" "$KB_WORK_DIR/core-mental-map" "$KB_WORK_DIR/lessons-learned"
 find "$KNOWLEDGE_DIR" -name "*.md.enc" | while read f; do
   rel="${f#$KNOWLEDGE_DIR/}"           # e.g. tickets/IV-3672.md.enc
-  out="$KB_WORK_DIR/${rel%.enc}"       # e.g. /tmp/dev-skill-kb-$$/tickets/IV-3672.md
+  out="$KB_WORK_DIR/${rel%.enc}"       # e.g. /tmp/prevoyant-kb-$$/tickets/IV-3672.md
   mkdir -p "$(dirname "$out")"
   openssl enc -d -aes-256-cbc -pbkdf2 -iter 310000 -md sha512 \
     -in "$f" -out "$out" -pass env:PRX_KB_KEY 2>/dev/null || \
@@ -197,7 +197,7 @@ _(Applies to `KB_MODE=distributed`.)_
 | Accidental public exposure of the repo | **Optional encryption** — if `PRX_KB_KEY` is set, files are AES-256-CBC encrypted; the repo can be made public and no content is readable without the key. |
 | Brute-force key recovery (if encrypted) | PBKDF2-SHA512 at 310,000 iterations per file makes each guess computationally expensive. |
 | Key accidentally committed (if encrypted) | `PRX_KB_KEY` is an env var only; `.md.enc` files contain no key material. |
-| Plaintext KB in session temp dir (if encrypted) | Decrypted files live only in `/tmp/dev-skill-kb-{PID}/`; deleted after push (Step 13f/R9f). |
+| Plaintext KB in session temp dir (if encrypted) | Decrypted files live only in `/tmp/prevoyant-kb-{PID}/`; deleted after push (Step 13f/R9f). |
 
 **Primary security boundary:** the private repository's access control. Encryption is additive.
 
@@ -230,7 +230,7 @@ _(Applies to `KB_MODE=distributed`.)_
     └── {developer}.md  (or .md.enc)   ← one file per developer (name from git config or PRX_DEVELOPER_NAME)
 ```
 
-In `KB_MODE=local` all files are plain `.md`. In `KB_MODE=distributed` all files on disk are `.md.enc`; the plain `.md` files exist only in `KB_WORK_DIR=/tmp/dev-skill-kb-{PID}/` during the session.
+In `KB_MODE=local` all files are plain `.md`. In `KB_MODE=distributed` all files on disk are `.md.enc`; the plain `.md` files exist only in `KB_WORK_DIR=/tmp/prevoyant-kb-{PID}/` during the session.
 
 > **Note:** `PALACE.md` no longer exists as a separate file. The Memory Palace (room trigger tables) and the Master Index (flat entry list) are both sections within `INDEX.md`.
 
@@ -812,7 +812,7 @@ The distributed knowledge base lives in a **dedicated private git repository** (
 
 **First-time setup (once — when creating the KB repo for the team):**
 ```bash
-KB_CLONE="${PRX_KB_LOCAL_CLONE:-$HOME/.dev-skill/kb}"
+KB_CLONE="${PRX_KB_LOCAL_CLONE:-$HOME/.prevoyant/kb}"
 mkdir -p "$KB_CLONE/tickets" "$KB_CLONE/shared" "$KB_CLONE/core-mental-map" "$KB_CLONE/lessons-learned"
 cd "$KB_CLONE"
 git init && git remote add origin "$PRX_KB_REPO"
@@ -834,7 +834,7 @@ git push -u origin main
 
 If the repo already exists and a developer is cloning for the first time:
 ```bash
-KB_CLONE="${PRX_KB_LOCAL_CLONE:-$HOME/.dev-skill/kb}"
+KB_CLONE="${PRX_KB_LOCAL_CLONE:-$HOME/.prevoyant/kb}"
 git clone "$PRX_KB_REPO" "$KB_CLONE"
 ```
 
@@ -847,7 +847,7 @@ This is handled **automatically** by the updated Pull (Step 0a) logic below — 
 > **Key requirement — read before running:** If the team KB repo uses encryption (i.e. other contributors have `PRX_KB_KEY` set), you **must** set the same `PRX_KB_KEY` passphrase in your shell profile before migrating. Migrating without it pushes plain `.md` files that are invisible to every encrypted contributor, and encrypted files they push will be invisible to you. The migration script below detects this mismatch and aborts with instructions if the remote already contains `.md.enc` files and your `PRX_KB_KEY` is unset.
 
 ```bash
-KB_CLONE="${PRX_KB_LOCAL_CLONE:-$HOME/.dev-skill/kb}"
+KB_CLONE="${PRX_KB_LOCAL_CLONE:-$HOME/.prevoyant/kb}"
 cd "$KB_CLONE"
 git init
 git remote add origin "$PRX_KB_REPO"
@@ -935,7 +935,7 @@ Subsequent sessions treat the directory as a normal distributed clone (the `.git
 
 **Pull (Step 0a — before session, distributed mode only):**
 ```bash
-KB_CLONE="${PRX_KB_LOCAL_CLONE:-$HOME/.dev-skill/kb}"
+KB_CLONE="${PRX_KB_LOCAL_CLONE:-$HOME/.prevoyant/kb}"
 
 if [ -d "$KB_CLONE/.git" ]; then
   # Normal path — already a git repo, just pull latest
@@ -1019,7 +1019,7 @@ fi
 
 **Push (Steps 13f and R9f — after session, distributed mode only):**
 ```bash
-KB_CLONE="${PRX_KB_LOCAL_CLONE:-$HOME/.dev-skill/kb}"
+KB_CLONE="${PRX_KB_LOCAL_CLONE:-$HOME/.prevoyant/kb}"
 cd "$KB_CLONE"
 
 # Step 1 — Pull latest from remote before committing (rebase keeps history clean)
@@ -1177,7 +1177,7 @@ If not set, skip all remaining distributed steps and proceed without prior knowl
 Use the pull command from the **Git Sync Rules** section above. If the local clone does not exist, clone the repo first.
 
 ```bash
-KB_CLONE="${PRX_KB_LOCAL_CLONE:-$HOME/.dev-skill/kb}"
+KB_CLONE="${PRX_KB_LOCAL_CLONE:-$HOME/.prevoyant/kb}"
 if [ -d "$KB_CLONE/.git" ]; then
   cd "$KB_CLONE" && git pull origin main && \
     echo "KB: pulled latest from ${PRX_KB_REPO}."
@@ -1195,10 +1195,10 @@ fi
 
 ```bash
 # Clean prior temp dirs
-rm -rf /tmp/dev-skill-kb-[0-9]* 2>/dev/null
+rm -rf /tmp/prevoyant-kb-[0-9]* 2>/dev/null
 
 # Decrypt to session temp dir
-KB_WORK_DIR="/tmp/dev-skill-kb-$$"
+KB_WORK_DIR="/tmp/prevoyant-kb-$$"
 mkdir -p "$KB_WORK_DIR/tickets" "$KB_WORK_DIR/shared" "$KB_WORK_DIR/core-mental-map" "$KB_WORK_DIR/lessons-learned"
 find "$KNOWLEDGE_DIR" -name "*.md.enc" | while read f; do
   rel="${f#$KNOWLEDGE_DIR/}"
@@ -2837,12 +2837,14 @@ After Step 10 is complete, generate a full PDF report of the analysis and save i
 Resolve the output folder using this priority order:
 
 1. If the environment variable `CLAUDE_REPORT_DIR` is set, use it
-2. Otherwise default to: `$HOME/.dev-skill/reports/`
+2. Otherwise default to: `$HOME/.prevoyant/reports/`
 
 ```bash
-REPORT_DIR="${CLAUDE_REPORT_DIR:-$HOME/.dev-skill/reports}"
+REPORT_DIR="${CLAUDE_REPORT_DIR:-$HOME/.prevoyant/reports}"
 mkdir -p "$REPORT_DIR"
 ```
+
+> **Filename rule:** The output file **must** be named exactly `{TICKET_KEY}-analysis.pdf` (or `-review.pdf` in PR Review mode). Do **not** append dates, timestamps, sequence numbers, or any other suffix. The Prevoyant Server dashboard locates reports by this exact name pattern; any deviation makes the report invisible to the dashboard.
 
 **PDF tool pre-check** — before generating Markdown, verify which conversion method is available and report it upfront rather than discovering failures at conversion time:
 
@@ -2873,7 +2875,7 @@ Write `/tmp/{TICKET_KEY}-analysis.md`. Reproduce every step's full output — no
 | Field | Value |
 |-------|-------|
 | Date | {today's date} |
-| Analyst | Claude (Dev Skill v1.2.2) |
+| Analyst | Claude (Prevoyant v1.2.3) |
 | Ticket type | {Bug / Story / Enhancement} |
 | Priority | {priority} |
 | Status | {status} |
@@ -4376,7 +4378,7 @@ After Step R6 is complete, generate a PDF review report and save it to disk.
 Same as Step 12a in Dev Mode:
 
 ```bash
-REPORT_DIR="${CLAUDE_REPORT_DIR:-$HOME/.dev-skill/reports}"
+REPORT_DIR="${CLAUDE_REPORT_DIR:-$HOME/.prevoyant/reports}"
 mkdir -p "$REPORT_DIR"
 ```
 
@@ -4390,7 +4392,7 @@ Write `/tmp/{TICKET_KEY}-review.md`. Reproduce every step's full output — no s
 | Field | Value |
 |-------|-------|
 | Date | {today's date} |
-| Reviewer | Claude Review Panel (Dev Skill v1.2.2) |
+| Reviewer | Claude Review Panel (Prevoyant v1.2.3) |
 | Ticket type | {Bug fix / Enhancement} |
 | Priority | {priority} |
 | Status | {status} |
