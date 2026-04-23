@@ -148,6 +148,15 @@ function recordQueued(ticketKey, source = 'webhook') {
   }
 }
 
+function reRunTicket(ticketKey, mode = 'dev', source = 'manual') {
+  tickets.set(ticketKey, {
+    ticketKey, source, queuedAt: new Date(),
+    startedAt: null, completedAt: null,
+    status: 'queued', mode, stages: null, outputLog: [],
+  });
+  saveSession(ticketKey);
+}
+
 function recordStarted(ticketKey) {
   const entry = tickets.get(ticketKey) || { ticketKey, source: 'unknown', queuedAt: new Date(), outputLog: [] };
   const updated = { ...entry, startedAt: new Date(), status: 'running' };
@@ -261,7 +270,7 @@ function getTicket(ticketKey) {
 loadSessions();
 
 module.exports = {
-  recordQueued, recordStarted, recordCompleted,
+  recordQueued, reRunTicket, recordStarted, recordCompleted,
   recordStepActive, appendOutput,
   getStats, getTicket,
 };

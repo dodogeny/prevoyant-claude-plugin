@@ -13,15 +13,21 @@ function detectStep(text) {
   return match ? match[1] : null;
 }
 
-function runClaudeAnalysis(ticketKey) {
+function modePrompt(ticketKey, mode) {
+  if (mode === 'review')   return `/prx:dev review ${ticketKey}`;
+  if (mode === 'estimate') return `/prx:dev estimate ${ticketKey}`;
+  return `/prx:dev ${ticketKey}`;
+}
+
+function runClaudeAnalysis(ticketKey, mode = 'dev') {
   return new Promise((resolve, reject) => {
-    console.log(`[runner] Spawning claude for ${ticketKey}`);
+    console.log(`[runner] Spawning claude for ${ticketKey} (mode: ${mode})`);
 
     const proc = spawn(
       'claude',
       [
         '--dangerously-skip-permissions',
-        '--print', `/prx:dev ${ticketKey}`,
+        '--print', modePrompt(ticketKey, mode),
         '--mcp-config', config.mcpConfigFile,
         '--output-format', 'stream-json',
       ],

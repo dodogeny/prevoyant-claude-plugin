@@ -3,7 +3,10 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
-const { getStats, getTicket } = require('./tracker');
+const { getStats, getTicket, reRunTicket } = require('./tracker');
+const { enqueue } = require('../queue/jobQueue');
+
+const VALID_MODES = new Set(['dev', 'review', 'estimate']);
 
 const router = express.Router();
 
@@ -57,8 +60,9 @@ const BASE_CSS = `
   .badge-success { background: #dcfce7; color: #166534; }
   .badge-failed  { background: #fee2e2; color: #991b1b; }
   .mode-badge { padding: 2px 8px; border-radius: 8px; font-size: 0.72rem; font-weight: 600; }
-  .mode-dev    { background: #e0f2fe; color: #0369a1; }
-  .mode-review { background: #f3e8ff; color: #7e22ce; }
+  .mode-dev      { background: #e0f2fe; color: #0369a1; }
+  .mode-review   { background: #f3e8ff; color: #7e22ce; }
+  .mode-estimate { background: #fef3c7; color: #92400e; }
   @keyframes spin { to { transform: rotate(360deg); } }
   .spin { animation: spin 0.9s linear infinite; transform-origin: center; display: block; }
   .footer { text-align: center; padding: 1.2rem; font-size: 0.72rem; color: #ccc; }
@@ -81,8 +85,9 @@ function sessionIconBadge(status) {
 }
 
 function modeBadge(mode) {
-  if (mode === 'dev')    return '<span class="mode-badge mode-dev">Dev</span>';
-  if (mode === 'review') return '<span class="mode-badge mode-review">Review</span>';
+  if (mode === 'dev')      return '<span class="mode-badge mode-dev">Dev</span>';
+  if (mode === 'review')   return '<span class="mode-badge mode-review">Review</span>';
+  if (mode === 'estimate') return '<span class="mode-badge mode-estimate">Estimate</span>';
   return '<span style="color:#ccc;font-size:0.82rem">—</span>';
 }
 
@@ -111,8 +116,24 @@ function reportCell(reportFiles) {
 function renderDashboard(stats) {
   const counts = stats.tickets.reduce((acc, t) => { acc[t.status] = (acc[t.status] || 0) + 1; return acc; }, {});
 
-  const rows = stats.tickets.map(t => `
-    <tr class="${t.status === 'running' ? 'row-running' : ''}">
+  const rows = stats.tickets.map(t => {
+    const isRunning = t.status === 'running' || t.status === 'queued';
+    const currentMode = t.mode || 'dev';
+    const playBtn = `
+      <form method="POST" action="/dashboard/ticket/${encodeURIComponent(t.ticketKey)}/run"
+            style="display:inline-flex;align-items:center;gap:6px" onsubmit="return confirmRun(this)">
+        <select name="mode" class="mode-select" title="Mode">
+          <option value="dev"${currentMode === 'dev' ? ' selected' : ''}>Dev</option>
+          <option value="review"${currentMode === 'review' ? ' selected' : ''}>Review</option>
+          <option value="estimate"${currentMode === 'estimate' ? ' selected' : ''}>Estimate</option>
+        </select>
+        <button type="submit" class="play-btn" title="Run this ticket" ${isRunning ? 'disabled' : ''}>
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24"
+               fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+        </button>
+      </form>`;
+    return `
+    <tr class="${isRunning ? 'row-running' : ''}">
       <td><a href="/dashboard/ticket/${encodeURIComponent(t.ticketKey)}" class="ticket-link">${t.ticketKey}</a></td>
       <td>${modeBadge(t.mode)}</td>
       <td><span class="source-tag ${t.source === 'disk' ? 'source-disk' : ''}">${t.source}</span></td>
@@ -121,9 +142,11 @@ function renderDashboard(stats) {
       <td style="font-size:0.82rem;color:#555">${fmt(t.completedAt)}</td>
       <td style="font-size:0.82rem;color:#555">${dur(t.startedAt, t.completedAt)}</td>
       <td>${reportCell(t.reportFiles)}</td>
-    </tr>`).join('');
+      <td>${playBtn}</td>
+    </tr>`;
+  }).join('');
 
-  const emptyRow = `<tr><td colspan="8" style="text-align:center;color:#bbb;padding:2.5rem;font-size:0.9rem">No tickets yet — waiting for Jira events.</td></tr>`;
+  const emptyRow = `<tr><td colspan="9" style="text-align:center;color:#bbb;padding:2.5rem;font-size:0.9rem">No tickets yet — waiting for Jira events.</td></tr>`;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -155,6 +178,12 @@ function renderDashboard(stats) {
     .dl-btn { display:inline-flex; align-items:center; gap:4px; padding:3px 9px; background:#1a1a2e;
               color:#fff; border-radius:6px; font-size:0.72rem; text-decoration:none; font-weight:500; transition:background .15s; }
     .dl-btn:hover { background:#2d3a5e; }
+    .mode-select { font-size:0.72rem; padding:3px 5px; border:1px solid #d1d5db; border-radius:6px;
+                   background:#fff; color:#374151; cursor:pointer; }
+    .play-btn { display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px;
+                background:#16a34a; color:#fff; border:none; border-radius:6px; cursor:pointer; transition:background .15s; }
+    .play-btn:hover:not([disabled]) { background:#15803d; }
+    .play-btn[disabled] { background:#d1d5db; color:#9ca3af; cursor:not-allowed; }
   </style>
 </head>
 <body>
@@ -183,7 +212,7 @@ function renderDashboard(stats) {
       <thead>
         <tr>
           <th>Ticket</th><th>Type</th><th>Source</th><th>Session</th>
-          <th>Queued at</th><th>Completed at</th><th>Duration</th><th>Report</th>
+          <th>Queued at</th><th>Completed at</th><th>Duration</th><th>Report</th><th>Run</th>
         </tr>
       </thead>
       <tbody>${stats.tickets.length ? rows : emptyRow}</tbody>
@@ -191,6 +220,13 @@ function renderDashboard(stats) {
   </div>
 
   <div class="footer">Prevoyant Server v${pluginVersion} &mdash; Dashboard &mdash; ${new Date().toLocaleString('en-GB')}</div>
+  <script>
+    function confirmRun(form) {
+      const key  = form.action.split('/ticket/')[1].split('/run')[0];
+      const mode = form.querySelector('select[name=mode]').value;
+      return confirm('Run ' + decodeURIComponent(key) + ' in ' + mode + ' mode?');
+    }
+  </script>
 </body>
 </html>`;
 }
@@ -305,6 +341,18 @@ function renderDetail(ticket) {
     .dl-btn { display:inline-flex; align-items:center; gap:4px; padding:5px 12px; background:#1a1a2e;
               color:#fff; border-radius:8px; font-size:0.8rem; text-decoration:none; font-weight:500; transition:background .15s; }
     .dl-btn:hover { background:#2d3a5e; }
+    .run-panel { display:flex; align-items:center; gap:1rem; flex-wrap:wrap; }
+    .run-panel label { font-size:0.82rem; color:#555; font-weight:500; }
+    .mode-btn-group { display:flex; gap:.4rem; }
+    .mode-btn { padding:6px 18px; border:2px solid #d1d5db; border-radius:8px; background:#fff;
+                font-size:0.82rem; font-weight:600; cursor:pointer; transition:all .15s; color:#555; }
+    .mode-btn.selected { border-color:#0d6efd; background:#eff6ff; color:#1d4ed8; }
+    .mode-btn:hover:not(.selected) { border-color:#9ca3af; background:#f9fafb; }
+    .run-submit { display:inline-flex; align-items:center; gap:6px; padding:8px 20px; background:#16a34a;
+                  color:#fff; border:none; border-radius:8px; font-size:0.85rem; font-weight:600;
+                  cursor:pointer; transition:background .15s; }
+    .run-submit:hover { background:#15803d; }
+    .run-submit:disabled { background:#d1d5db; color:#9ca3af; cursor:not-allowed; }
   </style>
 </head>
 <body>
@@ -367,6 +415,31 @@ function renderDetail(ticket) {
       </div>
     </div>` : ''}
 
+    <!-- Re-run -->
+    <div class="panel">
+      <div class="panel-header"><h2>Run</h2></div>
+      <div class="panel-body">
+        <form method="POST" action="/dashboard/ticket/${encodeURIComponent(ticket.ticketKey)}/run"
+              class="run-panel" onsubmit="return confirmDetailRun(this)">
+          <label>Mode:</label>
+          <div class="mode-btn-group" id="mode-group">
+            ${['dev','review','estimate'].map(m => `
+              <button type="button" class="mode-btn${(ticket.mode || 'dev') === m ? ' selected' : ''}"
+                      onclick="selectMode('${m}')">${m.charAt(0).toUpperCase() + m.slice(1)}</button>`).join('')}
+          </div>
+          <input type="hidden" name="mode" id="mode-input" value="${ticket.mode || 'dev'}">
+          <button type="submit" class="run-submit" ${ticket.status === 'running' || ticket.status === 'queued' ? 'disabled' : ''}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24"
+                 fill="currentColor"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            ${ticket.status === 'running' ? 'Running…' : ticket.status === 'queued' ? 'Queued…' : 'Run'}
+          </button>
+          ${ticket.status === 'running' || ticket.status === 'queued'
+            ? '<span style="font-size:0.78rem;color:#6b7280">Job already in progress — wait for it to finish before re-running.</span>'
+            : ''}
+        </form>
+      </div>
+    </div>
+
     <!-- Claude session output / PDF fallback -->
     <div class="panel">
       <div class="panel-header"><h2>View Output</h2></div>
@@ -383,6 +456,16 @@ function renderDetail(ticket) {
       const open = box.classList.toggle('open');
       lbl.textContent = open ? 'Hide Output' : 'View Output';
       if (open) box.scrollTop = box.scrollHeight;
+    }
+    function selectMode(mode) {
+      document.getElementById('mode-input').value = mode;
+      document.querySelectorAll('#mode-group .mode-btn').forEach(b => {
+        b.classList.toggle('selected', b.textContent.trim().toLowerCase() === mode);
+      });
+    }
+    function confirmDetailRun(form) {
+      const mode = document.getElementById('mode-input').value;
+      return confirm('Run ${ticket.ticketKey} in ' + mode + ' mode?');
     }
   </script>
 </body>
@@ -417,6 +500,23 @@ router.get('/view', (req, res) => {
   const ct = resolved.toLowerCase().endsWith('.pdf') ? 'application/pdf' : 'text/html';
   res.setHeader('Content-Type', ct);
   fs.createReadStream(resolved).pipe(res);
+});
+
+// Run / re-run a ticket
+router.post('/ticket/:key/run', express.urlencoded({ extended: false }), (req, res) => {
+  const ticketKey = req.params.key.toUpperCase();
+  const mode = (req.body.mode || 'dev').toLowerCase();
+
+  if (!VALID_MODES.has(mode)) return res.status(400).send('Invalid mode.');
+
+  const existing = getTicket(ticketKey);
+  if (existing && (existing.status === 'running' || existing.status === 'queued')) {
+    return res.status(409).send('Job already in progress.');
+  }
+
+  reRunTicket(ticketKey, mode, 'manual');
+  enqueue(ticketKey, mode);
+  res.redirect(303, `/dashboard/ticket/${encodeURIComponent(ticketKey)}`);
 });
 
 // Secure download
