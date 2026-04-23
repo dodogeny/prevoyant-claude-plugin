@@ -618,6 +618,114 @@ claude plugin list
 
 ---
 
+## Uninstalling
+
+### 0. Back up your Knowledge Base (recommended)
+
+The KB accumulates root causes, patterns, regression risks, and lessons learned across every ticket. Back it up before uninstalling if you may want to restore it later.
+
+**Local mode** (default — KB at `~/.dev-skill/knowledge-base/` or `$PRX_KNOWLEDGE_DIR`):
+
+```bash
+# macOS / Linux — creates a timestamped archive in your home directory
+KB_DIR="${PRX_KNOWLEDGE_DIR:-$HOME/.dev-skill/knowledge-base}"
+tar -czf "$HOME/prevoyant-kb-backup-$(date +%Y%m%d).tar.gz" -C "$(dirname "$KB_DIR")" "$(basename "$KB_DIR")"
+echo "Backup saved to: $HOME/prevoyant-kb-backup-$(date +%Y%m%d).tar.gz"
+```
+
+```powershell
+# Windows (PowerShell)
+$KBDir = if ($env:PRX_KNOWLEDGE_DIR) { $env:PRX_KNOWLEDGE_DIR } else { "$env:USERPROFILE\.dev-skill\knowledge-base" }
+$Archive = "$env:USERPROFILE\prevoyant-kb-backup-$(Get-Date -Format yyyyMMdd).zip"
+Compress-Archive -Path $KBDir -DestinationPath $Archive
+Write-Host "Backup saved to: $Archive"
+```
+
+**Distributed mode** (KB is already in your private git repo — just confirm the remote is up to date):
+
+```bash
+git -C "${PRX_KB_LOCAL_CLONE:-$HOME/.dev-skill/kb}" push
+echo "KB is safely stored in your remote repo."
+```
+
+**To restore later**, reinstall the plugin (Quick Start steps 1–3), then:
+
+```bash
+# Local mode — extract into the KB directory
+tar -xzf ~/prevoyant-kb-backup-YYYYMMDD.tar.gz -C ~/.dev-skill/
+
+# Distributed mode — set PRX_KB_REPO in .env; the skill clones it automatically on first run
+```
+
+---
+
+### 1. Disable and remove the plugin
+
+```bash
+claude plugin disable prx@dodogeny
+claude plugin uninstall prx@dodogeny
+```
+
+### 2. Remove the marketplace registration
+
+**macOS / Linux:**
+```bash
+python3 - <<'EOF'
+import json, os
+path = os.path.expanduser("~/.claude/settings.json")
+if not os.path.exists(path):
+    print("settings.json not found — nothing to do")
+else:
+    with open(path) as f:
+        s = json.load(f)
+    s.get("extraKnownMarketplaces", {}).pop("dodogeny", None)
+    with open(path, "w") as f:
+        json.dump(s, f, indent=2)
+        f.write("\n")
+    print("dodogeny removed from settings.json")
+EOF
+```
+
+**Windows (PowerShell):**
+```powershell
+$path = "$env:USERPROFILE\.claude\settings.json"
+if (Test-Path $path) {
+    $s = Get-Content $path -Raw | ConvertFrom-Json
+    if ($s.extraKnownMarketplaces.PSObject.Properties['dodogeny']) {
+        $s.extraKnownMarketplaces.PSObject.Properties.Remove('dodogeny')
+        $s | ConvertTo-Json -Depth 10 | Set-Content $path -Encoding UTF8
+        Write-Host "dodogeny removed from settings.json"
+    }
+} else { Write-Host "settings.json not found — nothing to do" }
+```
+
+### 3. Remove the cloned repository (if installed locally)
+
+```bash
+rm -rf ~/.claude/plugins/marketplaces/dodogeny
+```
+
+**Windows:**
+```powershell
+Remove-Item -Recurse -Force "$env:USERPROFILE\.claude\plugins\marketplaces\dodogeny"
+```
+
+### 4. Remove local data (optional)
+
+The plugin never writes data outside its own directory and the KB location you configured. If you want a full clean:
+
+```bash
+# Knowledge base (local mode default)
+rm -rf ~/.dev-skill
+
+# PDF / HTML reports
+rm -rf ~/.dev-skill/reports   # or the path set in CLAUDE_REPORT_DIR
+```
+
+> `.env` and `.claude/settings.local.json` inside the repo directory are also removed when you delete the repository in step 3.
+
+---
+
 ## Changelog
 
 ### v1.2.2 — Token Budget Tracking + Estimate Mode
