@@ -33,7 +33,6 @@ function buildMcpConfig() {
 }
 
 // Matches "Step 3 —", "Step R5 —", "Step 14 —" at the start of a line or after markdown markers.
-// The em-dash / en-dash is the canonical separator used in SKILL.md step headers.
 const STEP_RE = /(?:^|[*#\s])Step\s+(R?\d+)\s*[—–]/m;
 
 function detectStep(text) {
@@ -68,6 +67,33 @@ function datetimeSuffix() {
   ].join('');
 }
 
+function processLine(ticketKey, line) {
+  let ev;
+  try { ev = JSON.parse(line); } catch (_) {
+    // Not JSON — log only if it looks like human-readable text (not a JSON fragment)
+    const t = line.trim();
+    if (t && !t.startsWith('{') && !t.startsWith('[') && !t.startsWith('"')) {
+      tracker.appendOutput(ticketKey, t);
+    }
+    return;
+  }
+
+  if (ev.type === 'assistant') {
+    for (const block of (ev.message || {}).content || []) {
+      if (block.type === 'text' && block.text.trim()) {
+        const text = block.text.trim();
+        tracker.appendOutput(ticketKey, text);
+        const stepId = detectStep(text);
+        if (stepId) tracker.recordStepActive(ticketKey, stepId);
+      }
+    }
+  } else if (ev.type === 'result') {
+    const cost = ev.cost_usd != null ? ` — $${ev.cost_usd.toFixed(4)}` : '';
+    tracker.appendOutput(ticketKey, `[Result] ${ev.subtype}${cost}`);
+  }
+  // Intentionally drop type: 'user' / 'system' — these are raw tool payloads, not readable output
+}
+
 function runClaudeAnalysis(ticketKey, mode = 'dev') {
   return new Promise((resolve, reject) => {
     console.log(`[runner] Spawning claude for ${ticketKey} (mode: ${mode})`);
@@ -75,10 +101,11 @@ function runClaudeAnalysis(ticketKey, mode = 'dev') {
     const mcpConfig = buildMcpConfig();
     const usingTempConfig = mcpConfig !== config.mcpConfigFile;
 
-    const childEnv = { ...process.env, AUTO_MODE: 'true' };
+    // AUTO_MODE=Y — SKILL.md checks for exactly 'Y' in confirmation gates
+    const childEnv = { ...process.env, AUTO_MODE: 'Y' };
     if (reportAlreadyExists(ticketKey, mode)) {
       childEnv.CLAUDE_REPORT_SUFFIX = datetimeSuffix();
-      console.log(`[runner] Existing report found for ${ticketKey} — will use suffix ${childEnv.CLAUDE_REPORT_SUFFIX}`);
+      console.log(`[runner] Existing report for ${ticketKey} — suffix ${childEnv.CLAUDE_REPORT_SUFFIX}`);
     }
 
     const proc = spawn(
@@ -97,36 +124,14 @@ function runClaudeAnalysis(ticketKey, mode = 'dev') {
       }
     );
 
+    // Line buffer — stdout arrives in 64 KB chunks; large JSON events span multiple chunks.
+    // Accumulate bytes until we have a complete newline-terminated line before parsing.
+    let lineBuf = '';
     proc.stdout.on('data', chunk => {
-      for (const line of chunk.toString().split('\n').filter(Boolean)) {
-        try {
-          const ev = JSON.parse(line);
-
-          if (ev.type === 'assistant') {
-            for (const block of (ev.message || {}).content || []) {
-              if (block.type === 'text' && block.text.trim()) {
-                const text = block.text.trim();
-                console.log(`[${ticketKey}] ${text}`);
-                tracker.appendOutput(ticketKey, text);
-
-                const stepId = detectStep(text);
-                if (stepId) tracker.recordStepActive(ticketKey, stepId);
-              }
-            }
-          } else if (ev.type === 'result') {
-            const cost = ev.cost_usd != null ? ` cost=$${ev.cost_usd.toFixed(4)}` : '';
-            const summary = `[Result] ${ev.subtype}${cost}`;
-            console.log(`[${ticketKey}] ${summary}`);
-            tracker.appendOutput(ticketKey, summary);
-          }
-        } catch (_) {
-          const raw = line.trim();
-          if (raw) {
-            console.log(`[${ticketKey}] ${raw}`);
-            tracker.appendOutput(ticketKey, raw);
-          }
-        }
-      }
+      lineBuf += chunk.toString();
+      const lines = lineBuf.split('\n');
+      lineBuf = lines.pop(); // last element is the incomplete tail (may be empty)
+      for (const line of lines) processLine(ticketKey, line);
     });
 
     proc.stderr.on('data', chunk => {
@@ -138,17 +143,13 @@ function runClaudeAnalysis(ticketKey, mode = 'dev') {
     });
 
     proc.on('close', code => {
+      if (lineBuf.trim()) processLine(ticketKey, lineBuf); // flush any partial line
       if (usingTempConfig) try { fs.unlinkSync(mcpConfig); } catch (_) {}
-      if (code === 0) {
-        resolve();
-      } else {
-        reject(new Error(`claude exited with code ${code}`));
-      }
+      if (code === 0) resolve();
+      else reject(new Error(`claude exited with code ${code}`));
     });
 
-    proc.on('error', err => {
-      reject(new Error(`failed to spawn claude: ${err.message}`));
-    });
+    proc.on('error', err => reject(new Error(`failed to spawn claude: ${err.message}`)));
   });
 }
 

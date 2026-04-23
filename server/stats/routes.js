@@ -106,6 +106,77 @@ function sessionIconBadge(status) {
   </span>`;
 }
 
+// Lightweight server-side Markdown → HTML for the output log.
+// Handles fenced code blocks, headers, bold/italic, inline code, tables,
+// blockquotes, HR, and unordered/ordered lists. Keeps it dependency-free.
+function renderMarkdown(raw) {
+  let s = raw;
+
+  // Fenced code blocks (``` ... ```) — must come before inline-code pass
+  s = s.replace(/```(\w*)\n?([\s\S]*?)```/g, (_, lang, code) => {
+    const escaped = code.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    return `<pre><code>${escaped}</code></pre>`;
+  });
+
+  // Escape remaining HTML (outside pre blocks) — replace per-segment
+  const parts = s.split(/(<pre>[\s\S]*?<\/pre>)/g);
+  s = parts.map((p, i) => i % 2 === 1 ? p :
+    p.replace(/&(?!amp;|lt;|gt;|quot;)/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')
+  ).join('');
+
+  // Horizontal rule
+  s = s.replace(/^[-*]{3,}\s*$/gm, '<hr>');
+
+  // ATX headings
+  s = s.replace(/^#{4,6}\s+(.+)$/gm, '<h5>$1</h5>');
+  s = s.replace(/^#{3}\s+(.+)$/gm, '<h4>$1</h4>');
+  s = s.replace(/^#{2}\s+(.+)$/gm, '<h3>$1</h3>');
+  s = s.replace(/^#{1}\s+(.+)$/gm, '<h2>$1</h2>');
+
+  // Tables (simple: | col | col |)
+  s = s.replace(/((?:^\|.+\|\s*\n?)+)/gm, tableBlock => {
+    const rows = tableBlock.trim().split('\n').filter(r => r.trim());
+    const isSep = r => /^\|[-| :]+\|$/.test(r.trim());
+    let html = '<table>';
+    let headerDone = false;
+    for (const row of rows) {
+      if (isSep(row)) { headerDone = true; continue; }
+      const cells = row.replace(/^\||\|$/g,'').split('|').map(c => c.trim());
+      const tag = !headerDone ? 'th' : 'td';
+      html += '<tr>' + cells.map(c => `<${tag}>${c}</${tag}>`).join('') + '</tr>';
+      if (!headerDone) headerDone = true;
+    }
+    return html + '</table>';
+  });
+
+  // Blockquotes
+  s = s.replace(/^&gt;\s?(.*)$/gm, '<blockquote>$1</blockquote>');
+
+  // Unordered lists
+  s = s.replace(/((?:^[-*+]\s+.+\n?)+)/gm, block => {
+    const items = block.trim().split('\n').map(l => `<li>${l.replace(/^[-*+]\s+/,'')}</li>`).join('');
+    return `<ul>${items}</ul>`;
+  });
+
+  // Ordered lists
+  s = s.replace(/((?:^\d+\.\s+.+\n?)+)/gm, block => {
+    const items = block.trim().split('\n').map(l => `<li>${l.replace(/^\d+\.\s+/,'')}</li>`).join('');
+    return `<ol>${items}</ol>`;
+  });
+
+  // Inline: bold, italic, inline code
+  s = s.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>');
+  s = s.replace(/__(.+?)__/g, '<strong>$1</strong>');
+  s = s.replace(/\*(.+?)\*/g, '<em>$1</em>');
+  s = s.replace(/_(.+?)_/g, '<em>$1</em>');
+  s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+
+  // Paragraphs — wrap consecutive non-block lines in <p>
+  s = s.replace(/^(?!<[a-z]|$)(.+)$/gm, (_, line) => `<p>${line}</p>`);
+
+  return s;
+}
+
 function modeBadge(mode) {
   if (mode === 'dev')      return '<span class="mode-badge mode-dev">Dev</span>';
   if (mode === 'review')   return '<span class="mode-badge mode-review">Review</span>';
@@ -297,13 +368,24 @@ function renderDetail(ticket, warn, warnMode) {
   if (outputLines.length > 0) {
     const logHtml = outputLines.map(l => {
       const ts = new Date(l.ts).toLocaleTimeString('en-GB');
-      const text = l.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-      return `<div class="log-line"><span class="log-ts">${ts}</span><span class="log-text">${text}</span></div>`;
+      const isStderr = l.text.startsWith('[stderr]');
+      const isResult = l.text.startsWith('[Result]');
+      let bodyHtml;
+      if (isStderr) {
+        const t = l.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        bodyHtml = `<span class="log-stderr">${t}</span>`;
+      } else if (isResult) {
+        const t = l.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+        bodyHtml = `<span class="log-result">${t}</span>`;
+      } else {
+        bodyHtml = renderMarkdown(l.text);
+      }
+      return `<div class="log-entry"><div class="log-ts">${ts}</div><div class="log-body">${bodyHtml}</div></div>`;
     }).join('');
     outputSection = `
       <button class="output-toggle" onclick="toggleOutput()">
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-        <span id="toggle-label">View Output</span> (${outputLines.length} lines)
+        <span id="toggle-label">View Output</span> (${outputLines.length} entries)
       </button>
       <div id="output-box" class="output-box">${logHtml}</div>`;
   } else if (pdfFiles.length > 0) {
@@ -319,7 +401,7 @@ function renderDetail(ticket, warn, warnMode) {
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  ${ticket.status === 'running' ? '<meta http-equiv="refresh" content="10">' : ''}
+  ${ticket.status === 'running' || ticket.status === 'queued' ? '<meta http-equiv="refresh" content="5">' : ''}
   <title>Prevoyant — ${ticket.ticketKey}</title>
   <style>
     ${BASE_CSS}
@@ -354,12 +436,31 @@ function renderDetail(ticket, warn, warnMode) {
     .output-toggle { display:inline-flex; align-items:center; gap:6px; padding:7px 16px; background:#1a1a2e;
                      color:#fff; border:none; border-radius:8px; font-size:0.82rem; font-weight:500; cursor:pointer; }
     .output-toggle:hover { background:#2d3a5e; }
-    .output-box { display:none; margin-top:1rem; background:#0f1117; border-radius:10px; padding:1rem;
-                  max-height:520px; overflow-y:auto; font-family:monospace; }
+    .output-box { display:none; margin-top:1rem; background:#0f1117; border-radius:10px; padding:1.2rem 1.4rem;
+                  max-height:620px; overflow-y:auto; }
     .output-box.open { display:block; }
-    .log-line { display:flex; gap:1rem; padding:2px 0; font-size:0.78rem; line-height:1.5; border-bottom:1px solid #1e2130; }
-    .log-ts   { color:#4b5563; white-space:nowrap; flex-shrink:0; }
-    .log-text { color:#d1d5db; white-space:pre-wrap; word-break:break-word; }
+    .log-entry  { padding:6px 0; border-bottom:1px solid #1e2130; }
+    .log-entry:last-child { border-bottom:none; }
+    .log-ts     { font-family:monospace; font-size:0.7rem; color:#4b5563; margin-bottom:3px; }
+    .log-body   { color:#d1d5db; font-size:0.82rem; line-height:1.65; }
+    .log-body h1,.log-body h2,.log-body h3 { color:#93c5fd; margin:10px 0 4px; font-size:0.9rem; border-bottom:1px solid #1e3a5f; padding-bottom:3px; }
+    .log-body h4,.log-body h5 { color:#7dd3fc; margin:8px 0 2px; font-size:0.83rem; }
+    .log-body pre  { background:#1a1f2e; border:1px solid #2d3a5e; border-radius:6px; padding:10px 12px;
+                     overflow-x:auto; margin:8px 0; }
+    .log-body code { background:#1a1f2e; padding:1px 5px; border-radius:3px; font-family:monospace;
+                     font-size:0.78rem; color:#a5f3fc; }
+    .log-body pre code { background:none; padding:0; color:#e2e8f0; font-size:0.77rem; white-space:pre; }
+    .log-body strong { color:#fbbf24; }
+    .log-body em     { color:#c4b5fd; }
+    .log-body table  { border-collapse:collapse; margin:8px 0; font-size:0.78rem; width:100%; }
+    .log-body th     { background:#1e2d40; color:#93c5fd; padding:5px 10px; border:1px solid #2d3a5e; }
+    .log-body td     { padding:4px 10px; border:1px solid #1e2130; }
+    .log-body hr     { border:none; border-top:1px solid #2d3a5e; margin:10px 0; }
+    .log-body blockquote { border-left:3px solid #3b82f6; padding-left:10px; color:#94a3b8; margin:6px 0; }
+    .log-body ul,.log-body ol { padding-left:1.4rem; margin:4px 0; }
+    .log-body li    { margin:2px 0; }
+    .log-stderr { color:#f87171; font-family:monospace; font-size:0.77rem; }
+    .log-result { color:#4ade80; font-family:monospace; font-size:0.77rem; font-weight:600; }
     .dl-btn { display:inline-flex; align-items:center; gap:4px; padding:5px 12px; background:#1a1a2e;
               color:#fff; border-radius:8px; font-size:0.8rem; text-decoration:none; font-weight:500; transition:background .15s; }
     .dl-btn:hover { background:#2d3a5e; }
