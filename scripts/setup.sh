@@ -266,7 +266,8 @@ ENV_FILE="$PROJECT_ROOT/.env"
 ENV_EXAMPLE="$PROJECT_ROOT/.env.example"
 
 if [ -f "$ENV_FILE" ]; then
-  ok ".env already exists — skipping"
+  cp "$ENV_FILE" "${ENV_FILE}.bak"
+  ok ".env already exists — skipping (backed up to .env.bak)"
 else
   if [ -f "$ENV_EXAMPLE" ]; then
     cp "$ENV_EXAMPLE" "$ENV_FILE"

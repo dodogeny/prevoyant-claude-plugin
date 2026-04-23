@@ -72,13 +72,13 @@ Each engineer draws on their **acquired system knowledge** and the shared KB (`c
 
 **macOS / Linux:**
 ```bash
-git clone https://github.com/dodogeny/prx-skill-internal-dev.git \
+git clone https://github.com/dodogeny/prevoyant-claude-plugin.git \
   ~/.claude/plugins/marketplaces/dodogeny
 ```
 
 **Windows (PowerShell):**
 ```powershell
-git clone https://github.com/dodogeny/prx-skill-internal-dev.git "$env:USERPROFILE\.claude\plugins\marketplaces\dodogeny"
+git clone https://github.com/dodogeny/prevoyant-claude-plugin.git "$env:USERPROFILE\.claude\plugins\marketplaces\dodogeny"
 ```
 
 Add to `~/.claude/settings.json` (or skip this — the setup script in Step 2 does it automatically):
@@ -110,7 +110,7 @@ Add to `~/.claude/settings.json` (or skip this — the setup script in Step 2 do
 {
   "extraKnownMarketplaces": {
     "dodogeny": {
-      "source": { "source": "github", "repo": "dodogeny/prx-skill-internal-dev" }
+      "source": { "source": "github", "repo": "dodogeny/prevoyant-claude-plugin" }
     }
   }
 }
@@ -636,6 +636,8 @@ claude plugin update prx@dodogeny
 # Verify:
 claude plugin list
 ```
+
+> **Your `.env` is safe.** It is gitignored and never touched by `git pull` or `claude plugin update`. If you re-run `scripts/setup.sh` after upgrading, it automatically backs up your `.env` to `.env.bak` before skipping it.
 
 > **Pull fails with "untracked file: .claude/settings.local.json"?**
 > This file is per-machine and is no longer tracked in the repo (gitignored since v1.2.2). Remove it, pull, then let the setup script recreate it:

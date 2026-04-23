@@ -1,12 +1,46 @@
 'use strict';
 
-const { spawn }   = require('child_process');
+const { spawn, execFile } = require('child_process');
 const fs          = require('fs');
 const os          = require('os');
 const path        = require('path');
 const config      = require('../config/env');
 const tracker     = require('../dashboard/tracker');
 const stages      = require('../dashboard/stages.json');
+
+// ── ccusage cost snapshot ─────────────────────────────────────────────────────
+// Returns today's cumulative cost in USD from ccusage's JSONL-backed daily report,
+// or null if ccusage / Node.js is unavailable.
+
+function getCcusageDailyCost() {
+  // Prefer the npx already in PATH; fall back to common install locations.
+  const npxCandidates = [
+    'npx',
+    '/opt/homebrew/bin/npx',
+    '/usr/local/bin/npx',
+    process.env.HOME && `${process.env.HOME}/.nvm/versions/node`,
+  ].filter(Boolean);
+
+  const npxBin = npxCandidates[0]; // execFile rejects gracefully if missing
+
+  return new Promise(resolve => {
+    execFile(
+      npxBin, ['--yes', 'ccusage@latest', 'daily', '--json'],
+      { timeout: 30000, env: process.env },
+      (err, stdout) => {
+        if (err || !stdout || !stdout.trim()) return resolve(null);
+        try {
+          const raw  = JSON.parse(stdout);
+          const rows = Array.isArray(raw) ? raw : (raw.data || raw.daily || []);
+          const today = new Date().toISOString().slice(0, 10);
+          const entry = rows.find(r => r.date === today);
+          const cost  = entry ? parseFloat(entry.totalCost ?? entry.cost ?? 0) : 0;
+          resolve(isNaN(cost) ? null : cost);
+        } catch (_) { resolve(null); }
+      }
+    );
+  });
+}
 
 // Build a temp MCP config that uses mcp-atlassian with API-token auth.
 // When JIRA_URL + JIRA_USERNAME + JIRA_API_TOKEN are present in the env block,
@@ -127,6 +161,15 @@ function processLine(ticketKey, line) {
   } else if (ev.type === 'result') {
     const cost = ev.cost_usd != null ? ` — $${ev.cost_usd.toFixed(4)}` : '';
     tracker.appendOutput(ticketKey, `[Result] ${ev.subtype}${cost}`);
+    if (ev.usage) {
+      tracker.recordUsage(ticketKey, {
+        inputTokens:         ev.usage.input_tokens                 || 0,
+        outputTokens:        ev.usage.output_tokens                || 0,
+        cacheReadTokens:     ev.usage.cache_read_input_tokens      || 0,
+        cacheCreationTokens: ev.usage.cache_creation_input_tokens  || 0,
+        costUsd:             ev.cost_usd != null ? ev.cost_usd : null,
+      });
+    }
   }
   // Intentionally drop type: 'user' / 'system' — these are raw tool payloads, not readable output
 }
@@ -143,8 +186,13 @@ function killProcess(ticketKey) {
   return true;
 }
 
-function runClaudeAnalysis(ticketKey, mode = 'dev') {
-  return new Promise((resolve, reject) => {
+async function runClaudeAnalysis(ticketKey, mode = 'dev') {
+  // Snapshot daily spend before spawning so we can diff after completion.
+  const costBefore = await getCcusageDailyCost();
+
+  let runError = null;
+  try {
+    await new Promise((resolve, reject) => {
     console.log(`[runner] Spawning claude for ${ticketKey} (mode: ${mode})`);
 
     const mcpConfig = buildMcpConfig();
@@ -204,7 +252,21 @@ function runClaudeAnalysis(ticketKey, mode = 'dev') {
     });
 
     proc.on('error', err => reject(new Error(`failed to spawn claude: ${err.message}`)));
-  });
+    }); // end inner Promise
+  } catch (err) {
+    runError = err;
+  }
+
+  // Diff ccusage daily cost to get actual spend for this job.
+  // Runs even on failure/kill so partial costs are still captured.
+  const costAfter = await getCcusageDailyCost();
+  if (costBefore !== null && costAfter !== null) {
+    const sessionCost = parseFloat(Math.max(0, costAfter - costBefore).toFixed(6));
+    tracker.recordActualCost(ticketKey, sessionCost);
+    console.log(`[runner] ${ticketKey} ccusage cost: $${sessionCost.toFixed(6)}`);
+  }
+
+  if (runError) throw runError;
 }
 
 module.exports = { runClaudeAnalysis, killProcess };

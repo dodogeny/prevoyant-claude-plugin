@@ -4,7 +4,7 @@ const express = require('express');
 const config = require('./config/env');
 const jiraWebhook = require('./webhooks/jira');
 const dashboardRoutes = require('./dashboard/routes');
-const { schedulePollScript } = require('./runner/pollScheduler');
+const { schedulePollScript, runFallbackPoll } = require('./runner/pollScheduler');
 
 const app = express();
 app.use(express.json());
@@ -29,6 +29,7 @@ app.listen(config.port, () => {
   if (config.pollIntervalDays > 0) {
     schedulePollScript(config.pollIntervalDays);
   } else {
-    console.log('[prevoyant-server] Scheduled polling disabled — set WEBHOOK_POLL_INTERVAL_DAYS to enable');
+    console.log('[prevoyant-server] Scheduled polling disabled — running one-time startup scan as webhook fallback');
+    runFallbackPoll();
   }
 });

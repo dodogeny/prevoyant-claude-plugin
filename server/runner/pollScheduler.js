@@ -4,9 +4,15 @@ const { spawn } = require('child_process');
 const path = require('path');
 const config = require('../config/env');
 
-function runPollScript() {
+let lastRanAt    = null;
+let nextRunAt    = null;
+let intervalDays = 0;
+let fallbackRanAt = null;  // set when a one-time startup scan runs with polling disabled
+
+function runPollScript(label) {
+  lastRanAt = new Date();
   const scriptPath = path.join(config.scriptsDir, 'poll-jira.sh');
-  console.log(`[prevoyant-server/poll] Running poll-jira.sh`);
+  console.log(`[prevoyant-server/poll] Running poll-jira.sh${label ? ` (${label})` : ''}`);
 
   const proc = spawn('/bin/bash', [scriptPath], {
     cwd: config.projectRoot,
@@ -23,14 +29,32 @@ function runPollScript() {
   });
 }
 
-function schedulePollScript(intervalDays) {
-  const intervalMs = intervalDays * 24 * 60 * 60 * 1000;
+function schedulePollScript(days) {
+  intervalDays = days;
+  const intervalMs = days * 24 * 60 * 60 * 1000;
 
   // Run once immediately on startup so there is no initial blind spot
   runPollScript();
+  nextRunAt = new Date(Date.now() + intervalMs);
 
-  setInterval(runPollScript, intervalMs);
-  console.log(`[prevoyant-server/poll] Polling every ${intervalDays} day(s)`);
+  setInterval(() => {
+    runPollScript();
+    nextRunAt = new Date(Date.now() + intervalMs);
+  }, intervalMs);
+
+  console.log(`[prevoyant-server/poll] Polling every ${days} day(s)`);
 }
 
-module.exports = { schedulePollScript };
+// One-time startup scan used as fallback when scheduled polling is disabled.
+// Ensures at least one Jira sweep happens even in pure-webhook mode, so
+// tickets that arrived while the server was offline are not missed.
+function runFallbackPoll() {
+  fallbackRanAt = new Date();
+  runPollScript('startup fallback');
+}
+
+function getPollStatus() {
+  return { lastRanAt, nextRunAt, intervalDays, enabled: intervalDays > 0, fallbackRanAt };
+}
+
+module.exports = { schedulePollScript, runFallbackPoll, getPollStatus };

@@ -126,6 +126,7 @@ function recordQueued(ticketKey, source = 'webhook') {
       ticketKey, source, queuedAt: new Date(),
       startedAt: null, completedAt: null,
       status: 'queued', mode: null, stages: null, outputLog: [],
+      tokenUsage: null,
     });
     saveSession(ticketKey);
   }
@@ -138,7 +139,27 @@ function reRunTicket(ticketKey, mode = 'dev', source = 'manual') {
     ticketKey, source, queuedAt: new Date(),
     startedAt: null, completedAt: null,
     status: 'queued', mode, stages: null, outputLog: [],
+    tokenUsage: null,
   });
+  saveSession(ticketKey);
+}
+
+function recordUsage(ticketKey, usage) {
+  const entry = tickets.get(ticketKey);
+  if (!entry) return;
+  tickets.set(ticketKey, { ...entry, tokenUsage: usage });
+  saveSession(ticketKey);
+}
+
+// Merges the ccusage-derived actual session cost into the existing tokenUsage object.
+// Called after job completion, so tokenUsage may already have stream-json token counts.
+function recordActualCost(ticketKey, actualCostUsd) {
+  const entry = tickets.get(ticketKey);
+  if (!entry) return;
+  const tokenUsage = entry.tokenUsage
+    ? { ...entry.tokenUsage, actualCostUsd }
+    : { actualCostUsd };
+  tickets.set(ticketKey, { ...entry, tokenUsage });
   saveSession(ticketKey);
 }
 
@@ -281,6 +302,6 @@ loadSessions();
 
 module.exports = {
   recordQueued, reRunTicket, recordStarted, recordCompleted, recordInterrupted,
-  recordStepActive, appendOutput,
+  recordStepActive, appendOutput, recordUsage, recordActualCost,
   getStats, getTicket,
 };
