@@ -389,7 +389,7 @@ function renderDetail(ticket, warn, warnMode) {
     outputSection = `
       <button class="output-toggle" onclick="toggleOutput()">
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
-        <span id="toggle-label">View Output</span> (${outputLines.length} entries)
+        <span id="toggle-label">View Output</span> (<span id="output-count">${outputLines.length}</span> entries)
       </button>
       <div id="output-box" class="output-box">${logHtml}</div>`;
   } else if (pdfFiles.length > 0) {
@@ -405,7 +405,6 @@ function renderDetail(ticket, warn, warnMode) {
 <html lang="en">
 <head>
   <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-  ${ticket.status === 'running' || ticket.status === 'queued' ? '<meta http-equiv="refresh" content="5">' : ''}
   <title>Prevoyant — ${ticket.ticketKey}</title>
   <style>
     ${BASE_CSS}
@@ -511,9 +510,9 @@ function renderDetail(ticket, warn, warnMode) {
       </a>
       <div>
         <div class="ticket-title">
-          ${(ICONS[ticket.status] || ICONS.queued)(22)}
+          <span id="status-icon">${(ICONS[ticket.status] || ICONS.queued)(22)}</span>
           ${ticket.ticketKey}
-          <span class="badge badge-${ticket.status}" style="font-size:0.85rem">${ticket.status}</span>
+          <span id="status-badge" class="badge badge-${ticket.status}" style="font-size:0.85rem">${ticket.status}</span>
           ${modeBadge(ticket.mode)}
         </div>
         <div class="ticket-meta">
@@ -521,7 +520,7 @@ function renderDetail(ticket, warn, warnMode) {
           <span>Queued: <strong>${fmt(ticket.queuedAt)}</strong></span>
           ${ticket.startedAt    ? `<span>Started: <strong>${fmt(ticket.startedAt)}</strong></span>`    : ''}
           ${ticket.completedAt  ? `<span>Finished: <strong>${fmt(ticket.completedAt)}</strong></span>` : ''}
-          <span>Duration: <strong>${dur(ticket.startedAt, ticket.completedAt)}</strong></span>
+          <span>Duration: <strong id="duration-val">${dur(ticket.startedAt, ticket.completedAt)}</strong></span>
         </div>
       </div>
     </div>
@@ -571,12 +570,14 @@ function renderDetail(ticket, warn, warnMode) {
     <div class="panel">
       <div class="panel-header">
         <h2>Pipeline</h2>
-        ${stages.length ? `<span style="font-size:0.78rem;color:#888">${doneCount} / ${stages.length} stages</span>` : ''}
-        ${currentStage ? `<span style="font-size:0.78rem;color:#0d6efd">Currently: Step ${currentStage.id} — ${currentStage.label}</span>` : ''}
+        <span id="pipeline-meta" style="font-size:0.78rem;color:#888;display:flex;align-items:center;gap:.75rem">
+          ${stages.length ? `<span id="stage-count">${doneCount} / ${stages.length} stages</span>` : ''}
+          ${currentStage ? `<span id="current-stage" style="color:#0d6efd">Currently: Step ${currentStage.id} — ${currentStage.label}</span>` : ''}
+        </span>
       </div>
       <div class="panel-body">
-        ${stagePipelineHtml(stages)}
-        ${stages.length ? `<div class="progress-wrap"><div class="progress-bar" style="width:${Math.round(doneCount / stages.length * 100)}%"></div></div>` : ''}
+        <div id="pipeline-content">${stagePipelineHtml(stages)}</div>
+        ${stages.length ? `<div class="progress-wrap"><div id="progress-bar" class="progress-bar" style="width:${Math.round(doneCount / stages.length * 100)}%"></div></div>` : ''}
       </div>
     </div>
 
@@ -649,6 +650,71 @@ function renderDetail(ticket, warn, warnMode) {
       const mode = document.getElementById('mode-input').value;
       return confirm('Run ${ticket.ticketKey} in ' + mode + ' mode?');
     }
+
+    // Live polling — updates dynamic parts without a full page reload
+    (function () {
+      const ACTIVE = ['running', 'queued'];
+      const ticketKey = ${JSON.stringify(ticket.ticketKey)};
+      let knownOutputCount = ${outputLines.length};
+
+      if (!ACTIVE.includes(${JSON.stringify(ticket.status)})) return;
+
+      const timer = setInterval(async () => {
+        let data;
+        try {
+          const res = await fetch('/dashboard/ticket/' + encodeURIComponent(ticketKey) + '/partial?since=' + knownOutputCount);
+          if (!res.ok) return;
+          data = await res.json();
+        } catch (_) { return; }
+
+        // Pipeline
+        const pc = document.getElementById('pipeline-content');
+        if (pc) pc.innerHTML = data.pipelineHtml;
+
+        const pb = document.getElementById('progress-bar');
+        if (pb) pb.style.width = data.progressPct + '%';
+
+        const sc = document.getElementById('stage-count');
+        if (sc) sc.textContent = data.doneCount + ' / ' + data.totalStages + ' stages';
+
+        const cs = document.getElementById('current-stage');
+        if (data.currentStageLabel) {
+          if (cs) { cs.textContent = 'Currently: ' + data.currentStageLabel; cs.style.display = ''; }
+        } else if (cs) { cs.style.display = 'none'; }
+
+        // Duration
+        const dv = document.getElementById('duration-val');
+        if (dv && data.duration) dv.textContent = data.duration;
+
+        // Output — append only new entries to preserve scroll and open state
+        if (data.newLogEntries && data.newLogEntries.length) {
+          const box = document.getElementById('output-box');
+          if (box) {
+            const atBottom = box.scrollHeight - box.scrollTop - box.clientHeight < 40;
+            box.insertAdjacentHTML('beforeend', data.newLogEntries.join(''));
+            if (atBottom) box.scrollTop = box.scrollHeight;
+          }
+          knownOutputCount += data.newLogEntries.length;
+          const oc = document.getElementById('output-count');
+          if (oc) oc.textContent = knownOutputCount;
+        }
+
+        // Status badge + icon
+        if (data.status) {
+          const badge = document.getElementById('status-badge');
+          if (badge) {
+            badge.className = 'badge badge-' + data.status;
+            const labels = { queued: 'queued', running: 'running', success: 'success', failed: 'failed', interrupted: 'interrupted' };
+            badge.textContent = labels[data.status] || data.status;
+          }
+          const icon = document.getElementById('status-icon');
+          if (icon && data.statusIconHtml) icon.innerHTML = data.statusIconHtml;
+        }
+
+        // Stop polling once job is no longer active
+        if (!ACTIVE.includes(data.status)) clearInterval(timer);
+      }, 5000);
+    })();
   </script>
 </body>
 </html>`;
@@ -668,6 +734,48 @@ router.get('/ticket/:key', (req, res) => {
   if (!ticket) return res.status(404).send('Ticket not found.');
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(renderDetail(ticket, req.query.warn, req.query.mode));
+});
+
+// Partial update endpoint — returns only what the live-poll JS needs
+router.get('/ticket/:key/partial', (req, res) => {
+  const ticket = getTicket(req.params.key);
+  if (!ticket) return res.status(404).json({ error: 'not found' });
+
+  const stages = ticket.stages || [];
+  const outputLines = ticket.outputLog || [];
+  const doneCount = stages.filter(s => s.status === 'done' || s.status === 'failed').length;
+  const currentStage = stages.find(s => s.status === 'active');
+  const since = parseInt(req.query.since || '0', 10);
+
+  const newLogEntries = outputLines.slice(since).map(l => {
+    const ts = new Date(l.ts).toLocaleTimeString('en-GB');
+    const isStderr = l.text.startsWith('[stderr]');
+    const isResult = l.text.startsWith('[Result]');
+    let bodyHtml;
+    if (isStderr) {
+      const t = l.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      bodyHtml = `<span class="log-stderr">${t}</span>`;
+    } else if (isResult) {
+      const t = l.text.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+      bodyHtml = `<span class="log-result">${t}</span>`;
+    } else {
+      bodyHtml = renderMarkdown(l.text);
+    }
+    return `<div class="log-entry"><div class="log-ts">${ts}</div><div class="log-body">${bodyHtml}</div></div>`;
+  });
+
+  res.json({
+    status: ticket.status,
+    statusIconHtml: (ICONS[ticket.status] || ICONS.queued)(22),
+    pipelineHtml: stagePipelineHtml(stages),
+    progressPct: stages.length ? Math.round(doneCount / stages.length * 100) : 0,
+    doneCount,
+    totalStages: stages.length,
+    currentStageLabel: currentStage ? `Step ${currentStage.id} — ${currentStage.label}` : null,
+    duration: dur(ticket.startedAt, ticket.completedAt),
+    newLogEntries,
+    totalOutputCount: outputLines.length,
+  });
 });
 
 // Secure inline view (for PDF iframe embedding)
