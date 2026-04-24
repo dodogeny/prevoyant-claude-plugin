@@ -28,7 +28,8 @@ app.use('/jira-events', jiraWebhook);
 
 // ── Health-monitor watchdog (worker thread) ───────────────────────────────────
 
-let watchdogWorker = null;
+let watchdogWorker  = null;
+let diskWorker      = null;
 
 function startWatchdog() {
   if (process.env.PRX_WATCHDOG_ENABLED !== 'Y') return;
@@ -65,6 +66,36 @@ function startWatchdog() {
   console.log(`[prevoyant-server] Health watchdog active — check every ${workerData.intervalSecs}s, alert after ${workerData.failThreshold} failures`);
 }
 
+function startDiskMonitor() {
+  if (process.env.PRX_DISK_MONITOR_ENABLED !== 'Y') return;
+
+  const workerData = {
+    intervalMins:        parseInt(process.env.PRX_DISK_MONITOR_INTERVAL_MINS  || '60', 10),
+    cleanupIntervalDays: parseInt(process.env.PRX_DISK_CLEANUP_INTERVAL_DAYS  || '7',  10),
+    alertPct:            parseInt(process.env.PRX_DISK_CAPACITY_ALERT_PCT     || '80', 10),
+    smtpHost: process.env.PRX_SMTP_HOST || '',
+    smtpPort: process.env.PRX_SMTP_PORT || '587',
+    smtpUser: process.env.PRX_SMTP_USER || '',
+    smtpPass: process.env.PRX_SMTP_PASS || '',
+    emailTo:  process.env.PRX_EMAIL_TO  || '',
+  };
+
+  diskWorker = new Worker(
+    path.join(__dirname, 'workers', 'diskMonitor.js'),
+    { workerData }
+  );
+
+  diskWorker.on('error', err =>
+    console.error('[disk-monitor] Worker thread error:', err.message)
+  );
+  diskWorker.on('exit', code => {
+    diskWorker = null;
+    if (code !== 0) console.error(`[disk-monitor] Worker thread exited with code ${code}`);
+  });
+
+  console.log(`[prevoyant-server] Disk monitor active — check every ${workerData.intervalMins}m, alert at ${workerData.alertPct}% usage`);
+}
+
 // Signal graceful stop to watchdog before this process exits so it doesn't
 // fire a false DOWN alert for intentional restarts / stops.
 function stopWatchdog() {
@@ -73,8 +104,14 @@ function stopWatchdog() {
   }
 }
 
-process.on('SIGTERM', () => { stopWatchdog(); setTimeout(() => process.exit(0), 600); });
-process.on('SIGINT',  () => { stopWatchdog(); setTimeout(() => process.exit(0), 600); });
+function stopDiskMonitor() {
+  if (diskWorker) {
+    diskWorker.postMessage({ type: 'graceful-stop' });
+  }
+}
+
+process.on('SIGTERM', () => { stopWatchdog(); stopDiskMonitor(); setTimeout(() => process.exit(0), 600); });
+process.on('SIGINT',  () => { stopWatchdog(); stopDiskMonitor(); setTimeout(() => process.exit(0), 600); });
 
 // ── Server listen ─────────────────────────────────────────────────────────────
 
@@ -85,6 +122,7 @@ app.listen(config.port, () => {
 
   restoreScheduledJobs();
   startWatchdog();
+  startDiskMonitor();
 
   if (config.pollIntervalDays > 0) {
     schedulePollScript(config.pollIntervalDays);

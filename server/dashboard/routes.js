@@ -50,7 +50,185 @@ try {
   pluginAuthor     = (meta.author && meta.author.name) || pluginAuthor;
 } catch (_) { /* non-fatal */ }
 
+// ── Disk status helper ────────────────────────────────────────────────────────
+
+const DISK_STATUS_FILE = path.join(os.homedir(), '.prevoyant', 'server', 'disk-status.json');
+const DISK_LOG_FILE    = path.join(os.homedir(), '.prevoyant', 'server', 'disk-log.json');
+
+function readDiskStatus() {
+  try {
+    return JSON.parse(fs.readFileSync(DISK_STATUS_FILE, 'utf8'));
+  } catch (_) {
+    return { pendingCleanup: false, prevoyantMB: 0, diskUsedPct: 0, updatedAt: null, lastCleanupAt: null };
+  }
+}
+
+function readDiskLog() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(DISK_LOG_FILE, 'utf8'));
+    return Array.isArray(raw) ? raw : [];
+  } catch (_) {
+    return [];
+  }
+}
+
+function fmtBytes(bytes) {
+  if (bytes == null) return '—';
+  if (bytes >= 1073741824) return (bytes / 1073741824).toFixed(2) + ' GB';
+  if (bytes >= 1048576)    return (bytes / 1048576).toFixed(1) + ' MB';
+  if (bytes >= 1024)       return (bytes / 1024).toFixed(0) + ' KB';
+  return bytes + ' B';
+}
+
+// ── Claude budget helper ──────────────────────────────────────────────────────
+// Two sources of truth:
+//   1. Anthropic Cost Report API (PRX_ANTHROPIC_ADMIN_KEY set) — actual billed USD
+//   2. ccusage monthly (fallback) — calculated from token counts × public pricing
+// Token breakdown always comes from ccusage (local, fast).
+
+const https = require('https');
+
+let _budgetCache    = null;
+let _budgetCachedAt = 0;
+const BUDGET_CACHE_MS = 120 * 1000;
+
+// Fetch actual billed cost for the current calendar month via Anthropic Cost Report API.
+// amount fields are in lowest currency units (cents), divide by 100 for USD.
+function fetchAnthropicCostReport(adminKey) {
+  const now   = new Date();
+  const start = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01T00:00:00Z`;
+
+  return new Promise((resolve, reject) => {
+    const params = `starting_at=${encodeURIComponent(start)}&bucket_width=1d`;
+    const options = {
+      hostname: 'api.anthropic.com',
+      path:     `/v1/organizations/cost_report?${params}`,
+      method:   'GET',
+      headers:  { 'x-api-key': adminKey, 'anthropic-version': '2023-06-01' },
+      timeout:  15000,
+    };
+    const req = https.request(options, res => {
+      let raw = '';
+      res.on('data', c => raw += c);
+      res.on('end', () => {
+        try {
+          const json = JSON.parse(raw);
+          if (res.statusCode !== 200) {
+            return reject(new Error(`Anthropic API ${res.statusCode}: ${json.error?.message || raw.slice(0, 120)}`));
+          }
+          let totalCents = 0;
+          for (const bucket of (json.data || [])) {
+            for (const r of (bucket.results || [])) {
+              totalCents += parseInt(r.amount || 0, 10);
+            }
+          }
+          resolve(totalCents / 100); // cents → USD
+        } catch (e) { reject(e); }
+      });
+    });
+    req.on('error',   reject);
+    req.on('timeout', () => { req.destroy(); reject(new Error('Anthropic API timeout')); });
+    req.end();
+  });
+}
+
+// Fetch token breakdown from local ccusage (no network, reads JSONL files).
+function fetchCcusageMonthly() {
+  const candidates = [
+    'ccusage',
+    '/opt/homebrew/bin/ccusage',
+    '/usr/local/bin/ccusage',
+    process.env.HOME ? `${process.env.HOME}/.npm-global/bin/ccusage` : null,
+  ].filter(Boolean);
+
+  return new Promise(resolve => {
+    const tryNext = i => {
+      if (i >= candidates.length) return resolve(null);
+      const { execFile } = require('child_process');
+      execFile(candidates[i], ['monthly', '--json'], { timeout: 10000, env: process.env }, (err, stdout) => {
+        if (err || !stdout || !stdout.trim()) return tryNext(i + 1);
+        try {
+          const raw       = JSON.parse(stdout);
+          const rows      = Array.isArray(raw) ? raw : (raw.monthly || []);
+          const thisMonth = new Date().toISOString().slice(0, 7);
+          const entry     = rows.find(r => r.month === thisMonth) || rows[rows.length - 1] || null;
+          resolve(entry);
+        } catch (_) { tryNext(i + 1); }
+      });
+    };
+    tryNext(0);
+  });
+}
+
+function getBudgetStatus() {
+  if (_budgetCache && (Date.now() - _budgetCachedAt) < BUDGET_CACHE_MS) {
+    return Promise.resolve(_budgetCache);
+  }
+
+  const adminKey = process.env.PRX_ANTHROPIC_ADMIN_KEY || '';
+  const budget   = parseFloat(process.env.PRX_MONTHLY_BUDGET || '0') || null;
+  const thisMonth = new Date().toISOString().slice(0, 7);
+
+  // Always fetch ccusage token breakdown (local, fast)
+  const ccPromise = fetchCcusageMonthly();
+
+  // Actual cost: Anthropic API if admin key configured, else ccusage totalCost
+  const costPromise = adminKey
+    ? fetchAnthropicCostReport(adminKey).catch(err => {
+        console.error('[budget] Anthropic Cost Report API error:', err.message);
+        return null; // fall through to ccusage
+      })
+    : Promise.resolve(null);
+
+  return Promise.all([costPromise, ccPromise]).then(([apiCost, ccEntry]) => {
+    const available = apiCost != null || ccEntry != null;
+    if (!available) {
+      const fallback = { available: false, spent: null, budget, remaining: null, pct: null, month: thisMonth, source: 'unavailable', tokens: null };
+      _budgetCache    = fallback;
+      _budgetCachedAt = Date.now();
+      return fallback;
+    }
+
+    const spent = apiCost != null
+      ? apiCost
+      : parseFloat(ccEntry?.totalCost ?? 0);
+
+    const source = apiCost != null ? 'anthropic-api' : 'ccusage-calculated';
+    const remaining = budget != null ? Math.max(0, budget - spent) : null;
+    const pct       = budget ? Math.min(100, Math.round((spent / budget) * 100)) : null;
+    const month     = ccEntry?.month || thisMonth;
+
+    // Token summary from ccusage (always local)
+    const tokens = ccEntry ? {
+      input:         ccEntry.inputTokens          || 0,
+      output:        ccEntry.outputTokens         || 0,
+      cacheCreation: ccEntry.cacheCreationTokens  || 0,
+      cacheRead:     ccEntry.cacheReadTokens      || 0,
+      total:         ccEntry.totalTokens          || 0,
+      calculated:    parseFloat(ccEntry.totalCost ?? 0),
+      models:        (ccEntry.modelBreakdowns || []).map(m => ({
+        name: m.modelName, cost: parseFloat(m.cost ?? 0),
+        input: m.inputTokens || 0, output: m.outputTokens || 0,
+        cacheRead: m.cacheReadTokens || 0, cacheCreate: m.cacheCreationTokens || 0,
+      })),
+    } : null;
+
+    const result = { available: true, spent, budget, remaining, pct, month, source, tokens };
+    _budgetCache    = result;
+    _budgetCachedAt = Date.now();
+    return result;
+  });
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
+
+function fmtTokensK(n) {
+  if (!n) return '0';
+  if (n >= 1e9) return (n / 1e9).toFixed(1) + 'B';
+  if (n >= 1e6) return (n / 1e6).toFixed(1) + 'M';
+  if (n >= 1e3) return (n / 1e3).toFixed(0) + 'K';
+  return String(n);
+}
 
 function formatUptime(s) {
   const d = Math.floor(s / 86400), h = Math.floor((s % 86400) / 3600),
@@ -285,8 +463,22 @@ function reportCell(reportFiles) {
 
 // ── Dashboard ─────────────────────────────────────────────────────────────────
 
-function renderDashboard(stats) {
+function renderDashboard(stats, budget) {
   const counts = stats.tickets.reduce((acc, t) => { acc[t.status] = (acc[t.status] || 0) + 1; return acc; }, {});
+  const b = budget || {};
+  const budgetPctColor = !b.available ? '#9ca3af'
+    : b.pct == null     ? '#6b7280'
+    : b.pct >= 90       ? '#dc2626'
+    : b.pct >= 70       ? '#ea580c'
+    : '#16a34a';
+  const budgetBg = !b.available ? '#f3f4f6'
+    : b.pct == null     ? '#f3f4f6'
+    : b.pct >= 90       ? '#fee2e2'
+    : b.pct >= 70       ? '#fff7ed'
+    : '#dcfce7';
+  const monthLabel = b.month
+    ? new Date(b.month + '-01').toLocaleString('en-GB', { month: 'long', year: 'numeric' })
+    : new Date().toLocaleString('en-GB', { month: 'long', year: 'numeric' });
 
   const rows = stats.tickets.map(t => {
     const isRunning   = t.status === 'running' || t.status === 'queued';
@@ -493,6 +685,12 @@ function renderDashboard(stats) {
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
       Activity
     </a>
+    ${readDiskStatus().pendingCleanup
+      ? `<a href="/dashboard/disk" class="settings-link" title="Disk Monitor — cleanup pending" style="color:#ea580c">`
+      : `<a href="/dashboard/disk" class="settings-link" title="Disk Monitor">`}
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+      Disk${readDiskStatus().pendingCleanup ? ' ⚑' : ''}
+    </a>
     <a href="/dashboard/settings" class="settings-link">
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       Settings
@@ -570,6 +768,19 @@ function renderDashboard(stats) {
         <span class="info-val ${startupClass}">${startupVal}</span>
       </div>
     </div>
+    <div class="info-item" title="${b.available ? `${monthLabel} · $${(b.spent||0).toFixed(4)} · source: ${b.source}` : 'Budget data unavailable'}">
+      <svg class="info-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+      <div class="info-text">
+        <span class="info-lbl">Budget ${b.month ? '(' + b.month + ')' : ''}</span>
+        ${b.available
+          ? (b.budget
+              ? `<span class="info-val" style="color:${budgetPctColor}">$${(b.remaining||0).toFixed(2)} left</span>
+                 <span style="font-size:.7rem;color:#b0b7c3">$${(b.spent||0).toFixed(2)} / $${b.budget.toFixed(2)} &middot; ${b.source === 'anthropic-api' ? '🟢 API' : '⚪ calc'}</span>`
+              : `<span class="info-val">$${(b.spent||0).toFixed(2)} spent</span>
+                 <span style="font-size:.7rem;color:#b0b7c3">${b.source === 'anthropic-api' ? '🟢 Anthropic API' : '⚪ ccusage calc\'d'}</span>`)
+          : `<span class="info-val muted">unavailable</span>`}
+      </div>
+    </div>
   </div>`;
   })()}
 
@@ -579,6 +790,44 @@ function renderDashboard(stats) {
     <div class="card success"><div class="num">${counts.success || 0}</div><div class="lbl">Succeeded</div></div>
     <div class="card failed"><div class="num">${counts.failed || 0}</div><div class="lbl">Failed</div></div>
     <div class="card"><div class="num">${counts.queued || 0}</div><div class="lbl">Queued</div></div>
+    ${b.available ? `
+    <div class="card" style="min-width:240px;flex:2;background:${budgetBg};border:1px solid ${budgetPctColor}22">
+      <!-- header row: label + source badge + pct -->
+      <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:.45rem">
+        <div>
+          <div style="display:flex;align-items:center;gap:.4rem">
+            <div class="lbl" style="color:${budgetPctColor};opacity:.8">Claude Budget &mdash; ${monthLabel}</div>
+            ${b.source === 'anthropic-api'
+              ? `<span style="font-size:.62rem;font-weight:700;padding:1px 5px;border-radius:4px;background:#dcfce7;color:#166534;white-space:nowrap">Anthropic API</span>`
+              : `<span style="font-size:.62rem;font-weight:700;padding:1px 5px;border-radius:4px;background:#f3f4f6;color:#6b7280;white-space:nowrap" title="Calculated from token counts × pricing — may differ from actual billing">ccusage calc'd</span>`}
+          </div>
+          <div style="font-size:1.55rem;font-weight:700;color:${budgetPctColor};line-height:1.1;margin-top:3px">
+            ${b.budget
+              ? `$${(b.remaining||0).toFixed(2)} <span style="font-size:.9rem;font-weight:500;color:${budgetPctColor};opacity:.7">remaining</span>`
+              : `$${(b.spent||0).toFixed(2)} <span style="font-size:.9rem;font-weight:500;opacity:.7">spent</span>`}
+          </div>
+        </div>
+        ${b.pct != null ? `<div style="font-size:1.6rem;font-weight:800;color:${budgetPctColor};opacity:.85">${b.pct}%</div>` : ''}
+      </div>
+      <!-- progress bar -->
+      ${b.budget ? `
+      <div style="height:6px;border-radius:3px;background:#00000015;overflow:hidden;margin-bottom:.3rem">
+        <div style="height:100%;width:${b.pct}%;background:${budgetPctColor};border-radius:3px;transition:width .4s"></div>
+      </div>
+      <div style="font-size:.72rem;color:${budgetPctColor};opacity:.75;margin-bottom:.45rem">$${(b.spent||0).toFixed(2)} spent of $${b.budget.toFixed(2)} budget</div>` : `
+      <div style="font-size:.72rem;color:${budgetPctColor};opacity:.75;margin-bottom:.45rem">Set PRX_MONTHLY_BUDGET in Settings to track remaining</div>`}
+      <!-- token breakdown from ccusage -->
+      ${b.tokens ? `
+      <div style="border-top:1px solid ${budgetPctColor}18;padding-top:.4rem;display:flex;flex-wrap:wrap;gap:.3rem .7rem">
+        <span style="font-size:.7rem;color:${budgetPctColor};opacity:.75" title="Input tokens">${fmtTokensK(b.tokens.input)} in</span>
+        <span style="font-size:.7rem;color:${budgetPctColor};opacity:.75" title="Cache read tokens">${fmtTokensK(b.tokens.cacheRead)} cached</span>
+        <span style="font-size:.7rem;color:${budgetPctColor};opacity:.75" title="Cache creation tokens">${fmtTokensK(b.tokens.cacheCreation)} cache-write</span>
+        <span style="font-size:.7rem;color:${budgetPctColor};opacity:.75" title="Output tokens">${fmtTokensK(b.tokens.output)} out</span>
+        ${b.source === 'anthropic-api' && b.tokens.calculated
+          ? `<span style="font-size:.7rem;color:${budgetPctColor};opacity:.6" title="ccusage calculated cost for comparison">ccusage: $${b.tokens.calculated.toFixed(2)}</span>`
+          : ''}
+      </div>` : ''}
+    </div>` : ''}
   </div>
 
   <div class="section">
@@ -784,6 +1033,7 @@ const EVENT_DISPLAY = {
   settings_saved:     { label: 'Settings Saved',     bg: '#f3f4f6', color: '#374151' },
   kb_exported:        { label: 'KB Exported',        bg: '#dcfce7', color: '#166534' },
   kb_imported:        { label: 'KB Imported',        bg: '#dcfce7', color: '#166534' },
+  disk_cleanup:       { label: 'Disk Cleanup',       bg: '#fef3c7', color: '#92400e' },
 };
 
 const ACTOR_STYLE = {
@@ -1178,6 +1428,280 @@ function kbStats() {
     reports,
     reportFiles:  countFiles(reports),
   };
+}
+
+// ── Disk Monitor page ─────────────────────────────────────────────────────────
+
+function renderDisk(status, diskLog, flash) {
+  const pendingCleanup  = status.pendingCleanup || false;
+  const prevoyantMB     = status.prevoyantMB  || 0;
+  const diskUsedPct     = status.diskUsedPct  || 0;
+  const diskFree        = status.diskFree     || 0;
+  const diskTotal       = status.diskTotal    || 0;
+  const lastCleanupAt   = status.lastCleanupAt  ? new Date(status.lastCleanupAt) : null;
+  const updatedAt       = status.updatedAt      ? new Date(status.updatedAt)     : null;
+  const alertPct        = status.alertPct       || 80;
+  const cleanupInterval = status.cleanupIntervalDays || 7;
+  const monitorEnabled  = process.env.PRX_DISK_MONITOR_ENABLED === 'Y';
+  const kbProtected     = kbDir();
+
+  // Build chart data from log (last 48 entries for hourly or last 30 for daily)
+  const recent = diskLog.slice(-48);
+  const chartLabels = recent.map(e => {
+    const d = new Date(e.ts);
+    return d.toLocaleString('en-GB', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+  });
+  const chartPrevoyant = recent.map(e => e.prevoyantMB || 0);
+  const chartDiskPct   = recent.map(e => e.diskUsedPct || 0);
+
+  const pctColor = diskUsedPct >= alertPct ? '#dc2626' : diskUsedPct >= alertPct * 0.85 ? '#ea580c' : '#16a34a';
+  const pctBg    = diskUsedPct >= alertPct ? '#fee2e2' : diskUsedPct >= alertPct * 0.85 ? '#fff7ed' : '#dcfce7';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Disk Monitor — Prevoyant Server</title>
+  <style>
+    ${BASE_CSS}
+    .breadcrumb { font-size:.82rem; color:#a0a8c0; }
+    .breadcrumb a { color:#a0a8c0; text-decoration:none; }
+    .breadcrumb a:hover { color:#fff; }
+    .page-body { max-width:1000px; margin:2rem auto; padding:0 1.5rem; }
+    .stat-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:1rem; margin-bottom:1.5rem; }
+    .stat-card { background:#fff; border-radius:10px; padding:1.1rem 1.3rem;
+                 box-shadow:0 1px 3px rgba(0,0,0,.08); }
+    .stat-lbl  { font-size:.68rem; text-transform:uppercase; letter-spacing:.08em; color:#9ca3af; font-weight:700; margin-bottom:.4rem; }
+    .stat-val  { font-size:1.6rem; font-weight:700; line-height:1; color:#1a1a2e; }
+    .stat-sub  { font-size:.75rem; color:#9ca3af; margin-top:.3rem; }
+    .section   { background:#fff; border-radius:10px; padding:1.4rem 1.6rem;
+                 box-shadow:0 1px 3px rgba(0,0,0,.08); margin-bottom:1.5rem; }
+    .section h2 { font-size:1rem; font-weight:700; color:#1a1a2e; margin-bottom:1rem; }
+    .progress-bar { height:12px; border-radius:6px; background:#f3f4f6; overflow:hidden; margin:.4rem 0; }
+    .progress-fill { height:100%; border-radius:6px; transition:width .3s; }
+    .banner { display:flex; align-items:flex-start; gap:.7rem; padding:.9rem 1.1rem;
+              border-radius:8px; margin-bottom:1.2rem; font-size:.85rem; }
+    .banner-warn { background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; }
+    .banner-info { background:#eff6ff; border:1px solid #bfdbfe; color:#1e40af; }
+    .banner-ok   { background:#f0fdf4; border:1px solid #bbf7d0; color:#166534; }
+    .cleanup-form { margin-top:1rem; }
+    .btn-approve { background:#ea580c; color:#fff; border:none; border-radius:7px;
+                   padding:.55rem 1.2rem; font-size:.85rem; font-weight:600; cursor:pointer; }
+    .btn-approve:hover { background:#c2410c; }
+    .btn-dismiss { background:#f3f4f6; color:#6b7280; border:none; border-radius:7px;
+                   padding:.55rem 1rem; font-size:.85rem; font-weight:500; cursor:pointer; margin-left:.6rem; }
+    .btn-dismiss:hover { background:#e5e7eb; }
+    .detail-row { display:flex; justify-content:space-between; align-items:center;
+                  padding:.5rem 0; border-bottom:1px solid #f3f4f6; font-size:.85rem; }
+    .detail-row:last-child { border-bottom:none; }
+    .detail-key { color:#6b7280; }
+    .detail-val { font-weight:600; color:#1a1a2e; }
+    canvas { max-height:220px; }
+  </style>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4/dist/chart.umd.min.js"></script>
+</head>
+<body>
+  <header>
+    <h1>Prevoyant Server</h1>
+    <span class="version-badge">v${pluginVersion}</span>
+    <div class="meta">
+      <span class="breadcrumb"><a href="/dashboard">Dashboard</a> › Disk Monitor</span>
+    </div>
+    <a href="/dashboard/settings#disk-monitor" class="settings-link" style="margin-left:auto">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Settings
+    </a>
+  </header>
+
+  <div class="page-body">
+    ${!monitorEnabled ? `
+    <div class="banner banner-info">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      <span>Disk Monitor is <strong>disabled</strong>. Enable it in <a href="/dashboard/settings" style="color:#1e40af">Settings → Disk Monitor</a> to start tracking disk usage automatically.</span>
+    </div>` : ''}
+
+    ${pendingCleanup ? `
+    <div class="banner banner-warn">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      <div style="flex:1">
+        <strong>Scheduled cleanup is due</strong> — house-cleaning will remove old session files and trim server logs under <code style="background:#fed7aa;padding:1px 4px;border-radius:3px">~/.prevoyant/</code>.
+        Last cleanup: ${lastCleanupAt ? lastCleanupAt.toLocaleString('en-GB') : 'never'}.
+        Cleanup interval: every ${cleanupInterval} day(s).
+        <div class="cleanup-form">
+          <form method="POST" action="/dashboard/disk/approve-cleanup" onsubmit="return confirm('Run house-cleaning now?\\n\\n• Old session files (>30 days) will be deleted\\n• Server logs will be trimmed\\n\\nThis cannot be undone.')">
+            <button type="submit" class="btn-approve">Approve Cleanup</button>
+            <button type="button" class="btn-dismiss" onclick="dismissCleanup()">Dismiss for now</button>
+          </form>
+        </div>
+      </div>
+    </div>` : `
+    <div class="banner banner-ok">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+      <span>No cleanup pending. ${lastCleanupAt ? 'Last cleanup: ' + lastCleanupAt.toLocaleString('en-GB') + '.' : 'No cleanup has been run yet.'} ${cleanupInterval > 0 ? `Next check in ~${cleanupInterval} day(s).` : 'Auto-cleanup is disabled.'}</span>
+    </div>`}
+
+    <!-- Stat cards -->
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-lbl">Overall Disk Used</div>
+        <div class="stat-val" style="color:${pctColor}">${diskUsedPct}%</div>
+        <div class="stat-sub">Alert threshold: ${alertPct}%</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-lbl">.prevoyant Size</div>
+        <div class="stat-val">${prevoyantMB.toFixed(1)} <span style="font-size:1rem;font-weight:500;color:#9ca3af">MB</span></div>
+        <div class="stat-sub">${fmtBytes(status.prevoyantBytes || 0)}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-lbl">Free Disk Space</div>
+        <div class="stat-val" style="font-size:1.3rem">${fmtBytes(diskFree)}</div>
+        <div class="stat-sub">Total: ${fmtBytes(diskTotal)}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-lbl">Last Updated</div>
+        <div class="stat-val" style="font-size:1rem;font-weight:600">${updatedAt ? updatedAt.toLocaleTimeString('en-GB') : '—'}</div>
+        <div class="stat-sub">${updatedAt ? updatedAt.toLocaleDateString('en-GB') : 'No data yet'}</div>
+      </div>
+    </div>
+
+    <!-- Usage bar -->
+    <div class="section">
+      <h2>Disk Capacity</h2>
+      <div style="display:flex;justify-content:space-between;font-size:.8rem;color:#6b7280;margin-bottom:.3rem">
+        <span>Used: ${fmtBytes(diskTotal - diskFree)} of ${fmtBytes(diskTotal)}</span>
+        <span style="font-weight:700;color:${pctColor}">${diskUsedPct}%</span>
+      </div>
+      <div class="progress-bar">
+        <div class="progress-fill" style="width:${Math.min(diskUsedPct,100)}%;background:${pctColor}"></div>
+      </div>
+      <div style="font-size:.75rem;color:#9ca3af;margin-top:.3rem">Alert fires at ${alertPct}% usage</div>
+    </div>
+
+    <!-- Chart -->
+    ${diskLog.length > 1 ? `
+    <div class="section">
+      <h2>Usage Over Time</h2>
+      <canvas id="diskChart"></canvas>
+    </div>` : `
+    <div class="section">
+      <div style="text-align:center;color:#9ca3af;padding:2rem;font-size:.9rem">No history yet — data will appear after the first monitor tick.</div>
+    </div>`}
+
+    <!-- Detail table -->
+    <div class="section">
+      <h2>Details</h2>
+      <div class="detail-row">
+        <span class="detail-key">Monitor status</span>
+        <span class="detail-val">${monitorEnabled ? '<span style="color:#16a34a">Enabled</span>' : '<span style="color:#9ca3af">Disabled</span>'}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-key">Check interval</span>
+        <span class="detail-val">${process.env.PRX_DISK_MONITOR_INTERVAL_MINS || 60} minutes</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-key">Alert threshold</span>
+        <span class="detail-val">${alertPct}% disk used</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-key">Cleanup interval</span>
+        <span class="detail-val">${cleanupInterval > 0 ? `Every ${cleanupInterval} days` : 'Disabled'}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-key">Last cleanup</span>
+        <span class="detail-val">${lastCleanupAt ? lastCleanupAt.toLocaleString('en-GB') : 'Never'}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-key">History entries</span>
+        <span class="detail-val">${diskLog.length}</span>
+      </div>
+    </div>
+
+    <!-- Cleanup controls -->
+    <div class="section">
+      <h2>House-cleaning</h2>
+
+      ${flash === 'cleaned' ? `
+      <div class="banner banner-ok" style="margin-bottom:1rem">
+        <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+        <span>Cleanup completed successfully.</span>
+      </div>` : ''}
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem;margin-bottom:1.2rem">
+        <!-- Will clean -->
+        <div style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:.9rem 1rem">
+          <div style="font-size:.75rem;font-weight:700;color:#166534;text-transform:uppercase;letter-spacing:.07em;margin-bottom:.6rem">Will clean</div>
+          <ul style="list-style:none;font-size:.83rem;color:#15803d;line-height:1.7">
+            <li>✓ Session directories older than 30 days<br><span style="font-size:.75rem;color:#4ade80;opacity:.8">~/.prevoyant/sessions/</span></li>
+            <li>✓ Trim disk history log to last 200 entries<br><span style="font-size:.75rem;color:#4ade80;opacity:.8">~/.prevoyant/server/disk-log.json</span></li>
+            <li>✓ Trim activity log to last 2 000 entries<br><span style="font-size:.75rem;color:#4ade80;opacity:.8">~/.prevoyant/server/activity-log.json</span></li>
+          </ul>
+        </div>
+        <!-- Protected -->
+        <div style="background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:.9rem 1rem">
+          <div style="font-size:.75rem;font-weight:700;color:#991b1b;text-transform:uppercase;letter-spacing:.07em;margin-bottom:.6rem">Never touched</div>
+          <ul style="list-style:none;font-size:.83rem;color:#b91c1c;line-height:1.7">
+            <li>✗ Knowledge base files<br><span style="font-size:.75rem;color:#f87171;opacity:.9;word-break:break-all">${kbProtected}</span></li>
+            <li>✗ Reports</li>
+            <li>✗ .env configuration</li>
+            <li>✗ Sessions younger than 30 days</li>
+          </ul>
+        </div>
+      </div>
+
+      <form method="POST" action="/dashboard/disk/approve-cleanup"
+            onsubmit="return confirm('Run immediate house-cleaning?\\n\\n✓ Deletes session directories older than 30 days\\n✓ Trims server log files\\n\\n✗ Will NOT touch knowledge base, reports, or .env\\n\\nThis cannot be undone.')">
+        <button type="submit" class="btn-approve">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:5px"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+          Run Cleanup Now
+        </button>
+        <span style="font-size:.78rem;color:#9ca3af;margin-left:.8rem">Safe to run at any time — KB files are never affected.</span>
+      </form>
+    </div>
+  </div>
+
+  <div class="footer">Prevoyant Server &mdash; Disk Monitor</div>
+
+  <script>
+    ${diskLog.length > 1 ? `
+    const ctx = document.getElementById('diskChart').getContext('2d');
+    new Chart(ctx, {
+      type: 'line',
+      data: {
+        labels: ${JSON.stringify(chartLabels)},
+        datasets: [
+          {
+            label: '.prevoyant (MB)',
+            data: ${JSON.stringify(chartPrevoyant)},
+            borderColor: '#6366f1', backgroundColor: '#6366f133',
+            tension: 0.3, fill: true, yAxisID: 'yMB',
+          },
+          {
+            label: 'Disk Used (%)',
+            data: ${JSON.stringify(chartDiskPct)},
+            borderColor: '#f59e0b', backgroundColor: 'transparent',
+            tension: 0.3, fill: false, yAxisID: 'yPct', borderDash: [4,3],
+          },
+        ],
+      },
+      options: {
+        responsive: true, maintainAspectRatio: true,
+        interaction: { mode: 'index', intersect: false },
+        plugins: { legend: { position: 'top' } },
+        scales: {
+          x:    { ticks: { maxTicksLimit: 8, font: { size: 11 } } },
+          yMB:  { type: 'linear', position: 'left',  title: { display: true, text: 'MB' }, beginAtZero: true },
+          yPct: { type: 'linear', position: 'right', title: { display: true, text: '%' }, beginAtZero: true, max: 100, grid: { drawOnChartArea: false } },
+        },
+      },
+    });` : ''}
+
+    function dismissCleanup() {
+      fetch('/dashboard/disk/dismiss-cleanup', { method: 'POST' })
+        .then(() => location.reload());
+    }
+  </script>
+</body>
+</html>`;
 }
 
 // ── Settings page ─────────────────────────────────────────────────────────────
@@ -1612,6 +2136,30 @@ function renderSettings(vals, flash) {
         </div>
       </details>
 
+      <!-- Anthropic Admin Key (budget tracker) -->
+      <details class="s-section"${sectionHasValues(['PRX_ANTHROPIC_ADMIN_KEY'], vals) ? ' open' : ''}>
+        <summary>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          Claude Budget (Admin Key)
+          <span class="s-opt">Optional</span>
+          <span class="s-chevron">›</span>
+        </summary>
+        <div class="s-body full-width">
+          <div class="s-field">
+            <div style="display:flex;align-items:flex-start;gap:.55rem;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:.65rem .9rem;font-size:.82rem;color:#1e40af;margin-bottom:.6rem">
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              <span>An <strong>Admin API key</strong> (not a regular API key) is required to fetch your actual billed cost from the Anthropic Cost Report API.
+              Generate one at <a href="https://platform.claude.com/settings/admin-keys" target="_blank" style="color:#1e40af">platform.claude.com/settings/admin-keys</a> — requires organisation admin role.
+              Without this key the budget card falls back to <strong>ccusage (calculated)</strong>, which estimates cost from token counts and may differ from your actual bill.
+              Changes take effect immediately (no restart needed).</span>
+            </div>
+          </div>
+          <div class="s-body" style="padding:0;box-shadow:none;background:transparent">
+            ${fld('PRX_ANTHROPIC_ADMIN_KEY','Anthropic Admin API Key','password',v('PRX_ANTHROPIC_ADMIN_KEY'),'sk-ant-admin01-...','Used only for the dashboard budget tracker. Never sent anywhere except api.anthropic.com.')}
+          </div>
+        </div>
+      </details>
+
       <!-- Email Delivery -->
       <details class="s-section"${sectionHasValues(emailKeys, vals) ? ' open' : ''}>
         <summary>
@@ -1740,6 +2288,35 @@ function renderSettings(vals, flash) {
               [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
             ${fld('PRX_WATCHDOG_INTERVAL_SECS','Check interval (seconds)','number',v('PRX_WATCHDOG_INTERVAL_SECS'),'60','How often to ping /health. Default: 60. Lower values catch outages faster but add noise.')}
             ${fld('PRX_WATCHDOG_FAIL_THRESHOLD','Failure threshold','number',v('PRX_WATCHDOG_FAIL_THRESHOLD'),'3','Consecutive failed checks before sending the DOWN alert. Default: 3. Avoids single-blip false alarms.')}
+          </div>
+        </div>
+      </details>
+
+      <!-- Disk Monitor -->
+      <details id="disk-monitor" class="s-section"${sectionHasValues(['PRX_DISK_MONITOR_ENABLED','PRX_DISK_MONITOR_INTERVAL_MINS','PRX_DISK_CLEANUP_INTERVAL_DAYS','PRX_DISK_CAPACITY_ALERT_PCT'], vals) ? ' open' : ''}>
+        <summary>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+          Disk Monitor
+          <span class="s-opt">Optional</span>
+          <span class="s-chevron">›</span>
+        </summary>
+        <div class="s-body full-width">
+          <div class="s-field">
+            <div style="display:flex;align-items:flex-start;gap:.55rem;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:.65rem .9rem;font-size:.82rem;color:#1e40af;margin-bottom:.6rem">
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              <span>Runs as an in-process background thread. Tracks disk space used by <code style="background:#dbeafe;padding:1px 4px;border-radius:3px">~/.prevoyant/</code> and overall disk capacity.
+              Sends an email alert when disk usage exceeds the configured threshold.
+              When the cleanup interval elapses, a notification appears on the <a href="/dashboard/disk" style="color:#1e40af">Disk Monitor page</a> — you must click <em>Approve Cleanup</em> before any files are deleted.
+              Cleanup removes session files older than 30 days and trims server logs.
+              Changes take effect after <em>Save &amp; Restart</em>.</span>
+            </div>
+          </div>
+          <div class="s-body" style="padding:0;box-shadow:none;background:transparent">
+            ${fld('PRX_DISK_MONITOR_ENABLED','Enable disk monitor','select',v('PRX_DISK_MONITOR_ENABLED') || 'N','','Starts a background thread that tracks disk usage and alerts when capacity is low.',
+              [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
+            ${fld('PRX_DISK_MONITOR_INTERVAL_MINS','Check interval (minutes)','number',v('PRX_DISK_MONITOR_INTERVAL_MINS'),'60','How often to measure disk usage. Default: 60 (hourly).')}
+            ${fld('PRX_DISK_CAPACITY_ALERT_PCT','Alert threshold (% disk used)','number',v('PRX_DISK_CAPACITY_ALERT_PCT'),'80','Send an email alert when overall disk usage reaches this percentage. Default: 80.')}
+            ${fld('PRX_DISK_CLEANUP_INTERVAL_DAYS','Cleanup interval (days)','number',v('PRX_DISK_CLEANUP_INTERVAL_DAYS'),'7','How many days between scheduled house-cleaning prompts. Set 0 to disable auto-cleanup prompts. Default: 7.')}
           </div>
         </div>
       </details>
@@ -2318,9 +2895,10 @@ function renderDetail(ticket, warn, warnMode) {
 
 // ── Routes ────────────────────────────────────────────────────────────────────
 
-router.get('/', (_req, res) => {
+router.get('/', async (_req, res) => {
+  const budget = await getBudgetStatus();
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(renderDashboard(getStats()));
+  res.send(renderDashboard(getStats(), budget));
 });
 
 router.get('/json', (_req, res) => res.json(getStats()));
@@ -2343,6 +2921,95 @@ router.get('/activity', (req, res) => {
 
 router.get('/activity/json', (_req, res) => {
   res.json({ stats: activityLog.getStats(), chartData: activityLog.getChartData() });
+});
+
+// Disk monitor
+router.get('/disk', (req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(renderDisk(readDiskStatus(), readDiskLog(), req.query.cleaned === '1' ? 'cleaned' : null));
+});
+
+router.get('/disk/json', (_req, res) => {
+  res.json({ status: readDiskStatus(), log: readDiskLog().slice(-100) });
+});
+
+router.post('/disk/approve-cleanup', (_req, res) => {
+  const PREVOYANT_DIR = path.join(os.homedir(), '.prevoyant');
+  const sessionsDir   = path.join(PREVOYANT_DIR, 'sessions');
+  const serverDir     = path.join(PREVOYANT_DIR, 'server');
+  // Knowledge base is never included in cleanup targets — resolve its path
+  // so we can double-check that no candidate path ever falls inside it.
+  const protectedKbDir = path.resolve(kbDir());
+  const KEEP_DAYS      = 30;
+  const cutoff         = Date.now() - KEEP_DAYS * 24 * 60 * 60 * 1000;
+  let deletedSessions  = 0;
+  let trimmedLogs      = 0;
+
+  function isSafeToDelete(fullPath) {
+    const resolved = path.resolve(fullPath);
+    // Never delete anything inside the knowledge base directory
+    return !resolved.startsWith(protectedKbDir + path.sep) && resolved !== protectedKbDir;
+  }
+
+  // Remove session directories older than KEEP_DAYS days
+  try {
+    const entries = fs.readdirSync(sessionsDir, { withFileTypes: true });
+    for (const e of entries) {
+      if (!e.isDirectory()) continue;
+      const full = path.join(sessionsDir, e.name);
+      if (!isSafeToDelete(full)) continue;
+      try {
+        const stat = fs.statSync(full);
+        if (stat.mtimeMs < cutoff) {
+          fs.rmSync(full, { recursive: true, force: true });
+          deletedSessions++;
+        }
+      } catch (_) {}
+    }
+  } catch (_) {}
+
+  // Trim disk-log.json to last 200 entries
+  try {
+    const logPath = path.join(serverDir, 'disk-log.json');
+    let log = JSON.parse(fs.readFileSync(logPath, 'utf8'));
+    if (Array.isArray(log) && log.length > 200) {
+      fs.writeFileSync(logPath, JSON.stringify(log.slice(-200)));
+      trimmedLogs++;
+    }
+  } catch (_) {}
+
+  // Trim activity-log.json to last 2000 entries
+  try {
+    const actPath = path.join(serverDir, 'activity-log.json');
+    let log = JSON.parse(fs.readFileSync(actPath, 'utf8'));
+    if (Array.isArray(log) && log.length > 2000) {
+      fs.writeFileSync(actPath, JSON.stringify(log.slice(-2000)));
+      trimmedLogs++;
+    }
+  } catch (_) {}
+
+  // Update status file
+  try {
+    const existing = readDiskStatus();
+    fs.writeFileSync(
+      DISK_STATUS_FILE,
+      JSON.stringify({ ...existing, pendingCleanup: false, lastCleanupAt: new Date().toISOString() }, null, 2)
+    );
+  } catch (_) {}
+
+  activityLog.record('disk_cleanup', null, 'user', { deletedSessions, trimmedLogs });
+  res.redirect(303, '/dashboard/disk?cleaned=1');
+});
+
+router.post('/disk/dismiss-cleanup', (_req, res) => {
+  try {
+    const existing = readDiskStatus();
+    fs.writeFileSync(
+      DISK_STATUS_FILE,
+      JSON.stringify({ ...existing, pendingCleanup: false }, null, 2)
+    );
+  } catch (_) {}
+  res.json({ ok: true });
 });
 
 router.get('/ticket/:key', (req, res) => {
@@ -2584,11 +3251,13 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'AUTO_MODE', 'FORCE_FULL_RUN', 'PRX_REPORT_VERBOSITY',
     'PRX_JIRA_PROJECT', 'PRX_ATTACHMENT_MAX_MB',
     'PRX_RETRY_MAX', 'PRX_RETRY_BACKOFF',
+    'PRX_ANTHROPIC_ADMIN_KEY',
     'PRX_EMAIL_TO', 'PRX_SMTP_HOST', 'PRX_SMTP_PORT', 'PRX_SMTP_USER', 'PRX_SMTP_PASS',
     'PRX_NOTIFY_ENABLED', 'PRX_NOTIFY_LEVEL', 'PRX_NOTIFY_MUTE_DAYS', 'PRX_NOTIFY_EVENTS',
     'PRX_INCLUDE_SM_IN_SESSIONS_ENABLED', 'PRX_SKILL_UPGRADE_MIN_SESSIONS',
     'PRX_SKILL_COMPACTION_INTERVAL', 'PRX_MONTHLY_BUDGET',
     'PRX_WATCHDOG_ENABLED', 'PRX_WATCHDOG_INTERVAL_SECS', 'PRX_WATCHDOG_FAIL_THRESHOLD',
+    'PRX_DISK_MONITOR_ENABLED', 'PRX_DISK_MONITOR_INTERVAL_MINS', 'PRX_DISK_CAPACITY_ALERT_PCT', 'PRX_DISK_CLEANUP_INTERVAL_DAYS',
   ];
 
   try {
@@ -2608,6 +3277,9 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     }
 
     writeEnvValues(updates);
+    // Bust budget cache so new admin key / budget takes effect immediately
+    _budgetCache    = null;
+    _budgetCachedAt = 0;
     activityLog.record('settings_saved', null, 'user', {
       fields: Object.keys(updates).filter(k => updates[k] !== '').join(','),
     });
