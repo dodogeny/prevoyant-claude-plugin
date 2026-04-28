@@ -1,8 +1,10 @@
 'use strict';
 
-const fs   = require('fs');
-const path = require('path');
-const os   = require('os');
+const fs    = require('fs');
+const path  = require('path');
+const os    = require('os');
+const http  = require('http');
+const https = require('https');
 
 const MAX_EVENTS = 5000;
 let events  = [];
@@ -49,6 +51,46 @@ function loadLog() {
   } catch (_) { /* not found or corrupt — start fresh */ }
 }
 
+// ── Webhook ───────────────────────────────────────────────────────────────────
+
+const WEBHOOK_EMOJI = {
+  ticket_completed:  '✅', ticket_failed: '❌', ticket_interrupted: '⚠️',
+  ticket_started: '▶️', ticket_queued: '📥', upgrade_completed: '🆙',
+};
+
+function fireWebhook(event) {
+  const url = process.env.PRX_WEBHOOK_URL;
+  if (!url) return;
+
+  const allowed = (process.env.PRX_WEBHOOK_EVENTS || 'ticket_completed,ticket_failed,ticket_interrupted')
+    .split(',').map(s => s.trim()).filter(Boolean);
+  if (!allowed.includes(event.type)) return;
+
+  let urlObj;
+  try { urlObj = new URL(url); } catch (_) { return; }
+
+  const emoji = WEBHOOK_EMOJI[event.type] || '🔔';
+  const ticket = event.ticketKey ? ` [${event.ticketKey}]` : '';
+  const detail = event.details && event.details.reason ? ` — ${event.details.reason}` : '';
+  const text   = `${emoji} *Prevoyant*${ticket}: ${event.type.replace(/_/g, ' ')}${detail}`;
+
+  const payload = Buffer.from(JSON.stringify({ text, event }));
+  const mod = urlObj.protocol === 'https:' ? https : http;
+
+  const req = mod.request({
+    hostname: urlObj.hostname,
+    port:     urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
+    path:     urlObj.pathname + urlObj.search,
+    method:   'POST',
+    headers:  { 'Content-Type': 'application/json', 'Content-Length': payload.length },
+  }, res => { res.resume(); });
+
+  req.on('error', () => {});
+  req.setTimeout(10000, () => req.destroy());
+  req.write(payload);
+  req.end();
+}
+
 // ── Core ──────────────────────────────────────────────────────────────────────
 
 function record(type, ticketKey = null, actor = 'system', details = {}) {
@@ -67,6 +109,7 @@ function record(type, ticketKey = null, actor = 'system', details = {}) {
     _dirty = true;
     setImmediate(saveLog);
   }
+  fireWebhook(event);
   return event;
 }
 

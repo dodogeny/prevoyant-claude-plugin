@@ -263,6 +263,19 @@ async function runClaudeAnalysis(ticketKey, mode = 'dev') {
       } catch (_) {}
     }, 60000);
 
+    // Job timeout — kill if running past PRX_JOB_TIMEOUT_MINS
+    const timeoutMins = parseInt(process.env.PRX_JOB_TIMEOUT_MINS || '0', 10);
+    const timeoutHandle = timeoutMins > 0 ? setTimeout(() => {
+      if (!state.killed) {
+        console.log(`[runner] ${ticketKey} — job timeout (${timeoutMins}m), stopping`);
+        state.killReason = 'timeout';
+        tracker.appendOutput(ticketKey, `[system] Job stopped: exceeded ${timeoutMins}-minute timeout (PRX_JOB_TIMEOUT_MINS).`);
+        state.killed = true;
+        proc.kill('SIGTERM');
+        setTimeout(() => { try { proc.kill('SIGKILL'); } catch (_) {} }, 3000);
+      }
+    }, timeoutMins * 60000) : null;
+
     // Line buffer — stdout arrives in 64 KB chunks; large JSON events span multiple chunks.
     // Accumulate bytes until we have a complete newline-terminated line before parsing.
     let lineBuf = '';
@@ -291,6 +304,7 @@ async function runClaudeAnalysis(ticketKey, mode = 'dev') {
 
     proc.on('close', code => {
       clearInterval(budgetCheckInterval);
+      if (timeoutHandle) clearTimeout(timeoutHandle);
       activeProcesses.delete(ticketKey);
       if (lineBuf.trim()) processLine(ticketKey, lineBuf); // flush any partial line
       if (usingTempConfig) try { fs.unlinkSync(mcpConfig); } catch (_) {}

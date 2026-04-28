@@ -6,6 +6,7 @@ const tracker = require('../dashboard/tracker');
 const MAX_CONCURRENT = 1;
 const queue = [];
 let running = 0;
+let paused  = false;
 
 // ticketKey → setTimeout handle for scheduled jobs
 const scheduledTimers = new Map();
@@ -32,7 +33,13 @@ function enqueue(ticketKey, mode = 'dev', priority = 'normal') {
   drain();
 }
 
+function pauseQueue()  { paused = true;  console.log('[queue] Queue paused'); }
+function resumeQueue() { paused = false; console.log('[queue] Queue resumed'); drain(); }
+function isPaused()    { return paused; }
+function getQueueDepth() { return queue.length; }
+
 function drain() {
+  if (paused) return;
   while (running < MAX_CONCURRENT && queue.length > 0) {
     const { ticketKey: ticket, mode, priority } = queue.shift();
     running++;
@@ -143,4 +150,4 @@ function killJob(ticketKey) {
   return killProcess(ticketKey);
 }
 
-module.exports = { enqueue, prioritizeJob, scheduleJob, restoreScheduledJobs, killJob };
+module.exports = { enqueue, prioritizeJob, scheduleJob, restoreScheduledJobs, killJob, pauseQueue, resumeQueue, isPaused, getQueueDepth };

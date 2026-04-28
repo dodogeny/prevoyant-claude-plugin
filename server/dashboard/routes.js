@@ -6,7 +6,7 @@ const os = require('os');
 const path = require('path');
 const { spawn, execFile } = require('child_process');
 const { getStats, getTicket, reRunTicket, recordScheduled, deleteTicket } = require('./tracker');
-const { killJob, enqueue, scheduleJob, prioritizeJob } = require('../queue/jobQueue');
+const { killJob, enqueue, scheduleJob, prioritizeJob, pauseQueue, resumeQueue, isPaused, getQueueDepth } = require('../queue/jobQueue');
 const activityLog = require('./activityLog');
 const { getPollStatus } = require('../runner/pollScheduler');
 const serverEvents = require('../serverEvents');
@@ -360,10 +360,30 @@ function interruptReasonMessage(reason) {
       return 'Anthropic account balance too low — the API returned a billing error mid-run. Top up your account balance or check your subscription to continue.';
     case 'server_restart':
       return 'Server was restarted while this job was running. Re-run the ticket to resume.';
+    case 'timeout': {
+      const mins = process.env.PRX_JOB_TIMEOUT_MINS || '?';
+      return `Job exceeded the ${mins}-minute timeout limit (PRX_JOB_TIMEOUT_MINS). Increase the limit in Settings or optimise the job.`;
+    }
     case 'manual':
     default:
       return 'Stopped manually by the user.';
   }
+}
+
+function renderSparkline(data, width = 140, height = 36) {
+  const nonZero = data.filter(v => v > 0);
+  if (nonZero.length < 2) return '<span style="font-size:.72rem;color:#d1d5db">no data</span>';
+  const max = Math.max(...data);
+  const pts = data.map((v, i) => {
+    const x = ((i / (data.length - 1)) * width).toFixed(1);
+    const y = (height - (v / max) * (height - 4) - 2).toFixed(1);
+    return `${x},${y}`;
+  }).join(' ');
+  const last = data[data.length - 1];
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" xmlns="http://www.w3.org/2000/svg" style="display:block">
+    <polyline points="${pts}" fill="none" stroke="#0d6efd" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round"/>
+    <text x="${width}" y="${height}" text-anchor="end" font-size="9" fill="#9ca3af">$${last.toFixed(2)}</text>
+  </svg>`;
 }
 
 function interruptBannerIcon(reason) {
@@ -606,6 +626,8 @@ function renderDashboard(stats, budget) {
                   cursor:pointer; transition:background .15s,color .15s; white-space:nowrap; font-family:inherit; }
     .header-btn:hover { background:#ffffff15; color:#fff; }
     .header-btn.icon-only { padding:.3rem .5rem; }
+    .header-btn-active { background:#f59e0b22; color:#fbbf24; border-color:#f59e0b55; }
+    .header-btn-active:hover { background:#f59e0b33; color:#fcd34d; }
     .upd-toast { position:fixed; bottom:1.5rem; right:1.5rem; background:#1e293b; color:#fff;
                  padding:.6rem 1.1rem; border-radius:8px; font-size:.82rem; font-weight:500;
                  box-shadow:0 4px 14px rgba(0,0,0,.25); z-index:1100; display:none;
@@ -657,6 +679,15 @@ function renderDashboard(stats, budget) {
     <button type="button" class="header-btn" onclick="openModal('add-ticket-modal')">
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
       Add Ticket
+    </button>
+    <button type="button" class="header-btn" onclick="openModal('bulk-add-modal')" title="Queue multiple tickets at once">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg>
+      Bulk Add
+    </button>
+    <button type="button" id="pause-btn" class="header-btn${isPaused() ? ' header-btn-active' : ''}" onclick="toggleQueuePause()" title="${isPaused() ? 'Resume queue' : 'Pause queue — stop new jobs from starting'}">
+      ${isPaused()
+        ? `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg> Resume`
+        : `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause Queue`}
     </button>
     <button type="button" class="header-btn icon-only" id="check-update-btn" title="Check for updates" onclick="checkForUpdates()">
       <svg id="check-update-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/></svg>
@@ -808,12 +839,21 @@ function renderDashboard(stats, budget) {
   </div>`;
   })()}
 
+  ${isPaused() ? `<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:.6rem 1rem;margin-bottom:.75rem;display:flex;align-items:center;gap:.6rem;font-size:.83rem;color:#92400e">
+    <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+    <strong>Queue paused</strong> — no new jobs will start until you resume. Running jobs are unaffected.
+    <button onclick="toggleQueuePause()" style="margin-left:auto;padding:.25rem .75rem;background:#d97706;color:#fff;border:none;border-radius:5px;font-size:.78rem;cursor:pointer;font-family:inherit">Resume Queue</button>
+  </div>` : ''}
   <div class="cards">
     <div class="card"><div class="num">${stats.tickets.length}</div><div class="lbl">Total</div></div>
     <div class="card running"><div class="num">${counts.running || 0}</div><div class="lbl">Running</div></div>
     <div class="card success"><div class="num">${counts.success || 0}</div><div class="lbl">Succeeded</div></div>
     <div class="card failed"><div class="num">${counts.failed || 0}</div><div class="lbl">Failed</div></div>
     <div class="card"><div class="num">${counts.queued || 0}</div><div class="lbl">Queued</div></div>
+    <div class="card" style="min-width:170px;flex:1.2" title="Daily cost from completed jobs — last 30 days">
+      <div class="lbl" style="margin-bottom:.35rem">Cost trend — 30d</div>
+      ${renderSparkline(activityLog.getChartData().tokenCost.data)}
+    </div>
     ${b.available ? `
     <div class="card" style="min-width:240px;flex:2;background:${budgetBg};border:1px solid ${budgetPctColor}22">
       <!-- header row: label + source badge + pct -->
@@ -902,6 +942,36 @@ function renderDashboard(stats, budget) {
       <div class="modal-actions">
         <button type="button" class="modal-btn-cancel" onclick="closeModal('add-ticket-modal')">Cancel</button>
         <button type="button" class="modal-btn-primary" onclick="submitAddTicket()">Add to Queue</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Bulk Add Modal -->
+  <div class="modal-overlay" id="bulk-add-modal" onclick="overlayClick(event,'bulk-add-modal')">
+    <div class="modal" style="max-width:480px">
+      <div class="modal-header">
+        <span class="modal-title">Bulk Add Tickets</span>
+        <button class="modal-close" onclick="closeModal('bulk-add-modal')" title="Close">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+        </button>
+      </div>
+      <div class="modal-field">
+        <label class="modal-label" for="bulk-keys">Ticket Keys <span style="font-size:.72rem;font-weight:400;color:#9ca3af">— comma or newline separated, max 20</span></label>
+        <textarea id="bulk-keys" class="modal-input" rows="5" placeholder="IV-1234, IV-1235&#10;IV-1236" style="resize:vertical;font-family:monospace"></textarea>
+        <span id="bulk-key-err" style="font-size:.76rem;color:#dc2626;display:none"></span>
+      </div>
+      <div class="modal-field">
+        <label class="modal-label" for="bulk-mode">Mode</label>
+        <select id="bulk-mode" class="modal-select">
+          <option value="dev">Dev</option>
+          <option value="review">Review</option>
+          <option value="estimate">Estimate</option>
+        </select>
+      </div>
+      <div id="bulk-result" style="font-size:.82rem;color:#166534;background:#dcfce7;border-radius:6px;padding:.5rem .75rem;display:none"></div>
+      <div class="modal-actions">
+        <button type="button" class="modal-btn-cancel" onclick="closeModal('bulk-add-modal')">Cancel</button>
+        <button type="button" class="modal-btn-primary" onclick="submitBulkAdd()">Queue All</button>
       </div>
     </div>
   </div>
@@ -1098,6 +1168,40 @@ function renderDashboard(stats, budget) {
       });
       document.body.appendChild(form);
       form.submit();
+    }
+
+    async function toggleQueuePause() {
+      const btn = document.getElementById('pause-btn');
+      const paused = btn && btn.classList.contains('header-btn-active');
+      try {
+        const res = await fetch('/dashboard/queue/' + (paused ? 'resume' : 'pause'), { method: 'POST' });
+        if (res.ok) location.reload();
+      } catch (_) {}
+    }
+
+    async function submitBulkAdd() {
+      const raw  = document.getElementById('bulk-keys').value;
+      const mode = document.getElementById('bulk-mode').value;
+      const err  = document.getElementById('bulk-key-err');
+      const result = document.getElementById('bulk-result');
+      err.style.display = 'none';
+      result.style.display = 'none';
+
+      const keys = [...new Set(raw.split(/[\s,;]+/).map(k => k.trim().toUpperCase()).filter(k => /^[A-Z]+-\d+$/.test(k)))];
+      if (keys.length === 0) { err.textContent = 'No valid ticket keys found (expected format: PROJ-123).'; err.style.display = ''; return; }
+      if (keys.length > 20) { err.textContent = 'Maximum 20 tickets per bulk run.'; err.style.display = ''; return; }
+
+      try {
+        const res  = await fetch('/dashboard/tickets/bulk-run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+          body: 'keys=' + encodeURIComponent(keys.join(',')) + '&mode=' + encodeURIComponent(mode),
+        });
+        const data = await res.json();
+        result.textContent = data.queued + ' ticket(s) queued' + (data.skipped ? ', ' + data.skipped + ' skipped (already running/queued).' : '.');
+        result.style.display = '';
+        setTimeout(() => location.reload(), 1500);
+      } catch (_) { err.textContent = 'Failed to queue tickets.'; err.style.display = ''; }
     }
   </script>
 </body>
@@ -2887,8 +2991,24 @@ function renderDetail(ticket, warn, warnMode) {
 
     <!-- Claude session output / PDF fallback -->
     <div class="panel">
-      <div class="panel-header"><h2>View Output</h2></div>
-      <div class="panel-body">${outputSection}</div>
+      <div class="panel-header">
+        <h2>View Output</h2>
+        <a href="/dashboard/ticket/${encodeURIComponent(ticket.ticketKey)}/log.txt"
+           download="${ticket.ticketKey}-output.txt"
+           style="display:inline-flex;align-items:center;gap:.35rem;font-size:.76rem;color:#6b7280;text-decoration:none;padding:.2rem .6rem;border:1px solid #e5e7eb;border-radius:5px;white-space:nowrap"
+           title="Download full output log as .txt">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          Download log
+        </a>
+      </div>
+      <div class="panel-body">
+        <div style="display:flex;align-items:center;gap:.6rem;margin-bottom:.6rem">
+          <input type="text" id="output-search" placeholder="Search output…" oninput="filterOutput(this.value)"
+                 style="flex:1;padding:.35rem .75rem;border:1px solid #e5e7eb;border-radius:6px;font-size:.82rem;font-family:inherit;outline:none">
+          <span id="output-match-count" style="font-size:.75rem;color:#9ca3af;white-space:nowrap;min-width:6rem;text-align:right"></span>
+        </div>
+        ${outputSection}
+      </div>
     </div>
   </div>
 
@@ -2901,6 +3021,18 @@ function renderDetail(ticket, warn, warnMode) {
       const open = box.classList.toggle('open');
       lbl.textContent = open ? 'Hide Output' : 'View Output';
       if (open) box.scrollTop = box.scrollHeight;
+    }
+    function filterOutput(q) {
+      const entries = document.querySelectorAll('#output-box .log-entry');
+      const term = q.trim().toLowerCase();
+      let matches = 0;
+      entries.forEach(el => {
+        const show = !term || el.textContent.toLowerCase().includes(term);
+        el.style.display = show ? '' : 'none';
+        if (show && term) matches++;
+      });
+      const cnt = document.getElementById('output-match-count');
+      if (cnt) cnt.textContent = term ? matches + ' match' + (matches === 1 ? '' : 'es') : '';
     }
     function selectMode(mode) {
       document.getElementById('mode-input').value = mode;
@@ -3311,6 +3443,47 @@ router.get('/download', (req, res) => {
   if (!resolved.startsWith(base + path.sep) && resolved !== base) return res.status(403).send('Access denied.');
   if (!fs.existsSync(resolved)) return res.status(404).send('File not found.');
   res.download(resolved);
+});
+
+// Queue pause / resume
+router.post('/queue/pause',  (_req, res) => { pauseQueue();  res.json({ paused: true  }); });
+router.post('/queue/resume', (_req, res) => { resumeQueue(); res.json({ paused: false }); });
+router.get('/queue/status',  (_req, res) => res.json({ paused: isPaused(), depth: getQueueDepth() }));
+
+// Bulk queue tickets
+router.post('/tickets/bulk-run', express.urlencoded({ extended: false }), (req, res) => {
+  const raw  = (req.body.keys || '').trim();
+  const mode = (req.body.mode  || 'dev').toLowerCase();
+  if (!VALID_MODES.has(mode)) return res.status(400).json({ error: 'Invalid mode.' });
+
+  const keys = [...new Set(
+    raw.split(/[\s,;]+/).map(k => k.trim().toUpperCase()).filter(k => /^[A-Z]+-\d+$/.test(k))
+  )];
+  if (keys.length === 0) return res.status(400).json({ error: 'No valid ticket keys.' });
+  if (keys.length > 20)  return res.status(400).json({ error: 'Maximum 20 tickets per bulk run.' });
+
+  let queued = 0;
+  for (const key of keys) {
+    const existing = getTicket(key);
+    if (existing && (existing.status === 'running' || existing.status === 'queued')) continue;
+    reRunTicket(key, mode, 'manual');
+    enqueue(key, mode);
+    queued++;
+  }
+  res.json({ queued, skipped: keys.length - queued, keys });
+});
+
+// Output log download
+router.get('/ticket/:key/log.txt', (req, res) => {
+  const ticket = getTicket(req.params.key);
+  if (!ticket) return res.status(404).send('Not found.');
+  const lines = (ticket.outputLog || []).map(l =>
+    `[${new Date(l.ts).toISOString()}] ${l.text}`
+  );
+  const safe = req.params.key.replace(/[^A-Za-z0-9_-]/g, '');
+  res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+  res.setHeader('Content-Disposition', `attachment; filename="${safe}-output.txt"`);
+  res.send(lines.join('\n'));
 });
 
 // Manually queue a ticket (from the Add Ticket modal on the dashboard)
