@@ -10,6 +10,34 @@ const serverStartedAt = new Date();
 // ticketKey → ticket entry
 const tickets = new Map();
 
+// ── Scan cache ────────────────────────────────────────────────────────────────
+// scanReportsDir() reads the filesystem on every call; cache it for 15 s.
+let _scanCache    = null;
+let _scanCachedAt = 0;
+const SCAN_CACHE_TTL_MS = 15000;
+
+// ── Save debounce ─────────────────────────────────────────────────────────────
+// During an active Claude session, appendOutput() fires many times per second.
+// Writing a full JSON snapshot to disk on every 10th line is expensive and creates
+// GC pressure from large temporary strings. Debounce to at most once every 5 s.
+const _pendingSaves   = new Map();  // ticketKey → timer handle
+const SAVE_DEBOUNCE_MS = 5000;
+
+function debouncedSave(ticketKey) {
+  if (_pendingSaves.has(ticketKey)) return;
+  const handle = setTimeout(() => {
+    _pendingSaves.delete(ticketKey);
+    saveSession(ticketKey);
+  }, SAVE_DEBOUNCE_MS);
+  _pendingSaves.set(ticketKey, handle);
+}
+
+// Cancel any pending debounced save (called before an immediate saveSession).
+function cancelDebouncedSave(ticketKey) {
+  const handle = _pendingSaves.get(ticketKey);
+  if (handle) { clearTimeout(handle); _pendingSaves.delete(ticketKey); }
+}
+
 // ── Stage definitions ─────────────────────────────────────────────────────────
 // Edit server/dashboard/stages.json to add, remove, or rename pipeline stages.
 // IDs must match what Claude announces in output ("Step X —") to be tracked as active.
@@ -94,7 +122,7 @@ function saveSession(ticketKey) {
     fs.mkdirSync(dir, { recursive: true });
     fs.writeFileSync(
       path.join(dir, `${ticketKey}-session.json`),
-      JSON.stringify(serializeDates(entry), null, 2)
+      JSON.stringify(serializeDates(entry))
     );
   } catch (_) { /* best-effort */ }
 }
@@ -195,6 +223,7 @@ function recordStarted(ticketKey) {
 }
 
 function recordCompleted(ticketKey, success) {
+  cancelDebouncedSave(ticketKey);
   const entry = tickets.get(ticketKey) || { ticketKey, source: 'unknown', queuedAt: new Date(), outputLog: [] };
   const now = new Date();
   const stages = (entry.stages || []).map(s => {
@@ -205,6 +234,12 @@ function recordCompleted(ticketKey, success) {
   const updated = { ...entry, completedAt: new Date(), status: success ? 'success' : 'failed', stages };
   tickets.set(ticketKey, updated);
   saveSession(ticketKey);
+  // Trim outputLog from memory after 30 minutes — the session file has the full log.
+  // Keeps recent output available in the dashboard immediately after completion.
+  setTimeout(() => {
+    const e = tickets.get(ticketKey);
+    if (e && e.outputLog.length > 50) tickets.set(ticketKey, { ...e, outputLog: e.outputLog.slice(-50) });
+  }, 30 * 60 * 1000);
   const usage = entry.tokenUsage;
   const costUsd = usage ? (usage.actualCostUsd ?? usage.costUsd ?? null) : null;
   activityLog.record(
@@ -230,7 +265,9 @@ function recordInterrupted(ticketKey, reason = 'manual') {
 
 // ── Stage tracking ────────────────────────────────────────────────────────────
 
-const OUTPUT_CAP = 2000;
+// 300 entries × ~500 B average text ≈ 150 KB per active ticket.
+// Old value of 2000 meant up to ~1 MB per ticket held in the Map indefinitely.
+const OUTPUT_CAP = 300;
 
 function recordStepActive(ticketKey, stepId) {
   const entry = tickets.get(ticketKey);
@@ -268,8 +305,10 @@ function appendOutput(ticketKey, text) {
   if (!entry) return;
   if (entry.outputLog.length >= OUTPUT_CAP) entry.outputLog.shift();
   entry.outputLog.push({ ts: new Date(), text });
-  // Persist every 10 entries so output survives a server restart mid-run
-  if (entry.outputLog.length % 10 === 0) saveSession(ticketKey);
+  // Persist periodically so output survives a server restart mid-run.
+  // Debounced to at most once every 5 s — avoids serialising the full
+  // ticket JSON (including outputLog) on every burst of Claude output.
+  debouncedSave(ticketKey);
 }
 
 // ── Disk scan (historical tickets) ───────────────────────────────────────────
@@ -277,6 +316,9 @@ function appendOutput(ticketKey, text) {
 const REPORT_FILE_RE = /^([A-Za-z]+-\d+)[_-].+\.(pdf|html)$/i;
 
 function scanReportsDir() {
+  const now = Date.now();
+  if (_scanCache && (now - _scanCachedAt) < SCAN_CACHE_TTL_MS) return _scanCache;
+
   const dir = reportsDir();
   const diskMap = new Map();
 
@@ -302,6 +344,8 @@ function scanReportsDir() {
     }
   } catch (_) { /* reports dir may not exist yet */ }
 
+  _scanCache    = diskMap;
+  _scanCachedAt = now;
   return diskMap;
 }
 
