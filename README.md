@@ -601,7 +601,8 @@ Story points = **Complexity + Risk + Repetition** (not hours). Scale: 1 · 2 · 
 │   ├── .claude-plugin/
 │   │   └── plugin.json           # Plugin metadata (name, version, author)
 │   ├── package.json
-│   ├── prevoyant/
+│   ├── config/
+│   │   ├── kb-schema.json        # KB layer config and schema version sentinel
 │   │   └── personas/             # Agent persona definitions — one file per team member
 │   │       ├── morgan.md         # Lead Developer: voice, reasoning style, priorities, relationships
 │   │       ├── alex.md           # Senior Engineer 1: code archaeology & regression forensics
