@@ -163,7 +163,11 @@ openssl enc -d -aes-256-cbc -pbkdf2 -iter 310000 -md sha512 \
 **Batch decrypt (Step 0a — pull to session temp dir):**
 ```bash
 KB_WORK_DIR="/tmp/prevoyant-kb-$$"
-mkdir -p "$KB_WORK_DIR/tickets" "$KB_WORK_DIR/shared" "$KB_WORK_DIR/core-mental-map" "$KB_WORK_DIR/lessons-learned"
+mkdir -p "$KB_WORK_DIR/tickets" "$KB_WORK_DIR/shared" "$KB_WORK_DIR/core-mental-map" "$KB_WORK_DIR/lessons-learned" \
+         "$KB_WORK_DIR/personas/memory/morgan" "$KB_WORK_DIR/personas/memory/alex" \
+         "$KB_WORK_DIR/personas/memory/sam"    "$KB_WORK_DIR/personas/memory/jordan" \
+         "$KB_WORK_DIR/personas/memory/henk"   "$KB_WORK_DIR/personas/memory/riley" \
+         "$KB_WORK_DIR/personas/memory/bryan"
 find "$KNOWLEDGE_DIR" -name "*.md.enc" | while read f; do
   rel="${f#$KNOWLEDGE_DIR/}"           # e.g. tickets/IV-3672.md.enc
   out="$KB_WORK_DIR/${rel%.enc}"       # e.g. /tmp/prevoyant-kb-$$/tickets/IV-3672.md
@@ -232,9 +236,23 @@ _(Applies to `KB_MODE=distributed`.)_
 │   ├── data-flows.md    (or .md.enc)  ← key data flows, RPC contracts, write paths
 │   ├── tech-stack.md    (or .md.enc)  ← technologies, frameworks, key library choices
 │   └── gotchas.md       (or .md.enc)  ← non-obvious couplings, footguns, edge-case traps
+├── personas/                           ← agent personal memory (grows with every session)
+│   └── memory/                         ← one subdirectory per agent; one file per session contribution
+│       ├── morgan/                     ← Morgan's personal memory sessions
+│       │   └── {YYYYMMDD-IV-XXXX}.md  ← one file per session (conflict-free: each session creates a unique file)
+│       ├── alex/                       ← Alex's personal memory sessions
+│       ├── sam/                        ← Sam's personal memory sessions
+│       ├── jordan/                     ← Jordan's personal memory sessions
+│       ├── henk/                       ← Henk's personal memory sessions
+│       ├── riley/                      ← Riley's personal memory sessions
+│       └── bryan/                      ← Bryan's personal memory sessions
 └── lessons-learned/                    ← per-developer sprint retrospective entries; read by all agents
     └── {developer}.md  (or .md.enc)   ← one file per developer (name from git config or PRX_DEVELOPER_NAME)
 ```
+
+**Persona definitions** (static, developer-editable): stored in the plugin at `plugin/prevoyant/personas/{agent}.md`. These files define each agent's voice, reasoning style, and priorities. Any developer may improve them. Each agent has a separate file, so concurrent edits to different agents never conflict.
+
+**Personal memory** (dynamic, session-generated): stored in the KB at `{KB_WORK_DIR}/personas/memory/{agent}/{YYYYMMDD-TICKET}.md`. One file per session per agent — conflict-free by design since each session creates a unique timestamped file. In distributed mode, git auto-merges concurrent session files from different developers without conflicts.
 
 In `KB_MODE=local` all files are plain `.md`. In `KB_MODE=distributed` all files on disk are `.md.enc`; the plain `.md` files exist only in `KB_WORK_DIR=/tmp/prevoyant-kb-{PID}/` during the session.
 
@@ -750,6 +768,7 @@ Any agent who discovers new business knowledge during their work **must** emit a
 | **Alex** | A regression-inducing commit is found; a historical coupling or breaking change is identified via git history |
 | **Sam** | A domain invariant is implied by the data flow (e.g. "flag X must be set before service Y runs"); a new component interaction is discovered |
 | **Jordan** | A pattern from the 20-pattern checklist is matched — `NEW` if first occurrence, `BUMP` if already in KB |
+| **Henk** | A long-standing business rule is confirmed or disputed from first-hand system knowledge; a proposed fix conflicts with established client behaviour or is of questionable necessity |
 | **Riley** | A fragile area or edge case is uncovered during impact assessment; a test coverage gap is identified |
 
 **What is worth flagging:**
@@ -819,7 +838,11 @@ The distributed knowledge base lives in a **dedicated private git repository** (
 **First-time setup (once — when creating the KB repo for the team):**
 ```bash
 KB_CLONE="${PRX_KB_LOCAL_CLONE:-$HOME/.prevoyant/kb}"
-mkdir -p "$KB_CLONE/tickets" "$KB_CLONE/shared" "$KB_CLONE/core-mental-map" "$KB_CLONE/lessons-learned"
+mkdir -p "$KB_CLONE/tickets" "$KB_CLONE/shared" "$KB_CLONE/core-mental-map" "$KB_CLONE/lessons-learned" \
+         "$KB_CLONE/personas/memory/morgan" "$KB_CLONE/personas/memory/alex" \
+         "$KB_CLONE/personas/memory/sam"    "$KB_CLONE/personas/memory/jordan" \
+         "$KB_CLONE/personas/memory/henk"   "$KB_CLONE/personas/memory/riley" \
+         "$KB_CLONE/personas/memory/bryan"
 cd "$KB_CLONE"
 git init && git remote add origin "$PRX_KB_REPO"
 echo "# Dev Knowledge Base" > README.md
@@ -1019,7 +1042,11 @@ else
   # Fresh path — directory empty or does not exist, clone from remote
   git clone "$PRX_KB_REPO" "$KB_CLONE" && \
     echo "KB: cloned ${PRX_KB_REPO} → ${KB_CLONE}."
-  mkdir -p "$KB_CLONE/tickets" "$KB_CLONE/shared" "$KB_CLONE/core-mental-map" "$KB_CLONE/lessons-learned"
+  mkdir -p "$KB_CLONE/tickets" "$KB_CLONE/shared" "$KB_CLONE/core-mental-map" "$KB_CLONE/lessons-learned" \
+           "$KB_CLONE/personas/memory/morgan" "$KB_CLONE/personas/memory/alex" \
+           "$KB_CLONE/personas/memory/sam"    "$KB_CLONE/personas/memory/jordan" \
+           "$KB_CLONE/personas/memory/henk"   "$KB_CLONE/personas/memory/riley" \
+           "$KB_CLONE/personas/memory/bryan"
 fi
 ```
 
@@ -1097,6 +1124,7 @@ When `AUTO_MODE_ON=1`, the skill runs in **analysis-only mode** with no interact
 |------|-----------------------|-----------------|
 | Step 0 — KB initialisation | Create directory if needed, present Prior Knowledge block | Create directory if needed; present Prior Knowledge block as normal — no interactive element |
 | Step 13 — KB update failure | Warn developer if a write fails | Log `KB_WRITE_WARN: {reason}` and continue — do not block session completion |
+| Step 13i — Agent personal memory | Write session memory file for each participating agent | Runs automatically; if write fails, log `KB_WRITE_WARN: persona memory — {reason}` and continue |
 | Step R0 — KB initialisation (Review mode) | Same as Step 0 | Same as Step 0 |
 | Step R9 — KB update failure (Review mode) | Same as Step 13 | Same as Step 13 |
 | Step 1 — MCP failure | Stop and wait for developer | Print `HEADLESS_ERROR: {reason}` and exit immediately |
@@ -1109,6 +1137,7 @@ When `AUTO_MODE_ON=1`, the skill runs in **analysis-only mode** with no interact
 | Step 7f — Riley's questions + Morgan cross-examination *(Bug only)* | Riley poses open question; Morgan cross-examines | All questions and responses generated automatically; no developer input required |
 | Step 7g — Team debate *(Bug only)* | Open floor for one challenge round | Debate runs automatically; if no challenges, state "No challenges" and proceed |
 | Step 7h — Morgan verdict *(Bug only)* | Morgan scores and declares adopted root cause | Verdict runs automatically; proceed with highest-scoring hypothesis |
+| Step 7h-ii — Henk's check-in *(Bug only)* | Morgan consults Henk on business necessity and client value | Henk's check-in runs automatically; if Henk returns ⚠️ QUESTION or ❌ CHALLENGE, Morgan's response is recorded in the Root Cause Statement team note |
 | Step 8c — Morgan fix review | Morgan vets the proposed fix | Review runs automatically; if REWORK REQUIRED, revise once and re-run; if still failing, proceed with `⚠️ UNRESOLVED — developer review required` |
 | Step 8d — Apply fix prompt | Ask yes / no / partial | **Default to no** — propose the fix only; do not call Edit or modify any files |
 | Step 12e — Email report | Send report to `PRX_EMAIL_TO` if set | **Always runs** — email is sent automatically whenever `PRX_EMAIL_TO` is configured; no interactive element |
@@ -1167,7 +1196,11 @@ This step runs in two phases. **Phase A** (sync + initialise) runs before Step 1
 
 **Step 1 — Initialise directories (no git sync):**
 ```bash
-mkdir -p "$KNOWLEDGE_DIR/tickets" "$KNOWLEDGE_DIR/shared" "$KNOWLEDGE_DIR/core-mental-map" "$KNOWLEDGE_DIR/lessons-learned"
+mkdir -p "$KNOWLEDGE_DIR/tickets" "$KNOWLEDGE_DIR/shared" "$KNOWLEDGE_DIR/core-mental-map" "$KNOWLEDGE_DIR/lessons-learned" \
+         "$KNOWLEDGE_DIR/personas/memory/morgan" "$KNOWLEDGE_DIR/personas/memory/alex" \
+         "$KNOWLEDGE_DIR/personas/memory/sam"    "$KNOWLEDGE_DIR/personas/memory/jordan" \
+         "$KNOWLEDGE_DIR/personas/memory/henk"   "$KNOWLEDGE_DIR/personas/memory/riley" \
+         "$KNOWLEDGE_DIR/personas/memory/bryan"
 ```
 Set `KB_WORK_DIR="$KNOWLEDGE_DIR"`. No git operations.
 
@@ -1201,7 +1234,11 @@ if [ -d "$KB_CLONE/.git" ]; then
 else
   git clone "$PRX_KB_REPO" "$KB_CLONE" && \
     echo "KB: cloned ${PRX_KB_REPO} → ${KB_CLONE}."
-  mkdir -p "$KB_CLONE/tickets" "$KB_CLONE/shared" "$KB_CLONE/core-mental-map" "$KB_CLONE/lessons-learned"
+  mkdir -p "$KB_CLONE/tickets" "$KB_CLONE/shared" "$KB_CLONE/core-mental-map" "$KB_CLONE/lessons-learned" \
+           "$KB_CLONE/personas/memory/morgan" "$KB_CLONE/personas/memory/alex" \
+           "$KB_CLONE/personas/memory/sam"    "$KB_CLONE/personas/memory/jordan" \
+           "$KB_CLONE/personas/memory/henk"   "$KB_CLONE/personas/memory/riley" \
+           "$KB_CLONE/personas/memory/bryan"
 fi
 ```
 
@@ -1216,7 +1253,11 @@ rm -rf /tmp/prevoyant-kb-[0-9]* 2>/dev/null
 
 # Decrypt to session temp dir
 KB_WORK_DIR="/tmp/prevoyant-kb-$$"
-mkdir -p "$KB_WORK_DIR/tickets" "$KB_WORK_DIR/shared" "$KB_WORK_DIR/core-mental-map" "$KB_WORK_DIR/lessons-learned"
+mkdir -p "$KB_WORK_DIR/tickets" "$KB_WORK_DIR/shared" "$KB_WORK_DIR/core-mental-map" "$KB_WORK_DIR/lessons-learned" \
+         "$KB_WORK_DIR/personas/memory/morgan" "$KB_WORK_DIR/personas/memory/alex" \
+         "$KB_WORK_DIR/personas/memory/sam"    "$KB_WORK_DIR/personas/memory/jordan" \
+         "$KB_WORK_DIR/personas/memory/henk"   "$KB_WORK_DIR/personas/memory/riley" \
+         "$KB_WORK_DIR/personas/memory/bryan"
 find "$KNOWLEDGE_DIR" -name "*.md.enc" | while read f; do
   rel="${f#$KNOWLEDGE_DIR/}"
   out="$KB_WORK_DIR/${rel%.enc}"
@@ -1236,6 +1277,18 @@ echo "KB: decrypted ${enc_count} encrypted files → ${KB_WORK_DIR}/"
 ---
 
 ##### Common steps (both modes — operate on `KB_WORK_DIR`):
+
+**Create persona memory directories (always — no-op if they already exist):**
+
+```bash
+mkdir -p "$KB_WORK_DIR/personas/memory/morgan"  \
+         "$KB_WORK_DIR/personas/memory/alex"    \
+         "$KB_WORK_DIR/personas/memory/sam"     \
+         "$KB_WORK_DIR/personas/memory/jordan"  \
+         "$KB_WORK_DIR/personas/memory/henk"    \
+         "$KB_WORK_DIR/personas/memory/riley"   \
+         "$KB_WORK_DIR/personas/memory/bryan"
+```
 
 **Create skeleton files if this is a first run:**
 
@@ -1437,6 +1490,37 @@ If `core-mental-map/INDEX.md` does not exist or all files show `0` entries: stat
 
 Read all `lessons-learned/*.md` files. For each entry whose `PITFALL:` or `KEY:` text overlaps with the current ticket's components, labels, or affected area, carry it into the Prior Knowledge block under `LESSONS LEARNED`. Show the author and date so the agent knows the source. If the directory is empty or no files exist: state `Lessons Learned: none recorded yet.`
 
+**Layer 5 — Agent Personas & Personal Memory (always runs):**
+
+Each agent reads their own persona definition and personal memory before engaging in the session. This grounds each agent in their character, reasoning style, and the accumulated experience of past sessions.
+
+**5a. Read persona definitions** from the plugin directory:
+
+```
+plugin/prevoyant/personas/morgan.md
+plugin/prevoyant/personas/alex.md
+plugin/prevoyant/personas/sam.md
+plugin/prevoyant/personas/jordan.md
+plugin/prevoyant/personas/henk.md
+plugin/prevoyant/personas/riley.md
+plugin/prevoyant/personas/bryan.md
+```
+
+If the plugin directory is not accessible, agents fall back to the inline persona descriptions in the Engineering Panel section of SKILL.md — session proceeds normally.
+
+**5b. Read personal memory** for each agent. List all files in `{KB_WORK_DIR}/personas/memory/{agent}/`, sorted by filename (oldest first). Read the 5 most recent session files per agent (or all files if fewer than 5 exist). Synthesise across sessions to build each agent's running state:
+
+- Calibration: which of their past hypotheses were confirmed vs. refuted
+- Recurring surprises: areas where the agent's expectations were wrong
+- Open notes: short-lived context flagged for follow-up
+- Session count: how many sessions each agent has contributed to (builds credibility over time)
+
+If an agent's memory directory is empty: state `{Agent} memory: none yet — first session.`
+
+Each agent internalises their own memory before speaking. An agent with 20+ sessions of memory brings that accumulated experience to their analysis — they already know which areas of the codebase surprised them before, which of their past hypotheses proved correct, and which patterns they tend to miss.
+
+Include a summary in the Prior Knowledge block:
+
 **Present the Prior Knowledge block before Step 2:**
 
 ```
@@ -1495,6 +1579,24 @@ Read all `lessons-learned/*.md` files. For each entry whose `PITFALL:` or `KEY:`
 │ ─────────────────────────────────────────────────────────────────│
 │ {file:line references verified: N current / M stale}             │
 │ {⚠️ KB-XXX stale: {file:line} not found on development — verify} │
+│                                                                   │
+│ AGENT PERSONAS & PERSONAL MEMORY                                  │
+│ ─────────────────────────────────────────────────────────────────│
+│ Morgan  : {N} sessions | last: {ticket} | calibration: {X/Y correct} │
+│   Notable: {one-line — most relevant personal insight for this ticket} │
+│ Alex    : {N} sessions | last: {ticket} | calibration: {X/Y correct} │
+│   Notable: {one-line — most relevant personal insight for this ticket} │
+│ Sam     : {N} sessions | last: {ticket} | calibration: {X/Y correct} │
+│   Notable: {one-line — most relevant personal insight for this ticket} │
+│ Jordan  : {N} sessions | last: {ticket} | calibration: {X/Y correct} │
+│   Notable: {one-line — most relevant personal insight for this ticket} │
+│ Henk    : {N} sessions | last: {ticket} | calibration: {X/Y correct} │
+│   Notable: {one-line — most relevant personal insight for this ticket} │
+│ Riley   : {N} sessions | last: {ticket} | calibration: {X/Y correct} │
+│   Notable: {one-line — most relevant personal insight for this ticket} │
+│ Bryan   : {N} sessions | last: {ticket} | calibration: {X/Y correct} │
+│   Notable: {one-line — most relevant personal insight for this ticket} │
+│ (Omit "Notable" line if no prior sessions or no relevant insight)  │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -2041,10 +2143,11 @@ State: `Complexity gate: {Fast-path / Full panel} — {one-line reason}`
 | Senior Engineer 1 | Alex | 12 yrs Java/GWT | Code archaeology & regression forensics |
 | Senior Engineer 2 | Sam | 10 yrs full-stack Java, Spring, GWT RPC | Runtime data flow & logic tracing |
 | Senior Engineer 3 | Jordan | 15 yrs Java, systems architect background | Defensive patterns & structural anti-patterns |
+| **Technical Lead** | **Henk** | Long-tenured system expert; encyclopedic knowledge of business rules and client workflows | Domain authority consulted by Morgan to validate whether a fix is genuinely necessary and whether it delivers real value to existing clients. Attentive to detail; draws on years of hands-on system experience to judge the merit and scope of proposed changes. |
 | **Senior Lead Tester** | **Riley** | 18 yrs QA & test architecture, Java enterprise, GWT, regression suites | Assesses testability and impact of each hypothesis. Questions engineer findings. Flags regression risk and edge cases. Riley's concerns are factored into Morgan's verdict and Fix Review. |
 | **Scrum Master** | **Bryan** | 15 yrs agile delivery, process optimisation, token & cost efficiency | Silent observer for Steps 0–13. Does not intervene in the investigation. Convenes Step 14 retrospective at the end of every session (Dev and PR Review alike) to audit process friction, token spend, and propose one focused SKILL.md improvement per session. |
 
-Engineers (Alex, Sam, Jordan) are competing for the **Best Analysis** distinction. Morgan is not competing — Morgan arbitrates. Morgan's verdict is binding and may endorse, refine, or override any engineer's hypothesis. Riley is not competing — Riley challenges and assesses from a testing perspective. Bryan is not part of the investigation — Bryan observes the whole session and acts only in Step 14.
+Engineers (Alex, Sam, Jordan) are competing for the **Best Analysis** distinction. Morgan is not competing — Morgan arbitrates. Morgan's verdict is binding and may endorse, refine, or override any engineer's hypothesis. Henk is not competing — Henk is the domain authority; Morgan checks in with Henk at key decision points to form a broader picture and validate business necessity before issuing a verdict or approving a fix. Riley is not competing — Riley challenges and assesses from a testing perspective. Bryan is not part of the investigation — Bryan observes the whole session and acts only in Step 14.
 
 ---
 
@@ -2545,6 +2648,40 @@ If overall confidence is **Low** after Morgan's verdict (no clear root cause eve
 
 ---
 
+#### 7h-ii. Henk's Check-in — Business Necessity & Client Value
+
+After Morgan issues the verdict, Morgan consults Henk to validate the adopted root cause from a business and client perspective before proceeding to the fix.
+
+Henk draws on first-hand system knowledge to answer two questions:
+1. **Is this a genuine defect?** — Does the described behaviour contradict a known business rule, or could it be expected behaviour under certain client configurations?
+2. **Does fixing it bring value?** — Which existing clients are affected, and is the effort of a fix justified by the impact?
+
+```
+─── Henk's Check-in ──────────────────────────────────────────────
+
+Business necessity : [Is the adopted root cause a true defect under the system's
+                     business rules? State the relevant rule or long-standing
+                     precedent from system history. "Expected behaviour" is a
+                     valid finding — state it explicitly if so.]
+Client value       : [Which client segment or workflow is affected?
+                     Does a fix deliver tangible, observable improvement?
+                     Flag if the impact is limited to edge cases only.]
+Verdict            : ✅ PROCEED / ⚠️ QUESTION / ❌ CHALLENGE
+  [One sentence — Henk's overall position.
+   ✅ PROCEED  — fix is warranted; proceed to Step 8.
+   ⚠️ QUESTION — scope or necessity is uncertain; Morgan must acknowledge
+                  and address before proceeding (note in Root Cause Statement
+                  team note field).
+   ❌ CHALLENGE — fix conflicts with a known business rule or brings no
+                  client value; Morgan must decide whether to proceed with
+                  explicit justification or stop for developer clarification.]
+────────────────────────────────────────────────────────────────────
+```
+
+**If Henk returns ⚠️ QUESTION or ❌ CHALLENGE:** Morgan must respond in one sentence — either addressing Henk's concern or stating accepted justification — before proceeding. In headless mode, record Morgan's response in the Root Cause Statement `Team note` field.
+
+---
+
 ### Step 8 — Propose the Fix
 
 Use the analysis from Step 7 as the mandatory anchor:
@@ -2579,6 +2716,7 @@ Before applying anything, Morgan vetted the proposed fix against the adopted roo
 5. **DB safety** *(skip if no schema change included)* — is the change safe on both Oracle and PostgreSQL?
 6. **Abstract class ownership** *(skip if no new fields, methods, or getters/setters added to a concrete class)* — confirm whether the abstract base is the correct owner. Run `grep "extends {AbstractBase}" --include="*.java"` to list siblings. Only `getConfig()` registrations and `setAttribute()` switch cases are concrete-class concerns; everything else belongs in the abstract base when a suitable one exists.
 7. **Tester concerns** *(skip if Riley raised no High or Medium concerns in Step 7e)* — for each High/Medium concern, confirm the fix addresses it or state accepted risk and why.
+8. **Henk's view** — does the proposed fix align with known business rules and client expectations? Is the change genuinely additive or does it risk altering behaviour that clients rely on? *(Skip if Henk returned ✅ PROCEED in Step 7h-ii with no caveats.)*
 
 ```
 ─── Morgan's Fix Review ───────────────────────────────────────────
@@ -2600,6 +2738,11 @@ Tester concerns          : [N/A — no High or Medium concerns raised /
                             {specific change in the fix} /
                             Accepted risk — {Riley's concern} is not
                             addressed; accepted because {reason}]
+Henk's view              : [N/A — Henk returned ✅ PROCEED with no caveats /
+                            Confirmed — fix aligns with business rules and
+                            client expectations /
+                            Note: {Henk's caveat from 7h-ii and how the fix
+                            addresses it or accepted justification}]
 
 Morgan's verdict:
   ✅ APPROVED — fix is correct, surgical, and safe to apply.
@@ -3589,6 +3732,74 @@ Display:
 
 ---
 
+#### 13i. Write Agent Personal Memory
+
+Each agent writes a personal memory file for this session. This is the mechanism by which agents get smarter over time — their observations, calibration data, and surprises accumulate across sessions and are read back in Step 0b Layer 5 of every future session.
+
+**Memory file location and naming:**
+```bash
+MEMORY_DATE=$(date +%Y%m%d)
+# One file per session per agent — conflict-free in distributed mode:
+# concurrent sessions from different developers each create a unique file.
+personas/memory/{agent-name}/${MEMORY_DATE}-{TICKET_KEY}.md
+```
+
+For each agent that participated in the session, write a memory file using the template below. An agent "participated" if they contributed a hypothesis, assessment, check-in, or retrospective during the session. Bryan always participates (Step 14). Agents that are skipped (e.g. no panel was convened for an enhancement ticket) do not write a memory file for that session.
+
+**Memory file format:**
+
+```markdown
+# {Agent} — Personal Memory: {TICKET_KEY} ({DATE})
+<!-- Append-only record. Do not edit. -->
+<!-- Distributed mode: each session file is unique — git auto-merges without conflict. -->
+session: {TICKET_KEY} | date: {DATE} | ticket-type: {BUG|ENHANCEMENT|PR_REVIEW}
+
+## What I Learned This Session
+
+| # | Observation | Category | Confidence | Outcome |
+|---|-------------|----------|------------|---------|
+| 1 | {What I observed — one line, specific} | {BIZ/ARCH/PAT/RISK/PROCESS} | {High/Med/Low} | {Confirmed/Refuted/Pending} |
+
+## Predictions I Made
+
+| Claim | Was I right? | Notes |
+|-------|-------------|-------|
+| {Hypothesis or assertion I advanced during the session} | {Yes/No/Partial/TBD} | {One sentence — actual outcome} |
+
+## Things That Surprised Me
+
+- {Evidence or outcome that contradicted my prior expectations — high-value learnings}
+
+## Notes for Next Session
+
+- {Short-lived context relevant if working in the same area — expires naturally}
+```
+
+**What to write (agent-specific):**
+
+| Agent | What to record |
+|-------|----------------|
+| Morgan | JIRA precedents found (or not); which engineer gave the best analysis and why; whether Henk's or Riley's input changed the verdict; any area where Morgan overrode the team |
+| Alex | Which git history finds proved correct; historical couplings that surprised even Alex; areas where blame history was misleading |
+| Sam | Flow trace findings; domain invariants confirmed or refuted; async boundaries that proved tricky |
+| Jordan | Pattern matches that were confirmed vs. false positives; class hierarchy surprises; new anti-patterns not yet in the 20-pattern checklist |
+| Henk | Business rules confirmed, challenged, or newly surfaced; client workflows that were at risk; whether the fix was truly necessary (verdict + outcome) |
+| Riley | Regression risks that were confirmed vs. false alarms; test gaps that remain unaddressed; open questions that proved important |
+| Bryan | Session cost vs. rolling average; SKILL.md proposal advanced this session; any process friction that blocked an engineer |
+
+**Write the persona memory files last** — after all KB files are updated — so the memory reflects the full, final state of the session.
+
+Display on completion:
+```
+🧠 Agent Personal Memory
+   Session      : {TICKET_KEY} | {DATE}
+   Files written: {N} (personas/memory/{agent}/{date}-{ticket}.md × N)
+   Agents       : Morgan ({X} sessions total), Alex ({X}), Sam ({X}),
+                  Jordan ({X}), Henk ({X}), Riley ({X}), Bryan ({X})
+```
+
+---
+
 ### Step 14 — Bryan's Retrospective
 
 **Skip condition:** If `PRX_INCLUDE_SM_IN_SESSIONS_ENABLED` is not set or is not `Y`/`YES`/`true` (case-insensitive), skip this step entirely. Display: `⏭️  Step 14 skipped — set PRX_INCLUDE_SM_IN_SESSIONS_ENABLED=Y in .env to activate Bryan's retrospective.`
@@ -4009,9 +4220,10 @@ The same team from Dev Mode convenes to review the code changes, with adjusted m
 | Senior Reviewer | Alex | Code quality, readability, commit hygiene, architecture alignment, adherence to project conventions |
 | Senior Reviewer | Sam | Logic correctness, data flow accuracy, correct fix for the stated root cause / enhancement |
 | Senior Reviewer | Jordan | Defensive patterns (full 20-pattern checklist), structural anti-patterns, class hierarchy ownership |
+| **Technical Lead** | **Henk** | Business rule alignment; whether the change is truly necessary and delivers client value; whether it alters behaviour existing clients depend on |
 | **Lead QA Reviewer** | **Riley** | Test coverage assessment, testability of the changes, regression surface, missing edge cases, acceptance criteria coverage |
 
-Engineers (Alex, Sam, Jordan) are competing for **Best Review** distinction. Riley and Morgan are not competing.
+Engineers (Alex, Sam, Jordan) are competing for **Best Review** distinction. Henk and Riley and Morgan are not competing. Morgan checks in with Henk when evaluating whether a reviewed change is warranted and client-safe.
 
 #### R5a. Morgan Opens — Historical JIRA Search + Lead Briefing
 
@@ -4856,6 +5068,7 @@ Each engineer independently scores all three dimensions through their domain len
 | **Alex** | Backend algorithm complexity; API surface changes; data model impact | Data migration risk; third-party API reliability | Are the affected services well-understood by the backend team? |
 | **Sam** | Business logic complexity; cross-layer integration; AC ambiguity | Stakeholder/domain rule uncertainty; acceptance criteria gaps | Has this class of feature been built before in this codebase? |
 | **Jordan** | Infrastructure/config complexity; cross-service protocol changes | Deployment risk; environment-specific behaviour; breaking changes | Is this deployment pattern routine or novel for the team? |
+| **Henk** | Business rule complexity; known exceptions or client-specific behaviours that must be preserved | Risk of altering behaviour existing clients depend on; undocumented business rule conflicts | Has this business rule area been touched before without regression? |
 | **Riley** | Test complexity; observable edge-case surface area | Regression risk; unknown coverage gaps; flaky test likelihood | Does a test harness already exist for this area? |
 
 **Vote card format (each engineer, stated after the simultaneous reveal):**

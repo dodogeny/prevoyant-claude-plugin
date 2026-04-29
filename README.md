@@ -1,4 +1,4 @@
-# Prevoyant - Claude Code Plugin `v1.2.4`
+# Prevoyant - Claude Code Plugin `v1.2.6`
 
 **Prevoyant** is a [Claude Code](https://claude.ai/code) plugin — an AI agent team that runs a structured, end-to-end developer workflow for Jira tickets. Three modes:
 
@@ -21,7 +21,7 @@ Invoke the skill with a Jira ticket key and Claude runs a structured multi-step 
 5. **Create branch** — determine the correct base branch (fix version → affected version → development) and check out `Feature/{TICKET_KEY}_{Title}`
 6. **Locate affected code** — grep-first/read-second approach; build a file map with confidence gate
 7. **Replicate the issue** — numbered reproduction steps with prerequisites, expected vs actual, service restart guidance
-8. **Root cause analysis** — Engineering Panel (Morgan chairs; Alex, Sam, Jordan investigate; Riley assesses test coverage) for bugs; Direct Analysis for enhancements; scored verdict + Root Cause Statement
+8. **Root cause analysis** — Engineering Panel (Morgan chairs; Alex, Sam, Jordan investigate; Henk provides domain authority and client-value assessment; Riley assesses test coverage) for bugs; Direct Analysis for enhancements; scored verdict + Root Cause Statement + Henk's business-necessity check-in
 9. **Propose the fix** — code changes anchored to the Root Cause Statement; Morgan fix review; optional apply to branch
 10. **Impact analysis** — usage reference search, layer-by-layer impact table, regression risks, retest checklist
 11. **Change summary** — files touched, commit message, PR description template ready to paste
@@ -37,7 +37,7 @@ Invoke the skill with a Jira ticket key and Claude runs a structured multi-step 
 3. **Understand problem** — full analysis including all linked tickets and attachments
 4. **Read comments** — extract prior investigation and decisions
 5. **Fetch code changes** — locate the feature branch; run `git diff` to retrieve the full changeset
-6. **Engineering Panel review** — same four-person team as Dev Mode, now operating as reviewers: Alex (code quality), Sam (logic + acceptance criteria), Jordan (20-pattern defensive checklist), Riley (test coverage); Morgan scores and delivers a binding verdict
+6. **Engineering Panel review** — same team as Dev Mode, now operating as reviewers: Alex (code quality), Sam (logic + acceptance criteria), Jordan (20-pattern defensive checklist), Henk (business rule alignment and client-value impact), Riley (test coverage); Morgan scores and delivers a binding verdict
 7. **Consolidated findings** — Critical/Major/Minor issues with `file:line` and fix recommendations; Positives; Conditions for Approval
 8. **Session stats** — elapsed time, actual token usage and cost via codeburn (falls back to estimation if Node.js unavailable)
 9. **PDF review report** — saved as `{TICKET_KEY}-review.pdf` in `CLAUDE_REPORT_DIR`
@@ -55,7 +55,7 @@ Each engineer draws on their **acquired system knowledge** and the shared KB (`c
 1. **KB & system knowledge load** — pull KB; each engineer reads architecture, gotchas, data-flows, past estimates on similar components, and lessons learned before voting
 2. **Ingest ticket** — fetch Jira fields, acceptance criteria, linked sub-tasks; surface existing story points as reference only (team does not anchor on it)
 3. **Scope & dimension analysis** — Engineering Panel jointly maps work areas and rates Complexity / Risk / Repetition with KB evidence before any individual votes are cast
-4. **Planning Poker Round 1** — all five engineers vote simultaneously; each scores all three dimensions through their domain lens (Morgan: architecture; Alex: backend; Sam: business logic; Jordan: infrastructure; Riley: testing) citing specific KB entries
+4. **Planning Poker Round 1** — all panel members vote simultaneously; each scores all three dimensions through their domain lens (Morgan: architecture; Alex: backend; Sam: business logic; Jordan: infrastructure; Henk: business rules and client workflows; Riley: testing) citing specific KB entries
 5. **Debate & consensus** — if votes differ, structured rounds anchored to specific dimensions: highest voter explains which dimension is underweighted and why (citing system knowledge); lowest responds with counter-evidence; others react; re-vote
 6. **Morgan's final call** — if no consensus after 3 rounds, Morgan makes a binding decision citing the deciding KB evidence; dissenting view recorded
 7. **Final estimate** — agreed story points, dimension summary, confidence level (High/Medium/Low), key assumptions, what would change the estimate
@@ -418,6 +418,14 @@ team-kb/
 │   ├── data-flows.md               # Key data flows, RPC contracts, write paths
 │   ├── tech-stack.md               # Technologies, frameworks, key library choices
 │   └── gotchas.md                  # Non-obvious couplings, footguns, edge-case traps
+├── personas/memory/                # Agent personal memory — grows with every session
+│   ├── morgan/                     # One file per session: {YYYYMMDD-TICKET}.md
+│   ├── alex/
+│   ├── sam/
+│   ├── jordan/
+│   ├── henk/
+│   ├── riley/
+│   └── bryan/
 └── lessons-learned/                # Per-developer sprint retrospective entries
     ├── alice.md                    # Developer's own lessons (pitfalls, hard-won insights)
     └── bob.md
@@ -435,9 +443,10 @@ In `KB_MODE=distributed` all files on disk are `.md.enc`; the plain `.md` files 
 |--------|-----------|-----------------|
 | `shared/` | Tickets | Root causes, business rules, patterns, regression risks, process efficiency log |
 | `core-mental-map/` | Codebase | Architecture, data flows, tech stack, gotchas (compressed facts) |
+| `personas/memory/` | Sessions | Each agent's personal memory — observations, calibration, surprises — one file per session per agent |
 | `lessons-learned/` | Developers | Per-person sprint retrospective entries: pitfalls and hard-won insights |
 
-Every session starts by reading relevant `core-mental-map/` sections and all `lessons-learned/` files. Agents emit `[CMM+]` markers for codebase facts and `[LL+]` markers for lessons; both are written back to the KB at the end of every session.
+Every session starts by reading relevant `core-mental-map/` sections, all `lessons-learned/` files, and the last five personal memory files for each agent. Agents emit `[CMM+]` markers for codebase facts and `[LL+]` markers for lessons; both are written back to the KB at the end of every session. Each agent also writes a personal memory file (Step 13i) capturing what they observed, predicted, and got surprised by — so agents get sharper with every session they participate in.
 
 ### Lessons Learned
 
@@ -540,8 +549,8 @@ An optional Node.js service that runs alongside the plugin as an always-on ambie
 | **4** | Create feature branch (`Feature/{TICKET_KEY}_{Title}`) from the correct base (fix version → affected version → `development`) |
 | **5** | Locate affected code via grep-first/read-second approach → file map with confidence gate |
 | **6** | Write numbered reproduction steps with prerequisites, expected vs actual, service restart guidance |
-| **7** | Root cause analysis: **Engineering Panel** (bug) — Morgan chairs; Alex, Sam, Jordan investigate; Riley assesses test coverage; scored verdict + Root Cause Statement. **Direct analysis** (enhancement) — Enhancement Statement |
-| **8** | Propose fix anchored to Root Cause/Enhancement Statement; Morgan fix review; optional apply to branch |
+| **7** | Root cause analysis: **Engineering Panel** (bug) — Morgan chairs; Alex, Sam, Jordan investigate; Henk checks business necessity and client value (step 7h-ii); Riley assesses test coverage; scored verdict + Root Cause Statement. **Direct analysis** (enhancement) — Enhancement Statement |
+| **8** | Propose fix anchored to Root Cause/Enhancement Statement; Morgan fix review (including Henk's client-value view); optional apply to branch |
 | **9** | Impact analysis — usage reference search, layer-by-layer impact table, regression risks, retest checklist |
 | **10** | Change summary — files touched, commit message, PR description template |
 | **11** | Session stats — elapsed time, actual token usage and cost delta via codeburn (fallback: manual estimation) |
@@ -557,7 +566,7 @@ An optional Node.js service that runs alongside the plugin as an always-on ambie
 | **R2** | Full problem understanding including all linked tickets |
 | **R3** | Read comments |
 | **R4** | Locate feature branch (`Feature/{TICKET_KEY}_*`), run `git diff` to retrieve full changeset |
-| **R5** | Engineering Panel code review — same four-person team; Alex (code quality), Sam (logic + acceptance criteria), Jordan (20-pattern defensive checklist), Riley (test coverage); Morgan scores and delivers binding verdict |
+| **R5** | Engineering Panel code review — same team as Dev Mode; Alex (code quality), Sam (logic + acceptance criteria), Jordan (20-pattern defensive checklist), Henk (business rule alignment + client-value impact), Riley (test coverage); Morgan scores and delivers binding verdict |
 | **R6** | Consolidated findings — Critical/Major/Minor issues with `file:line`, fix recommendations, Positives, Conditions for Approval |
 | **R7** | Session stats — same as Step 11 (codeburn actual data, fallback: estimation) |
 | **R8** | PDF review report |
@@ -574,7 +583,7 @@ Story points = **Complexity + Risk + Repetition** (not hours). Scale: 1 · 2 · 
 | **E0** | KB & system knowledge load — pull KB; each engineer reads `core-mental-map/` (architecture, gotchas, data-flows), `shared/patterns.md` `[ESTIMATE-PATTERN]` entries, past ticket `## Estimation` records, and `lessons-learned/` for the affected components |
 | **E1** | Ingest ticket — fetch all Jira fields and acceptance criteria; surface existing story points as context only (no anchoring) |
 | **E2** | Scope & dimension analysis — Engineering Panel jointly maps work areas and rates Complexity / Risk / Repetition with KB evidence; spike gate (critical unknowns) and split gate (4+ high-effort areas) applied before voting |
-| **E3** | Planning Poker Round 1 — simultaneous vote on 1·2·3·5·8·13·20·?; each engineer scores all three dimensions through their domain lens (Morgan: architecture; Alex: backend; Sam: business logic; Jordan: infra/security; Riley: testing) citing specific KB entries |
+| **E3** | Planning Poker Round 1 — simultaneous vote on 1·2·3·5·8·13·20·?; each panel member scores all three dimensions through their domain lens (Morgan: architecture; Alex: backend; Sam: business logic; Jordan: infra/security; Henk: business rules and client workflows; Riley: testing) citing specific KB entries |
 | **E4** | Debate & consensus — rounds anchored to dimensions: highest voter names which dimension is underweighted and cites system evidence; lowest responds with counter-evidence; others react and re-vote; up to 3 rounds |
 | **E5** | Final estimate — story points, dimension summary (C/R/R), confidence (High/Medium/Low), key assumptions, what would change the estimate |
 | **E6** | KB update — records estimate with full dimension breakdown in `tickets/{KEY}.md`; appends `[ESTIMATE-PATTERN]` to `shared/patterns.md` if a reusable complexity insight was found |
@@ -592,6 +601,16 @@ Story points = **Complexity + Risk + Repetition** (not hours). Scale: 1 · 2 · 
 │   ├── .claude-plugin/
 │   │   └── plugin.json           # Plugin metadata (name, version, author)
 │   ├── package.json
+│   ├── prevoyant/
+│   │   └── personas/             # Agent persona definitions — one file per team member
+│   │       ├── morgan.md         # Lead Developer: voice, reasoning style, priorities, relationships
+│   │       ├── alex.md           # Senior Engineer 1: code archaeology & regression forensics
+│   │       ├── sam.md            # Senior Engineer 2: runtime data flow & logic tracing
+│   │       ├── jordan.md         # Senior Engineer 3: defensive patterns & structural anti-patterns
+│   │       ├── henk.md           # Technical Lead: business rules & client-value authority
+│   │       ├── riley.md          # Senior Lead Tester: regression risk & testability
+│   │       ├── bryan.md          # Scrum Master: token audit & process retrospective
+│   │       └── _memory-template.md  # Template for session memory files
 │   └── skills/dev/
 │       └── SKILL.md              # All skill logic lives here
 ├── server/                       # Prevoyant Server — optional ambient agent (see docs/prevoyant-server.md)
@@ -833,6 +852,18 @@ rm -rf ~/.prevoyant/reports   # or the path set in CLAUDE_REPORT_DIR
 ---
 
 ## Changelog
+
+### v1.2.6 — Henk, Agent Personas & Personal Memory
+
+- **Henk — Technical Lead:** A seventh panel member has joined the Engineering Panel. Henk is a long-tenured system expert with encyclopedic knowledge of business rules and client workflows. Attentive to detail and drawing on years of first-hand system experience, Henk's role is to assess whether a fix is genuinely necessary and whether it delivers real value to existing clients — not all bugs need fixing, and not all fixes are client-safe. Morgan consults Henk at two key moments: **Step 7h-ii** (after the verdict — is the root cause a genuine defect and does fixing it bring client value?) and **Step 8c** (fix review — does the proposed change align with business rules and preserve client behaviour?). Henk is non-competing; he participates in all three modes (Dev, PR Review, Estimate) with a business-rule and client-impact lens.
+
+- **Agent persona definitions:** Seven persona files — one per team member — live in `plugin/prevoyant/personas/`. Each file defines the agent's voice and communication style, reasoning approach, priorities, and relationships with other team members. Personas are static, developer-editable documents: any team member can open a persona file and refine it to better reflect how the agent should think and speak. Because each agent has a separate file, concurrent edits by different developers never produce merge conflicts. Agents read their persona at session start (Step 0b Layer 5) so their character and reasoning style are grounded before any analysis begins.
+
+- **Agent personal memory:** Each agent now accumulates a personal memory that grows smarter with every session. At the end of every session (Step 13i), each participating agent writes a structured memory file to `{KB_WORK_DIR}/personas/memory/{agent}/{YYYYMMDD-TICKET}.md` capturing: what they observed, what predictions they made and whether they were right, what surprised them, and short-lived notes for the next session. At the start of each new session (Step 0b Layer 5), agents read their last five memory files and internalise the accumulated context before engaging — so an agent with 30 sessions behind them arrives knowing which areas of the codebase surprised them before, which patterns they tend to over-fit, and what they got right and wrong. **Conflict-free in distributed mode:** each session creates a uniquely named file (timestamp + ticket key), so concurrent sessions from different developers always produce new, non-overlapping files that git auto-merges without conflict.
+
+- **Prior Knowledge block extended:** The session Prior Knowledge block (Step 0b) now includes an `AGENT PERSONAS & PERSONAL MEMORY` section summarising each agent's session count, last ticket, and most relevant personal insight for the current ticket.
+
+- **KB directory structure:** `personas/memory/` subdirectories are initialised alongside all other KB directories on first run — in local mode, distributed mode, and the encrypted temp-dir path. All `mkdir -p` commands updated across every init path.
 
 ### v1.2.5 — Update Checker, Windows Server Scripts, Plugin Rename
 
