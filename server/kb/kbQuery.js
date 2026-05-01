@@ -2,6 +2,7 @@
 
 const path    = require('path');
 const kbCache = require('./kbCache');
+const memory  = require('../memory/memoryAdapter');
 
 // Resolve the schema once; it lives next to the plugin personas.
 const SCHEMA_PATH = path.resolve(__dirname, '../../plugin/config/kb-schema.json');
@@ -22,9 +23,9 @@ function loadSchema() {
  * @param {string[]} [opts.components]  from Jira webhook payload
  * @param {string[]} [opts.labels]      from Jira webhook payload
  * @param {string}   [opts.summary]     from Jira webhook payload
- * @returns {string|null}  Block string with sentinel, or null if KB unavailable.
+ * @returns {Promise<string|null>}  Block string with sentinel, or null if KB unavailable.
  */
-function buildPriorKnowledgeBlock({ ticketKey, components = [], labels = [], summary = '' }) {
+async function buildPriorKnowledgeBlock({ ticketKey, components = [], labels = [], summary = '' }) {
   try {
     if (kbCache.isEncrypted()) return null;
 
@@ -111,34 +112,24 @@ function buildPriorKnowledgeBlock({ ticketKey, components = [], labels = [], sum
       }
     }
 
-    // ── Agent Personal Memory ──────────────────────────────────────────────────
+    // ── Agent Memory (indexed, relevance-scored) ──────────────────────────────
+    // Replaces loading 5 sessions × 7 agents × 20 lines (~700 lines) with a
+    // compact relevance-scored table (~20 lines) — ~96% token reduction.
     lines.push('---');
-    lines.push('### Agent Personal Memory');
-    lines.push('');
-
-    for (const agent of layers.agents) {
-      const prefix   = `${layers.personaMemory}/${agent}/`;
-      const memFiles = Object.keys(cache)
-        .filter(k => k.startsWith(prefix) && k.endsWith('.md'))
-        .sort()
-        .slice(-5); // 5 most recent (YYYYMMDD-TICKET.md sorts chronologically)
-
-      if (!memFiles.length) {
-        lines.push(`#### ${agent} — 0 sessions (first session)`);
+    try {
+      const limit  = parseInt(process.env.PRX_MEMORY_LIMIT || '15', 10) || 15;
+      const result = await memory.queryRelevant({ components, labels, ticketKey, limit });
+      const block  = memory.formatBlock(result);
+      if (block) {
+        lines.push(block);
+      } else {
+        lines.push('### Agent Memory — 0 indexed learnings (first sessions)');
         lines.push('');
-        continue;
       }
-
-      lines.push(`#### ${agent} — ${memFiles.length} session(s) loaded`);
+    } catch (memErr) {
+      console.warn(`[kb-query] Memory query failed — skipping: ${memErr.message}`);
+      lines.push('### Agent Memory — unavailable');
       lines.push('');
-      for (const rel of memFiles) {
-        lines.push(`**${path.basename(rel)}**`);
-        lines.push('');
-        // Trim each memory file to first 20 lines to keep block size reasonable.
-        const excerpt = cache[rel].trim().split('\n').slice(0, 20).join('\n');
-        lines.push(excerpt);
-        lines.push('');
-      }
     }
 
     lines.push('---');

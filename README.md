@@ -1,4 +1,4 @@
-# Prevoyant - Claude Code Plugin `v1.2.6`
+# Prevoyant - Claude Code Plugin `v1.2.7`
 
 **Prevoyant** is a [Claude Code](https://claude.ai/code) plugin — an AI agent team that runs a structured, end-to-end developer workflow for Jira tickets. Three modes:
 
@@ -853,6 +853,18 @@ rm -rf ~/.prevoyant/reports   # or the path set in CLAUDE_REPORT_DIR
 ---
 
 ## Changelog
+
+### v1.2.7 — Indexed Agent Memory (JSON + Redis)
+
+- **Long-term memory index:** Agent session memories are now indexed into a searchable store instead of loading raw session file excerpts. On each new ticket, only the most relevant learnings, surprises, and running notes are injected — scored by Jira component and label overlap — replacing ~700 lines of raw per-agent excerpts with a compact ~20-line ranked table (~96% token reduction on the agent memory section).
+
+- **Dual backend:** Supports two storage backends. **JSON** (local, zero setup): stores the index at `~/.prevoyant/memory/index.json` — works out of the box as a single-machine fallback. **Redis** (team-shared): when `PRX_REDIS_ENABLED=Y`, all developers share one memory store across machines and parallel sessions, with component/label sorted-set indexes for sub-millisecond retrieval. Redis takes priority when connected; JSON serves as a hot-standby.
+
+- **Dashboard settings UI:** A new "Agent Memory" section in the server settings page exposes all memory configuration (`PRX_MEMORY_INDEX_ENABLED`, `PRX_MEMORY_LIMIT`, `PRX_REDIS_ENABLED`, `PRX_REDIS_URL`, `PRX_REDIS_PASSWORD`, `PRX_REDIS_PREFIX`, `PRX_REDIS_TTL_DAYS`) with a live connection test button and a status badge showing the active backend and indexed learning count.
+
+- **Automatic indexing:** The server indexes any new agent memory files written at session end (Step 13i) immediately after each Claude run. On startup it also sweeps for any previously unindexed files. Both operations are non-blocking and non-fatal.
+
+- **Configurable limit:** `PRX_MEMORY_LIMIT` (default: 15) controls how many indexed entries are injected per prompt. Lower values reduce token usage further.
 
 ### v1.2.6 — Henk, Agent Personas & Personal Memory
 

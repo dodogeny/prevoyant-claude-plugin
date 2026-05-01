@@ -187,6 +187,17 @@ app.listen(config.port, () => {
   console.log(`[prevoyant-server] Dashboard: http://localhost:${config.port}/dashboard`);
   activityLog.record('server_started', null, 'system', { port: config.port });
 
+  // Bootstrap the long-term memory index on startup (async, non-blocking).
+  setImmediate(async () => {
+    try {
+      const mem = require('./memory/memoryAdapter');
+      mem.ensureKbEntry();
+      await mem.indexAllNew();
+    } catch (err) {
+      console.warn('[prevoyant-server] Memory index startup failed:', err.message);
+    }
+  });
+
   restoreScheduledJobs();
   startWatchdog();
   startDiskMonitor();

@@ -1971,6 +1971,7 @@ function renderSettings(vals, flash) {
   const v = k => vals[k] || '';
 
   const kbKeys     = ['PRX_KB_MODE','PRX_SOURCE_REPO_URL','PRX_KNOWLEDGE_DIR','PRX_KB_REPO','PRX_KB_LOCAL_CLONE','PRX_KB_KEY'];
+  const memKeys    = ['PRX_MEMORY_INDEX_ENABLED','PRX_MEMORY_LIMIT','PRX_REDIS_ENABLED','PRX_REDIS_URL','PRX_REDIS_PASSWORD','PRX_REDIS_PREFIX','PRX_REDIS_TTL_DAYS'];
   const emailKeys  = ['PRX_EMAIL_TO','PRX_SMTP_HOST','PRX_SMTP_PORT','PRX_SMTP_USER','PRX_SMTP_PASS'];
   const bryanKeys  = ['PRX_INCLUDE_SM_IN_SESSIONS_ENABLED','PRX_SKILL_UPGRADE_MIN_SESSIONS','PRX_SKILL_COMPACTION_INTERVAL','PRX_MONTHLY_BUDGET'];
   const autoKeys   = ['AUTO_MODE','FORCE_FULL_RUN','PRX_REPORT_VERBOSITY','PRX_JIRA_PROJECT','PRX_ATTACHMENT_MAX_MB'];
@@ -2319,6 +2320,99 @@ function renderSettings(vals, flash) {
           ${fld('CLAUDE_REPORT_DIR','Reports Directory','text',v('CLAUDE_REPORT_DIR'),'$HOME/.prevoyant/reports','Folder where PDF/HTML reports are saved. Created automatically if missing.')}
         </div>
       </details>
+
+      <!-- Agent Memory -->
+      <details class="s-section"${sectionHasValues(memKeys, vals) ? ' open' : ''} id="agent-memory">
+        <summary>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+          Agent Memory
+          <span class="s-opt">Optional</span>
+          <span id="mem-status-badge" style="margin-left:.4rem;font-size:.7rem;padding:.1rem .45rem;border-radius:999px;background:#e5e7eb;color:#374151"></span>
+          <span class="s-chevron">›</span>
+        </summary>
+        <div class="s-body">
+          <div class="s-field span2">
+            <div class="s-hint" style="margin-top:0">
+              Indexes agent learnings, surprises, and running context notes from each session's
+              memory file. On each new ticket only the most relevant entries are injected
+              (scored by Jira component + label match) — replacing ~700 lines of raw session
+              excerpts with a compact ~20-line table (<strong>~96% token reduction</strong>
+              on the agent memory section). Supports two backends:
+              <br><br>
+              <strong>JSON</strong> (local) — single-machine, zero setup, zero dependencies.<br>
+              <strong>Redis</strong> (team-shared) — all developers share one memory store
+              across machines and parallel sessions. Requires a Redis instance.
+            </div>
+          </div>
+
+          <div class="s-field span2"><hr style="border:none;border-top:1px solid #e5e7eb;margin:.2rem 0 .8rem"></div>
+
+          <div class="s-field span2" style="font-weight:600;font-size:.8rem;color:#6366f1;margin-bottom:-.3rem">JSON backend (local fallback)</div>
+          ${fld('PRX_MEMORY_INDEX_ENABLED','Enable JSON memory','select',v('PRX_MEMORY_INDEX_ENABLED')||'Y','','Local JSON index at ~/.prevoyant/memory/index.json. Used when Redis is disabled or unreachable.',
+            [{v:'Y',l:'Y — enabled (default)'},{v:'N',l:'N — disabled'}])}
+          ${fld('PRX_MEMORY_LIMIT','Max learnings per prompt','number',v('PRX_MEMORY_LIMIT'),'15','Max indexed entries injected per session prompt. Lower = fewer tokens. Default: 15.')}
+
+          <div class="s-field span2"><hr style="border:none;border-top:1px solid #e5e7eb;margin:.5rem 0 .8rem"></div>
+
+          <div class="s-field span2" style="font-weight:600;font-size:.8rem;color:#6366f1;margin-bottom:-.3rem">Redis backend (team-shared, primary)</div>
+          ${fld('PRX_REDIS_ENABLED','Enable Redis memory','select',v('PRX_REDIS_ENABLED')||'N','','Team-shared memory via Redis. Takes priority over JSON when connected.',
+            [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
+          ${fld('PRX_REDIS_URL','Redis URL','text',v('PRX_REDIS_URL'),'redis://localhost:6379','Connection URL. Use rediss:// for TLS. Include credentials in URL or use the fields below.')}
+          ${fld('PRX_REDIS_PASSWORD','Redis password','password',v('PRX_REDIS_PASSWORD'),'','Optional — leave blank if the URL already includes credentials or auth is not required.')}
+          ${fld('PRX_REDIS_PREFIX','Key prefix','text',v('PRX_REDIS_PREFIX'),'prx:mem:','Namespace prefix for all Redis keys. Change if sharing a Redis instance with other apps.')}
+          ${fld('PRX_REDIS_TTL_DAYS','Memory TTL (days)','number',v('PRX_REDIS_TTL_DAYS'),'0','Days before indexed entries expire. 0 = never expire (recommended).')}
+
+          <div class="s-field span2">
+            <button type="button" onclick="testRedisConnection()"
+              style="padding:.4rem 1rem;background:#1a1a2e;color:#fff;border:none;border-radius:6px;font-size:.78rem;cursor:pointer;font-family:inherit">
+              Test Redis connection
+            </button>
+            <span id="redis-test-result" style="margin-left:.75rem;font-size:.78rem;color:#6b7280"></span>
+          </div>
+        </div>
+      </details>
+
+      <script>
+        async function testRedisConnection() {
+          const el = document.getElementById('redis-test-result');
+          el.textContent = 'Testing…';
+          try {
+            const r = await fetch('/dashboard/api/memory-status');
+            const d = await r.json();
+            if (d.backend === 'redis' && d.connected) {
+              el.textContent = '✓ Redis connected — ' + d.total + ' learnings indexed';
+              el.style.color = '#16a34a';
+            } else if (d.backend === 'redis' && !d.connected) {
+              el.textContent = '✗ Redis unreachable — check URL and server';
+              el.style.color = '#dc2626';
+            } else {
+              el.textContent = 'Redis disabled — using ' + (d.backend || 'none');
+              el.style.color = '#9ca3af';
+            }
+          } catch (_) {
+            el.textContent = 'Request failed';
+            el.style.color = '#dc2626';
+          }
+        }
+        // Auto-load status badge on page open
+        (async () => {
+          try {
+            const r = await fetch('/dashboard/api/memory-status');
+            const d = await r.json();
+            const badge = document.getElementById('mem-status-badge');
+            if (!badge) return;
+            if (d.backend === 'redis' && d.connected) {
+              badge.textContent = 'Redis ✓';
+              badge.style.background = '#dcfce7'; badge.style.color = '#16a34a';
+            } else if (d.backend === 'json' && d.connected) {
+              badge.textContent = 'JSON ✓';
+              badge.style.background = '#eff6ff'; badge.style.color = '#2563eb';
+            } else {
+              badge.textContent = 'disabled';
+            }
+          } catch (_) {}
+        })();
+      </script>
 
       <!-- Automation -->
       <details class="s-section"${sectionHasValues(autoKeys, vals) ? ' open' : ''}>
@@ -3516,9 +3610,20 @@ router.post('/queue', express.urlencoded({ extended: false }), (req, res) => {
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 
-router.get('/settings', (req, res) => {
+router.get('/settings', (_req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
-  res.send(renderSettings(readEnvValues(), req.query.saved === '1' ? 'saved' : null));
+  res.send(renderSettings(readEnvValues(), _req.query.saved === '1' ? 'saved' : null));
+});
+
+// Memory status API — polled by the settings page JS to show live badge + connection test
+router.get('/api/memory-status', async (_req, res) => {
+  try {
+    const mem    = require('../memory/memoryAdapter');
+    const result = await mem.stats();
+    res.json(result);
+  } catch (err) {
+    res.json({ enabled: false, backend: 'none', connected: false, total: 0, error: err.message });
+  }
 });
 
 router.post('/settings', express.urlencoded({ extended: false }), (req, res) => {
@@ -3536,6 +3641,8 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'PRX_NOTIFY_ENABLED', 'PRX_NOTIFY_LEVEL', 'PRX_NOTIFY_MUTE_DAYS', 'PRX_NOTIFY_EVENTS',
     'PRX_INCLUDE_SM_IN_SESSIONS_ENABLED', 'PRX_SKILL_UPGRADE_MIN_SESSIONS',
     'PRX_SKILL_COMPACTION_INTERVAL', 'PRX_MONTHLY_BUDGET',
+    'PRX_MEMORY_INDEX_ENABLED', 'PRX_MEMORY_LIMIT',
+    'PRX_REDIS_ENABLED', 'PRX_REDIS_URL', 'PRX_REDIS_PASSWORD', 'PRX_REDIS_PREFIX', 'PRX_REDIS_TTL_DAYS',
     'PRX_WATCHDOG_ENABLED', 'PRX_WATCHDOG_INTERVAL_SECS', 'PRX_WATCHDOG_FAIL_THRESHOLD',
     'PRX_DISK_MONITOR_ENABLED', 'PRX_DISK_MONITOR_INTERVAL_MINS', 'PRX_PREVOYANT_MAX_SIZE_MB', 'PRX_DISK_CAPACITY_ALERT_PCT', 'PRX_DISK_CLEANUP_INTERVAL_DAYS',
   ];

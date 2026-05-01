@@ -219,7 +219,7 @@ async function runClaudeAnalysis(ticketKey, mode = 'dev', ticketMeta = {}) {
   // Falls back gracefully to null if KB is empty, encrypted, or unavailable.
   let kbBlock = null;
   try {
-    kbBlock = kbQuery.buildPriorKnowledgeBlock({ ticketKey, ...ticketMeta });
+    kbBlock = await kbQuery.buildPriorKnowledgeBlock({ ticketKey, ...ticketMeta });
     if (kbBlock) console.log(`[runner] ${ticketKey} — KB pre-loaded (${kbBlock.length} chars)`);
   } catch (err) {
     console.warn(`[runner] ${ticketKey} — KB pre-load skipped: ${err.message}`);
@@ -343,6 +343,17 @@ async function runClaudeAnalysis(ticketKey, mode = 'dev', ticketMeta = {}) {
 
   // Invalidate KB cache — Step 13 may have written new KB data.
   kbCache.invalidate();
+
+  // Index any new agent memory files written during this session into the
+  // long-term memory store (Redis + JSON). Runs even on failure so partial
+  // learnings are captured. Non-fatal — a bad index never kills the runner.
+  try {
+    const mem = require('../memory/memoryAdapter');
+    const n   = await mem.indexSession(ticketKey, ticketMeta);
+    if (n > 0) console.log(`[runner] ${ticketKey} — indexed ${n} new memory entry(s)`);
+  } catch (memErr) {
+    console.warn(`[runner] ${ticketKey} — memory indexing skipped: ${memErr.message}`);
+  }
 
   if (runError) throw runError;
 }

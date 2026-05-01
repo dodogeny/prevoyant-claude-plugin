@@ -1199,7 +1199,7 @@ Before running any Phase A disk operations, check whether the server has already
 3. **Versions match → pre-load is valid:**
    - Output: `KB_STATUS: server pre-loaded (v{version}) — skipping Steps 0a and 0b disk reads.`
    - Skip Steps 0a and 0b entirely.
-   - The **"Knowledge Base — Pre-loaded Context"** block at the top of this message contains INDEX.md, all shared files, Core Mental Map, Lessons Learned, and Agent Personal Memory.
+   - The **"Knowledge Base — Pre-loaded Context"** block at the top of this message contains INDEX.md, all shared files, Core Mental Map, Lessons Learned, and an Agent Memory block (relevance-scored indexed table — top learnings/surprises from all past sessions, ranked by component and label overlap with this ticket).
    - Use that content to run the Step 0b query logic (room matching, trigger scanning, building the Prior Knowledge block) without any additional file reads.
    - Present the Prior Knowledge block before Step 2, then proceed to Step 1.
 4. **Sentinel absent or version mismatch → graceful fallback:**
@@ -1526,7 +1526,11 @@ plugin/config/personas/bryan.md
 
 If the plugin directory is not accessible, agents fall back to the inline persona descriptions in the Engineering Panel section of SKILL.md — session proceeds normally.
 
-**5b. Read personal memory** for each agent. List all files in `{KB_WORK_DIR}/personas/memory/{agent}/`, sorted by filename (oldest first). Read the 5 most recent session files per agent (or all files if fewer than 5 exist). Synthesise across sessions to build each agent's running state:
+**5b. Read personal memory** for each agent.
+
+**When the server is active (KB_PRELOADED present):** agent memory is already pre-loaded as a relevance-scored indexed table — Layer 5b is skipped entirely. The pre-loaded Agent Memory block contains the top-ranked learnings, surprises, and running notes from all past sessions, filtered by component and label overlap with the current ticket. Pass this block through to the Prior Knowledge section as-is.
+
+**Standalone mode (no KB_PRELOADED):** List all files in `{KB_WORK_DIR}/personas/memory/{agent}/`, sorted by filename (oldest first). Read the 5 most recent session files per agent (or all files if fewer than 5 exist). Synthesise across sessions to build each agent's running state:
 
 - Calibration: which of their past hypotheses were confirmed vs. refuted
 - Recurring surprises: areas where the agent's expectations were wrong
@@ -1598,23 +1602,18 @@ Include a summary in the Prior Knowledge block:
 │ {file:line references verified: N current / M stale}             │
 │ {⚠️ KB-XXX stale: {file:line} not found on development — verify} │
 │                                                                   │
-│ AGENT PERSONAS & PERSONAL MEMORY                                  │
+│ AGENT MEMORY  ({N} relevant learning(s) from {M} indexed)         │
 │ ─────────────────────────────────────────────────────────────────│
-│ Morgan  : {N} sessions | last: {ticket} | calibration: {X/Y correct} │
-│   Notable: {one-line — most relevant personal insight for this ticket} │
-│ Alex    : {N} sessions | last: {ticket} | calibration: {X/Y correct} │
-│   Notable: {one-line — most relevant personal insight for this ticket} │
-│ Sam     : {N} sessions | last: {ticket} | calibration: {X/Y correct} │
-│   Notable: {one-line — most relevant personal insight for this ticket} │
-│ Jordan  : {N} sessions | last: {ticket} | calibration: {X/Y correct} │
-│   Notable: {one-line — most relevant personal insight for this ticket} │
-│ Henk    : {N} sessions | last: {ticket} | calibration: {X/Y correct} │
-│   Notable: {one-line — most relevant personal insight for this ticket} │
-│ Riley   : {N} sessions | last: {ticket} | calibration: {X/Y correct} │
-│   Notable: {one-line — most relevant personal insight for this ticket} │
-│ Bryan   : {N} sessions | last: {ticket} | calibration: {X/Y correct} │
-│   Notable: {one-line — most relevant personal insight for this ticket} │
-│ (Omit "Notable" line if no prior sessions or no relevant insight)  │
+│ [server mode — indexed table, pass through as-is from pre-loaded] │
+│ | Agent  | Ticket   | Category | Conf | Learning                | │
+│ | morgan | IV-XXXX  | PATTERN  | High | {one-line learning}     | │
+│ | alex   | IV-YYYY  | ARCH     | Med  | {one-line learning}     | │
+│ … (top 15 ranked by component/label overlap)                      │
+│                                                                   │
+│ [standalone mode — per-agent summary when KB_PRELOADED absent]    │
+│ Morgan  : {N} sessions | last: {ticket} | calibration: {X/Y ok}  │
+│   Notable: {one-line — most relevant personal insight}            │
+│ … (one row per agent, omit "Notable" if no prior sessions)        │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
