@@ -2,16 +2,32 @@
 
 // KB real-time sync: Redis is the doorbell, Git is the mail carrier.
 //
-// notify(ticketKey) — called after a session: git push → XADD to Upstash.
-// No KB content ever touches Redis. Payload is ~100 bytes:
-//   { machine, ticket, commit }
+// Responsibility split:
+//   SKILL.md      — git add / git commit / git push  (unchanged)
+//   kbSync.js     — watches for SKILL.md to finish, rings Redis (XADD)
+//                   pulls on incoming notifications (XREAD → git pull)
+//
+// Session trigger (PRX_KB_SYNC_TRIGGER=session or both):
+//   SKILL.md writes ~/.prevoyant/.kb-updated (signal file) after push.
+//   kbSyncWorker sees the file → reads ticket key → XADD → deletes file.
+//
+// Filesystem trigger (PRX_KB_SYNC_TRIGGER=filesystem or both):
+//   kbSyncWorker watches the KB dir for .md changes (manual edits).
+//   On change (debounced): git add -A + commit + push → XADD.
+//   (kb-sync.js owns git only here — SKILL.md is not running.)
+//
+// No KB content ever touches Redis. Payload ≈ 100 bytes: { machine, ticket, commit }.
 
 const { execSync } = require('child_process');
 const https        = require('https');
 const os           = require('os');
+const path         = require('path');
 
-const STREAM_KEY = 'prevoyant:kb-updates';
+const STREAM_KEY  = 'prevoyant:kb-updates';
 const STREAM_MAXLEN = '1000';
+
+// Signal file: SKILL.md writes this after a successful git push.
+const SIGNAL_FILE = path.join(os.homedir(), '.prevoyant', '.kb-updated');
 
 function isEnabled() {
   return process.env.PRX_REALTIME_KB_SYNC === 'Y';
@@ -25,7 +41,10 @@ function machineName() {
   return (process.env.PRX_KB_SYNC_MACHINE || os.hostname()).trim();
 }
 
-// Resolve the local KB clone directory (mirrors kbCache.kbDir for distributed).
+function syncTrigger() {
+  return (process.env.PRX_KB_SYNC_TRIGGER || 'session').toLowerCase();
+}
+
 function kbCloneDir() {
   const { kbDir } = require('./kbCache');
   return kbDir();
@@ -68,7 +87,7 @@ function upstashPost(command) {
       });
     });
     req.on('error', reject);
-    req.setTimeout(8000, () => { req.destroy(new Error('Upstash request timeout')); });
+    req.setTimeout(8000, () => req.destroy(new Error('Upstash request timeout')));
     req.write(payload);
     req.end();
   });
@@ -95,7 +114,6 @@ async function xread(lastId) {
   ]);
 
   if (!result) return [];
-  // Wire format: [[streamName, [[id, [k,v,...]], ...]], ...]
   const entries = result[0]?.[1] ?? [];
   return entries.map(([id, fields]) => {
     const obj = { id };
@@ -106,7 +124,7 @@ async function xread(lastId) {
   });
 }
 
-// ── Git helpers ───────────────────────────────────────────────────────────────
+// ── Git helpers (read-only and pull only — push lives in SKILL.md / worker) ──
 
 function gitHead(dir) {
   try {
@@ -114,12 +132,6 @@ function gitHead(dir) {
       cwd: dir, encoding: 'utf8', timeout: 5000,
     }).trim();
   } catch (_) { return ''; }
-}
-
-function gitPush(dir) {
-  execSync('git push origin main', {
-    cwd: dir, encoding: 'utf8', timeout: 60000, stdio: 'pipe',
-  });
 }
 
 function gitPull(dir) {
@@ -130,43 +142,14 @@ function gitPull(dir) {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
-// Called by the runner after a session completes.
-// Step 1: git push (KB files travel via Git, not Redis).
-// Step 2: XADD to Upstash — doorbell only, no KB content.
-async function notify(ticketKey) {
-  if (!isEnabled() || !isDistributed()) return;
-
-  const dir = kbCloneDir();
-  let commit = '';
-
-  try {
-    gitPush(dir);
-    commit = gitHead(dir);
-  } catch (e) {
-    // Push can fail if nothing changed or there are no new commits.
-    // Still notify so other machines pull the latest state.
-    commit = gitHead(dir);
-    if (e.message.includes('Everything up-to-date') ||
-        e.message.includes('nothing to commit')) {
-      // Benign — skip XADD, other machines already have this state.
-      return;
-    }
-    console.warn('[kb-sync] git push failed:', e.message.split('\n')[0]);
-  }
-
-  const machine = machineName();
-  try {
-    const id = await xadd(machine, ticketKey || '', commit);
-    console.log(`[kb-sync] XADD → ${STREAM_KEY} id=${id} machine=${machine} ticket=${ticketKey} commit=${commit}`);
-  } catch (e) {
-    console.warn('[kb-sync] XADD failed:', e.message);
-  }
-}
-
 // Called by the kbSyncWorker when a notification arrives from another machine.
-// Does git pull and returns true on success.
 function pullFromRemote(dir) {
   gitPull(dir);
 }
 
-module.exports = { isEnabled, isDistributed, machineName, kbCloneDir, xread, xadd, notify, pullFromRemote };
+module.exports = {
+  isEnabled, isDistributed, machineName, syncTrigger, kbCloneDir,
+  SIGNAL_FILE, gitHead,
+  xread, xadd,
+  pullFromRemote,
+};

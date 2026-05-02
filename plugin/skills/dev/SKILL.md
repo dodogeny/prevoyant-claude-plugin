@@ -1085,10 +1085,12 @@ git commit -m "kb({TICKET_KEY}): {type} — {one-line summary}"
 
 # Step 5 — Push (create remote branch if this is the first push)
 if [ "$REMOTE_EXISTS" = true ]; then
-  git push origin main && echo "KB: pushed to ${PRX_KB_REPO}."
+  git push origin main && echo "KB: pushed to ${PRX_KB_REPO}." \
+    && printf '%s' "${TICKET_KEY}" > "$HOME/.prevoyant/.kb-updated"
 else
   git push --set-upstream origin main && \
-    echo "KB: created and pushed origin/main at ${PRX_KB_REPO}."
+    echo "KB: created and pushed origin/main at ${PRX_KB_REPO}." \
+    && printf '%s' "${TICKET_KEY}" > "$HOME/.prevoyant/.kb-updated"
 fi
 ```
 

@@ -1970,7 +1970,7 @@ const NOTIFY_EVENTS = [
 function renderSettings(vals, flash) {
   const v = k => vals[k] || '';
 
-  const kbKeys     = ['PRX_KB_MODE','PRX_SOURCE_REPO_URL','PRX_KNOWLEDGE_DIR','PRX_KB_REPO','PRX_KB_LOCAL_CLONE','PRX_KB_KEY','PRX_REALTIME_KB_SYNC','PRX_UPSTASH_REDIS_URL','PRX_UPSTASH_REDIS_TOKEN','PRX_KB_SYNC_MACHINE','PRX_KB_SYNC_POLL_SECS'];
+  const kbKeys     = ['PRX_KB_MODE','PRX_SOURCE_REPO_URL','PRX_KNOWLEDGE_DIR','PRX_KB_REPO','PRX_KB_LOCAL_CLONE','PRX_KB_KEY','PRX_REALTIME_KB_SYNC','PRX_UPSTASH_REDIS_URL','PRX_UPSTASH_REDIS_TOKEN','PRX_KB_SYNC_MACHINE','PRX_KB_SYNC_POLL_SECS','PRX_KB_SYNC_TRIGGER','PRX_KB_SYNC_DEBOUNCE_SECS'];
   const memKeys    = ['PRX_MEMORY_INDEX_ENABLED','PRX_MEMORY_LIMIT','PRX_REDIS_ENABLED','PRX_REDIS_URL','PRX_REDIS_PASSWORD','PRX_REDIS_PREFIX','PRX_REDIS_TTL_DAYS'];
   const emailKeys  = ['PRX_EMAIL_TO','PRX_SMTP_HOST','PRX_SMTP_PORT','PRX_SMTP_USER','PRX_SMTP_PASS'];
   const bryanKeys  = ['PRX_INCLUDE_SM_IN_SESSIONS_ENABLED','PRX_SKILL_UPGRADE_MIN_SESSIONS','PRX_SKILL_COMPACTION_INTERVAL','PRX_MONTHLY_BUDGET'];
@@ -2242,6 +2242,9 @@ function renderSettings(vals, flash) {
           </div>
           ${fld('PRX_KB_SYNC_MACHINE','Machine Name','text',v('PRX_KB_SYNC_MACHINE'),require('os').hostname(),'Override hostname used in sync notifications. Useful in Docker or cloud VMs where hostname is unstable.')}
           ${fld('PRX_KB_SYNC_POLL_SECS','Poll Interval (seconds)','text',v('PRX_KB_SYNC_POLL_SECS'),'10','How often each machine checks Redis for new KB updates. Default: 10.')}
+          ${fld('PRX_KB_SYNC_TRIGGER','Outbound trigger','select',v('PRX_KB_SYNC_TRIGGER') || 'session','','What triggers an outbound KB notification on this machine.',
+            [{v:'session',l:'session — SKILL.md signals after git push (recommended)'},{v:'filesystem',l:'filesystem — watch KB dir for manual edits'},{v:'both',l:'both — session + filesystem'}])}
+          ${fld('PRX_KB_SYNC_DEBOUNCE_SECS','Filesystem debounce (seconds)','text',v('PRX_KB_SYNC_DEBOUNCE_SECS'),'3','Seconds to wait after the last file change before committing. filesystem / both triggers only.')}
         </div>
       </details>
 
@@ -3646,7 +3649,7 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'PRX_KB_MODE', 'PRX_SOURCE_REPO_URL', 'PRX_KNOWLEDGE_DIR',
     'PRX_KB_REPO', 'PRX_KB_LOCAL_CLONE', 'PRX_KB_KEY',
     'PRX_REALTIME_KB_SYNC', 'PRX_UPSTASH_REDIS_URL', 'PRX_UPSTASH_REDIS_TOKEN',
-    'PRX_KB_SYNC_MACHINE', 'PRX_KB_SYNC_POLL_SECS',
+    'PRX_KB_SYNC_MACHINE', 'PRX_KB_SYNC_POLL_SECS', 'PRX_KB_SYNC_TRIGGER', 'PRX_KB_SYNC_DEBOUNCE_SECS',
     'CLAUDE_REPORT_DIR',
     'AUTO_MODE', 'FORCE_FULL_RUN', 'PRX_REPORT_VERBOSITY',
     'PRX_JIRA_PROJECT', 'PRX_ATTACHMENT_MAX_MB',

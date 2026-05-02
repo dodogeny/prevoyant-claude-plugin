@@ -177,7 +177,9 @@ function startKbSync() {
     upstashToken: process.env.PRX_UPSTASH_REDIS_TOKEN  || '',
     kbDir:        kbSync.kbCloneDir(),
     machineName:  kbSync.machineName(),
-    pollSecs:     parseInt(process.env.PRX_KB_SYNC_POLL_SECS || '10', 10),
+    pollSecs:     parseInt(process.env.PRX_KB_SYNC_POLL_SECS     || '10', 10),
+    trigger:               (process.env.PRX_KB_SYNC_TRIGGER       || 'session').toLowerCase(),
+    debounceSecs: parseInt(process.env.PRX_KB_SYNC_DEBOUNCE_SECS || '3',  10),
   };
 
   kbSyncWorker = new Worker(
