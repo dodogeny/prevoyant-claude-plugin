@@ -9,9 +9,12 @@ const { getStats, getTicket, reRunTicket, recordScheduled, deleteTicket } = requ
 const { killJob, enqueue, scheduleJob, prioritizeJob, pauseQueue, resumeQueue, isPaused, getQueueDepth } = require('../queue/jobQueue');
 const activityLog = require('./activityLog');
 const { getPollStatus } = require('../runner/pollScheduler');
-const serverEvents = require('../serverEvents');
+const serverEvents  = require('../serverEvents');
+const watchStore    = require('../watchers/watchStore');
+const watchManager  = require('../watchers/watchManager');
 
-const VALID_MODES = new Set(['dev', 'review', 'estimate']);
+const VALID_MODES    = new Set(['dev', 'review', 'estimate']);
+const WATCH_LOG_DIR  = path.join(os.homedir(), '.prevoyant', 'watch', 'logs');
 
 const config = require('../config/env');
 
@@ -88,6 +91,38 @@ function fmtBytes(bytes) {
   if (bytes >= 1048576)    return (bytes / 1048576).toFixed(1) + ' MB';
   if (bytes >= 1024)       return (bytes / 1024).toFixed(0) + ' KB';
   return bytes + ' B';
+}
+
+// ── Watch log stats ───────────────────────────────────────────────────────────
+
+function getWatchLogStats() {
+  let totalBytes = 0, fileCount = 0, ticketCount = 0, oldestMs = Infinity;
+  try {
+    const ticketDirs = fs.readdirSync(WATCH_LOG_DIR, { withFileTypes: true }).filter(e => e.isDirectory());
+    ticketCount = ticketDirs.length;
+    for (const td of ticketDirs) {
+      const dir = path.join(WATCH_LOG_DIR, td.name);
+      try {
+        for (const f of fs.readdirSync(dir)) {
+          if (!f.endsWith('.log')) continue;
+          try {
+            const s = fs.statSync(path.join(dir, f));
+            totalBytes += s.size;
+            fileCount++;
+            if (s.mtimeMs < oldestMs) oldestMs = s.mtimeMs;
+          } catch (_) {}
+        }
+      } catch (_) {}
+    }
+  } catch (_) {}
+  return {
+    totalBytes,
+    fileCount,
+    ticketCount,
+    oldestDate: oldestMs < Infinity ? new Date(oldestMs) : null,
+    keepDays:   parseInt(process.env.PRX_WATCH_LOG_KEEP_DAYS        || '30', 10),
+    keepPer:    parseInt(process.env.PRX_WATCH_LOG_KEEP_PER_TICKET  || '10', 10),
+  };
 }
 
 // ── Claude budget helper ──────────────────────────────────────────────────────
@@ -698,6 +733,10 @@ function renderDashboard(stats, budget) {
     <a href="/dashboard/activity" class="settings-link" title="Activity Log">
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
       Activity
+    </a>
+    <a href="/dashboard/watch" class="settings-link" title="Ticket Watcher">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+      Watch
     </a>
     ${readDiskStatus().pendingCleanup
       ? `<a href="/dashboard/disk" class="settings-link" title="Disk Monitor — cleanup pending" style="color:#ea580c">`
@@ -1632,6 +1671,7 @@ function kbStats() {
 // ── Disk Monitor page ─────────────────────────────────────────────────────────
 
 function renderDisk(status, diskLog, flash) {
+  const wlStats = getWatchLogStats();
   const pendingCleanup  = status.pendingCleanup || false;
   const prevoyantMB     = status.prevoyantMB  || 0;
   const diskUsedPct     = status.diskUsedPct  || 0;
@@ -1730,7 +1770,7 @@ function renderDisk(status, diskLog, flash) {
         Last cleanup: ${lastCleanupAt ? lastCleanupAt.toLocaleString('en-GB') : 'never'}.
         Cleanup interval: every ${cleanupInterval} day(s).
         <div class="cleanup-form">
-          <form method="POST" action="/dashboard/disk/approve-cleanup" onsubmit="return confirm('Run house-cleaning now?\\n\\n• Old session files (>30 days) will be deleted\\n• Server logs will be trimmed\\n\\nThis cannot be undone.')">
+          <form method="POST" action="/dashboard/disk/approve-cleanup" onsubmit="return confirm('Run house-cleaning now?\\n\\n• Old session files (>30 days) will be deleted\\n• Server logs will be trimmed\\n• Watch poll logs will be pruned\\n\\nThis cannot be undone.')">
             <button type="submit" class="btn-approve">Approve Cleanup</button>
             <button type="button" class="btn-dismiss" onclick="dismissCleanup()">Dismiss for now</button>
           </form>
@@ -1763,6 +1803,11 @@ function renderDisk(status, diskLog, flash) {
         <div class="stat-lbl">Last Updated</div>
         <div class="stat-val" style="font-size:1rem;font-weight:600">${updatedAt ? updatedAt.toLocaleTimeString('en-GB') : '—'}</div>
         <div class="stat-sub">${updatedAt ? updatedAt.toLocaleDateString('en-GB') : 'No data yet'}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-lbl">Watch Logs</div>
+        <div class="stat-val" style="font-size:1.3rem">${fmtBytes(wlStats.totalBytes)}</div>
+        <div class="stat-sub">${wlStats.fileCount} file${wlStats.fileCount !== 1 ? 's' : ''} · ${wlStats.ticketCount} ticket${wlStats.ticketCount !== 1 ? 's' : ''}</div>
       </div>
     </div>
 
@@ -1820,6 +1865,18 @@ function renderDisk(status, diskLog, flash) {
         <span class="detail-key">History entries</span>
         <span class="detail-val">${diskLog.length}</span>
       </div>
+      <div class="detail-row">
+        <span class="detail-key">Watch log files</span>
+        <span class="detail-val">${wlStats.fileCount} files · ${fmtBytes(wlStats.totalBytes)}</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-key">Watch log retention</span>
+        <span class="detail-val">Last ${wlStats.keepPer} per ticket · max ${wlStats.keepDays} days</span>
+      </div>
+      <div class="detail-row">
+        <span class="detail-key">Oldest watch log</span>
+        <span class="detail-val">${wlStats.oldestDate ? wlStats.oldestDate.toLocaleString('en-GB') : '—'}</span>
+      </div>
     </div>
 
     <!-- Cleanup controls -->
@@ -1840,6 +1897,7 @@ function renderDisk(status, diskLog, flash) {
             <li>✓ Session directories older than 30 days<br><span style="font-size:.75rem;color:#4ade80;opacity:.8">~/.prevoyant/sessions/</span></li>
             <li>✓ Trim disk history log to last 200 entries<br><span style="font-size:.75rem;color:#4ade80;opacity:.8">~/.prevoyant/server/disk-log.json</span></li>
             <li>✓ Trim activity log to last 2 000 entries<br><span style="font-size:.75rem;color:#4ade80;opacity:.8">~/.prevoyant/server/activity-log.json</span></li>
+            <li>✓ Watch poll logs older than ${wlStats.keepDays} days &amp; beyond last ${wlStats.keepPer} per ticket<br><span style="font-size:.75rem;color:#4ade80;opacity:.8">~/.prevoyant/watch/logs/</span></li>
           </ul>
         </div>
         <!-- Protected -->
@@ -1855,7 +1913,7 @@ function renderDisk(status, diskLog, flash) {
       </div>
 
       <form method="POST" action="/dashboard/disk/approve-cleanup"
-            onsubmit="return confirm('Run immediate house-cleaning?\\n\\n✓ Deletes session directories older than 30 days\\n✓ Trims server log files\\n\\n✗ Will NOT touch knowledge base, reports, or .env\\n\\nThis cannot be undone.')">
+            onsubmit="return confirm('Run immediate house-cleaning?\\n\\n✓ Deletes session directories older than 30 days\\n✓ Trims disk history and activity logs\\n✓ Trims watch poll logs (>${wlStats.keepDays}d or beyond last ${wlStats.keepPer} per ticket)\\n\\n✗ Will NOT touch knowledge base, reports, or .env\\n\\nThis cannot be undone.')">
         <button type="submit" class="btn-approve">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:5px"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
           Run Cleanup Now
@@ -1905,6 +1963,622 @@ function renderDisk(status, diskLog, flash) {
       fetch('/dashboard/disk/dismiss-cleanup', { method: 'POST' })
         .then(() => location.reload());
     }
+  </script>
+</body>
+</html>`;
+}
+
+// ── Watch page ────────────────────────────────────────────────────────────────
+
+function relativeTime(isoStr) {
+  if (!isoStr) return '—';
+  const diff = Date.now() - new Date(isoStr).getTime();
+  if (diff < 0) {
+    const abs = Math.abs(diff);
+    if (abs < 3600000) return `in ${Math.round(abs / 60000)}m`;
+    if (abs < 86400000) return `in ${Math.round(abs / 3600000)}h`;
+    return `in ${Math.round(abs / 86400000)}d`;
+  }
+  if (diff < 60000) return 'just now';
+  if (diff < 3600000) return `${Math.round(diff / 60000)}m ago`;
+  if (diff < 86400000) return `${Math.round(diff / 3600000)}h ago`;
+  return `${Math.round(diff / 86400000)}d ago`;
+}
+
+// ── Watch log list & viewer pages ─────────────────────────────────────────────
+
+function watchLogCss() {
+  return `
+    .wl-wrap { max-width:960px; margin:2rem auto; padding:0 1.5rem 4rem; }
+    .wl-header { display:flex; align-items:baseline; gap:1rem; margin-bottom:1.5rem; flex-wrap:wrap; }
+    .wl-title { font-size:1.15rem; font-weight:700; color:#1a1a2e; }
+    .breadcrumb { font-size:.82rem; color:#94a3b8; }
+    .breadcrumb a { color:#64748b; text-decoration:none; }
+    .breadcrumb a:hover { color:#374151; }
+    .wl-card { background:#fff; border:1px solid #e2e8f0; border-radius:10px;
+               box-shadow:0 1px 3px #0001; overflow:hidden; }
+    .wl-card-head { display:flex; align-items:center; justify-content:space-between;
+                    padding:.85rem 1.25rem; border-bottom:1px solid #f1f5f9; }
+    .wl-card-label { font-weight:600; font-size:.88rem; color:#374151; }
+    .wl-empty { text-align:center; color:#9ca3af; padding:2.5rem 1rem; font-size:.875rem; }
+    table.wl-table { width:100%; border-collapse:collapse; font-size:.84rem; }
+    table.wl-table th { background:#f8fafc; color:#64748b; font-weight:600; font-size:.75rem;
+                        text-transform:uppercase; letter-spacing:.04em; padding:.6rem 1rem;
+                        text-align:left; border-bottom:1px solid #e2e8f0; }
+    table.wl-table td { padding:.65rem 1rem; border-bottom:1px solid #f1f5f9; vertical-align:middle; }
+    table.wl-table tr:last-child td { border-bottom:none; }
+    table.wl-table tr:hover td { background:#f8fafc; }
+    .wl-badge-live { display:inline-block; padding:1px 7px; border-radius:8px;
+                     background:#fef3c7; color:#92400e; font-size:.7rem; font-weight:700;
+                     text-transform:uppercase; letter-spacing:.05em; margin-left:.4rem; }
+    .wl-badge-ok   { display:inline-block; padding:1px 7px; border-radius:8px;
+                     background:#dcfce7; color:#166534; font-size:.7rem; font-weight:600; }
+    .wl-badge-err  { display:inline-block; padding:1px 7px; border-radius:8px;
+                     background:#fee2e2; color:#991b1b; font-size:.7rem; font-weight:600; }
+    .wl-btn { border:none; border-radius:5px; padding:.3rem .65rem; font-size:.78rem;
+              font-weight:500; cursor:pointer; background:#eff6ff; color:#1d4ed8; }
+    .wl-btn:hover { background:#dbeafe; }
+    .wl-btn-a { text-decoration:none; display:inline-block;
+                border:none; border-radius:5px; padding:.3rem .65rem; font-size:.78rem;
+                font-weight:500; background:#eff6ff; color:#1d4ed8; }
+    .wl-btn-a:hover { background:#dbeafe; }
+    .wl-btn-danger { border:none; border-radius:5px; padding:.35rem .8rem; font-size:.78rem;
+                     font-weight:500; cursor:pointer; background:#fef2f2; color:#dc2626; }
+    .wl-btn-danger:hover { background:#fee2e2; }
+    .wl-size { color:#9ca3af; font-size:.78rem; }
+    /* log viewer */
+    .wl-log-wrap { background:#0f172a; border-radius:0 0 10px 10px;
+                   padding:1.25rem 1.5rem; overflow:auto; max-height:72vh; }
+    .wl-log-pre { color:#e2e8f0; font-family:'Menlo','Monaco','Consolas',monospace;
+                  font-size:.78rem; line-height:1.6; white-space:pre-wrap; word-break:break-word;
+                  margin:0; }
+    .wl-live-bar { background:#fefce8; border:1px solid #fcd34d; border-radius:6px;
+                   padding:.5rem 1rem; margin-bottom:.75rem; font-size:.82rem; color:#92400e;
+                   display:flex; align-items:center; gap:.5rem; }
+    @keyframes wl-pulse { 0%,100%{opacity:1} 50%{opacity:.4} }
+    .wl-live-dot { width:8px; height:8px; border-radius:50%; background:#f59e0b;
+                   animation:wl-pulse 1.2s ease-in-out infinite; }`;
+}
+
+function parseLogFilename(filename) {
+  // 2026-05-03_14-30-00_poll-3.log → { date, pollNum }
+  const m = filename.match(/^(\d{4}-\d{2}-\d{2})_(\d{2}-\d{2}-\d{2})_poll-(\d+)\.log$/);
+  if (!m) return { date: filename, pollNum: null };
+  const iso = `${m[1]}T${m[2].replace(/-/g, ':')}Z`;
+  return { date: new Date(iso).toLocaleString(), pollNum: parseInt(m[3], 10) };
+}
+
+function logFileStatus(filename, lastLogFile, pollingNow) {
+  if (filename === lastLogFile && pollingNow) return 'live';
+  // peek at last line of file to detect error footer
+  const fPath = null; // resolved by caller
+  return 'ok';
+}
+
+function renderWatchLogs(key, files, ticket, flash) {
+  const isLive    = ticket?.pollingNow;
+  const lastLog   = ticket?.lastLogFile || '';
+  const flashHtml = flash === 'cleared'
+    ? `<div style="background:#dcfce7;color:#166534;border:1px solid #bbf7d0;border-radius:6px;padding:.6rem 1rem;margin-bottom:1rem;font-size:.85rem">All logs for ${esc(key)} deleted.</div>`
+    : '';
+
+  const rows = files.length === 0
+    ? `<tr><td colspan="4" class="wl-empty">No log files yet for ${esc(key)}.</td></tr>`
+    : files.map(f => {
+        const { date, pollNum } = parseLogFilename(f);
+        const isFileLive = (f === lastLog && isLive);
+        const liveBadge  = isFileLive ? `<span class="wl-badge-live">Live</span>` : '';
+        let size = '';
+        try {
+          const bytes = fs.statSync(path.join(WATCH_LOG_DIR, key, f)).size;
+          size = bytes < 1024 ? `${bytes} B` : bytes < 1048576 ? `${(bytes/1024).toFixed(1)} KB` : `${(bytes/1048576).toFixed(1)} MB`;
+        } catch (_) {}
+        return `<tr>
+          <td>${esc(date)}${liveBadge}</td>
+          <td class="wl-size">${pollNum != null ? `Poll #${pollNum}` : '—'}</td>
+          <td class="wl-size">${esc(size)}</td>
+          <td><a class="wl-btn-a" href="/dashboard/watch/${esc(key)}/logs/${esc(f)}">View</a></td>
+        </tr>`;
+      }).join('');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Logs: ${esc(key)} — Prevoyant Server</title>
+  <style>${BASE_CSS}${watchLogCss()}</style>
+</head>
+<body>
+  <header>
+    <h1>Prevoyant Server</h1>
+    <span class="version-badge">v${esc(pluginVersion)}</span>
+    <span class="meta"></span>
+    <a href="/dashboard/watch" class="settings-link" style="color:#fff">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+      Watch
+    </a>
+    <a href="/dashboard/settings" class="settings-link">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Settings
+    </a>
+  </header>
+  <div class="wl-wrap">
+    <div class="wl-header">
+      <span class="breadcrumb"><a href="/dashboard">Dashboard</a> › <a href="/dashboard/watch">Watch</a> › ${esc(key)}</span>
+    </div>
+    <div class="wl-header">
+      <span class="wl-title">Poll Logs — ${esc(key)}</span>
+      <span style="font-size:.82rem;color:#64748b">${files.length} run${files.length !== 1 ? 's' : ''}</span>
+    </div>
+    ${flashHtml}
+    <div class="wl-card">
+      <div class="wl-card-head">
+        <span class="wl-card-label">Run History</span>
+        <div style="display:flex;align-items:center;gap:.75rem">
+          ${isLive ? `<span style="font-size:.8rem;color:#92400e;font-weight:600">● Poll in progress</span>` : ''}
+          ${files.length > 0 && !isLive ? `
+          <form method="POST" action="/dashboard/watch/${esc(key)}/logs/clear" style="margin:0"
+                onsubmit="return confirm('Delete all ${files.length} log file${files.length !== 1 ? 's' : ''} for ${esc(key)}?\\n\\nThis cannot be undone.')">
+            <button type="submit" class="wl-btn-danger">
+              <svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:3px"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
+              Clear all logs
+            </button>
+          </form>` : ''}
+        </div>
+      </div>
+      <table class="wl-table">
+        <thead><tr><th>Date / Time</th><th>Poll #</th><th>Size</th><th>Log</th></tr></thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </div>
+  <footer class="footer">Prevoyant Server v${esc(pluginVersion)}</footer>
+</body>
+</html>`;
+}
+
+function renderWatchLogView(key, filename, content, ticket) {
+  const { date, pollNum } = parseLogFilename(filename);
+  const isLive = ticket?.pollingNow && ticket?.lastLogFile === filename;
+  const liveBar = isLive
+    ? `<div class="wl-live-bar"><span class="wl-live-dot"></span>This poll is still running — page auto-refreshes every 3 s</div>`
+    : '';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Log: ${esc(key)} #${pollNum ?? '?'} — Prevoyant Server</title>
+  <style>${BASE_CSS}${watchLogCss()}</style>
+</head>
+<body>
+  <header>
+    <h1>Prevoyant Server</h1>
+    <span class="version-badge">v${esc(pluginVersion)}</span>
+    <span class="meta"></span>
+    <a href="/dashboard/watch" class="settings-link" style="color:#fff">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+      Watch
+    </a>
+    <a href="/dashboard/settings" class="settings-link">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Settings
+    </a>
+  </header>
+  <div class="wl-wrap">
+    <div class="wl-header">
+      <span class="breadcrumb">
+        <a href="/dashboard">Dashboard</a> ›
+        <a href="/dashboard/watch">Watch</a> ›
+        <a href="/dashboard/watch/${esc(key)}/logs">${esc(key)}</a> ›
+        ${pollNum != null ? `Poll #${pollNum}` : esc(filename)}
+      </span>
+    </div>
+    <div class="wl-header">
+      <span class="wl-title">${esc(key)} — Poll #${pollNum ?? '?'}</span>
+      <span style="font-size:.82rem;color:#64748b">${esc(date)}</span>
+    </div>
+    ${liveBar}
+    <div class="wl-card">
+      <div class="wl-card-head">
+        <span class="wl-card-label">${esc(filename)}</span>
+        <a class="wl-btn-a" href="/dashboard/watch/${esc(key)}/logs">← All runs</a>
+      </div>
+      <div class="wl-log-wrap" id="log-container">
+        <pre class="wl-log-pre" id="log-content">${esc(content)}</pre>
+      </div>
+    </div>
+  </div>
+  <footer class="footer">Prevoyant Server v${esc(pluginVersion)}</footer>
+  ${isLive ? `<script>
+  (function() {
+    var key = ${JSON.stringify(key)}, file = ${JSON.stringify(filename)};
+    var pre = document.getElementById('log-content');
+    var container = document.getElementById('log-container');
+    var atBottom = true;
+    container.addEventListener('scroll', function() {
+      atBottom = container.scrollTop + container.clientHeight >= container.scrollHeight - 40;
+    });
+    function refresh() {
+      fetch('/dashboard/watch/' + key + '/log/tail?file=' + encodeURIComponent(file))
+        .then(function(r){ return r.json(); })
+        .then(function(d) {
+          pre.textContent = d.content || '';
+          if (atBottom) container.scrollTop = container.scrollHeight;
+          if (d.done) { clearInterval(iv); document.querySelector('.wl-live-bar').style.display='none'; }
+        }).catch(function(){});
+    }
+    var iv = setInterval(refresh, 3000);
+    // Scroll to bottom initially
+    container.scrollTop = container.scrollHeight;
+  })();
+  </script>` : ''}
+</body>
+</html>`;
+}
+
+function renderWatch(flash) {
+  const tickets   = watchStore.list();
+  const watching  = tickets.filter(t => t.status === 'watching').length;
+  const enabled   = process.env.PRX_WATCH_ENABLED === 'Y';
+  const jiraBase  = (process.env.JIRA_URL || '').replace(/\/$/, '');
+
+  const flashHtml = flash === 'added'    ? `<div class="w-flash w-flash-ok">Ticket added — first poll running now.</div>`
+                  : flash === 'stopped'  ? `<div class="w-flash w-flash-ok">Ticket watch stopped.</div>`
+                  : flash === 'resumed'  ? `<div class="w-flash w-flash-ok">Ticket resumed — polling now.</div>`
+                  : flash === 'polled'   ? `<div class="w-flash w-flash-ok">Poll triggered — digest will be emailed shortly.</div>`
+                  : flash === 'removed'  ? `<div class="w-flash w-flash-ok">Ticket removed from watch list.</div>`
+                  : flash === 'exists'   ? `<div class="w-flash w-flash-err">That ticket is already being watched.</div>`
+                  : flash === 'nokey'    ? `<div class="w-flash w-flash-err">Please enter a ticket key.</div>`
+                  : '';
+
+  const INTERVAL_LABELS = { '1h': 'Every hour', '1d': 'Every day', '2d': 'Every 2 days', '5d': 'Every 5 days' };
+  const STATUS_BADGE = {
+    watching:  `<span class="w-badge w-watching">Watching</span>`,
+    stopped:   `<span class="w-badge w-stopped">Stopped</span>`,
+    completed: `<span class="w-badge w-completed">Completed</span>`,
+  };
+
+  const EYE_SVG = `<svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>`;
+
+  const rows = tickets.length === 0
+    ? `<tr><td colspan="8" class="w-empty">No tickets being watched yet. Add one above.</td></tr>`
+    : tickets.map(t => {
+        const ticketLabel = jiraBase
+          ? `<a href="${esc(jiraBase)}/browse/${esc(t.key)}" target="_blank" rel="noopener" class="w-ticket-link">${esc(t.key)}</a>`
+          : `<code>${esc(t.key)}</code>`;
+        const watchingEye = t.status === 'watching'
+          ? `<span class="w-eye-anim" title="Actively watching">${EYE_SVG}</span>`
+          : '';
+        const digestPreview = t.lastDigest
+          ? `<span class="w-digest-preview" title="${esc(t.lastDigest)}">${esc(t.lastDigest.slice(0, 80))}${t.lastDigest.length > 80 ? '…' : ''}</span>`
+          : `<span class="w-muted">—</span>`;
+        const errorHtml = t.lastError
+          ? `<div class="w-error-row" title="${esc(t.lastError)}">⚠ ${esc(t.lastError.slice(0, 80))}</div>`
+          : '';
+        const logsBtn = `<a href="/dashboard/watch/${esc(t.key)}/logs" class="w-btn w-btn-logs" style="margin-left:.3rem;text-decoration:none" title="View poll logs">Logs</a>`;
+        let actions = '';
+        if (t.status === 'watching') {
+          actions = `<form method="POST" action="/dashboard/watch/${esc(t.key)}/poll" style="display:inline">
+               <button class="w-btn w-btn-poll" title="Trigger an immediate poll and email digest now">Poll now</button>
+             </form>
+             <form method="POST" action="/dashboard/watch/${esc(t.key)}/stop" style="display:inline;margin-left:.3rem">
+               <button class="w-btn w-btn-stop" title="Stop watching this ticket">Stop</button>
+             </form>
+             <form method="POST" action="/dashboard/watch/${esc(t.key)}/remove" style="display:inline;margin-left:.3rem">
+               <button class="w-btn w-btn-remove" title="Remove from list" onclick="return confirm('Remove ${esc(t.key)} from the watch list?')">Remove</button>
+             </form>${logsBtn}`;
+        } else {
+          actions = `<form method="POST" action="/dashboard/watch/${esc(t.key)}/resume" style="display:inline">
+               <button class="w-btn w-btn-resume" title="Resume watching this ticket">Resume</button>
+             </form>
+             <form method="POST" action="/dashboard/watch/${esc(t.key)}/remove" style="display:inline;margin-left:.3rem">
+               <button class="w-btn w-btn-remove" title="Remove from list" onclick="return confirm('Remove ${esc(t.key)} from the watch list?')">Remove</button>
+             </form>${logsBtn}`;
+        }
+        return `<tr data-key="${esc(t.key)}">
+          <td style="white-space:nowrap">${ticketLabel}${watchingEye}</td>
+          <td>${STATUS_BADGE[t.status] || esc(t.status)}</td>
+          <td>${esc(INTERVAL_LABELS[t.interval] || t.interval)}</td>
+          <td class="w-num">${t.pollCount}${t.maxPolls > 0 ? ` / ${t.maxPolls}` : ''}</td>
+          <td class="w-time">${relativeTime(t.lastPollAt)}</td>
+          <td class="w-time">${t.status === 'watching' ? relativeTime(t.nextPollAt) : '—'}</td>
+          <td>${digestPreview}${errorHtml}</td>
+          <td class="w-actions">${actions}</td>
+        </tr>`;
+      }).join('');
+
+  const defaultInterval = process.env.PRX_WATCH_POLL_INTERVAL || '1d';
+  const defaultMaxPolls = process.env.PRX_WATCH_MAX_POLLS     || '0';
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Ticket Watcher — Prevoyant Server</title>
+  <style>
+    ${BASE_CSS}
+    .w-wrap { max-width:1100px; margin:2rem auto; padding:0 1.5rem 4rem; }
+    .w-header { display:flex; align-items:baseline; gap:1rem; margin-bottom:1.5rem; flex-wrap:wrap; }
+    .w-title { font-size:1.25rem; font-weight:700; color:#1a1a2e; }
+    .w-subtitle { font-size:.82rem; color:#64748b; }
+    .w-flash { padding:.7rem 1rem; border-radius:6px; margin-bottom:1.2rem; font-size:.875rem; }
+    .w-flash-ok  { background:#dcfce7; color:#166534; border:1px solid #bbf7d0; }
+    .w-flash-err { background:#fee2e2; color:#991b1b; border:1px solid #fecaca; }
+    .w-warn { background:#fffbeb; border:1px solid #fcd34d; border-radius:8px; padding:.75rem 1rem;
+              color:#92400e; font-size:.84rem; margin-bottom:1.2rem; }
+    .w-add-card { background:#fff; border:1px solid #e2e8f0; border-radius:10px; padding:1.25rem 1.5rem;
+                  margin-bottom:2rem; box-shadow:0 1px 3px #0001; }
+    .w-add-title { font-weight:600; font-size:.9rem; color:#1a1a2e; margin-bottom:1rem; }
+    .w-form-row { display:flex; gap:.75rem; align-items:flex-end; flex-wrap:wrap; }
+    .w-field { display:flex; flex-direction:column; gap:.3rem; }
+    .w-label { font-size:.78rem; font-weight:500; color:#374151; }
+    .w-input, .w-select { border:1px solid #d1d5db; border-radius:6px; padding:.45rem .7rem;
+                          font-size:.875rem; background:#fff; color:#1a1a2e; }
+    .w-input:focus, .w-select:focus { outline:2px solid #0d6efd44; border-color:#0d6efd; }
+    .w-input { width:160px; }
+    .w-submit { background:#0d6efd; color:#fff; border:none; border-radius:6px; padding:.5rem 1.1rem;
+                font-size:.875rem; font-weight:500; cursor:pointer; white-space:nowrap; }
+    .w-submit:hover { background:#0b5ed7; }
+    .w-hint { font-size:.72rem; color:#94a3b8; }
+    .w-table-wrap { background:#fff; border:1px solid #e2e8f0; border-radius:10px;
+                    box-shadow:0 1px 3px #0001; overflow:hidden; }
+    .w-table-head { display:flex; align-items:center; justify-content:space-between;
+                    padding:.85rem 1.25rem; border-bottom:1px solid #f1f5f9; gap:1rem; flex-wrap:wrap; }
+    .w-table-label { font-weight:600; font-size:.88rem; color:#374151; }
+    .w-count { font-size:.78rem; color:#6b7280; }
+    table.w-table { width:100%; border-collapse:collapse; font-size:.84rem; }
+    table.w-table th { background:#f8fafc; color:#64748b; font-weight:600; font-size:.75rem;
+                       text-transform:uppercase; letter-spacing:.04em; padding:.6rem 1rem;
+                       text-align:left; border-bottom:1px solid #e2e8f0; white-space:nowrap; }
+    table.w-table td { padding:.75rem 1rem; border-bottom:1px solid #f1f5f9; vertical-align:top; }
+    table.w-table tr:last-child td { border-bottom:none; }
+    table.w-table tr:hover td { background:#f8fafc; }
+    .w-badge { display:inline-block; padding:2px 9px; border-radius:10px; font-size:.73rem; font-weight:600; }
+    .w-watching  { background:#dbeafe; color:#1d4ed8; }
+    .w-stopped   { background:#f3f4f6; color:#6b7280; }
+    .w-completed { background:#dcfce7; color:#166534; }
+    .w-num  { text-align:center; color:#374151; font-variant-numeric:tabular-nums; }
+    .w-time { color:#6b7280; white-space:nowrap; font-size:.8rem; }
+    .w-actions { white-space:nowrap; }
+    .w-btn { border:none; border-radius:5px; padding:.3rem .65rem; font-size:.78rem;
+             font-weight:500; cursor:pointer; }
+    .w-btn-poll   { background:#eff6ff; color:#1d4ed8; }
+    .w-btn-poll:hover   { background:#dbeafe; }
+    .w-btn-stop   { background:#fef2f2; color:#dc2626; }
+    .w-btn-stop:hover   { background:#fee2e2; }
+    .w-btn-resume { background:#f0fdf4; color:#16a34a; }
+    .w-btn-resume:hover { background:#dcfce7; }
+    .w-btn-remove { background:#f3f4f6; color:#6b7280; }
+    .w-btn-remove:hover { background:#e5e7eb; }
+    .w-btn-logs  { background:#f5f3ff; color:#6d28d9; }
+    .w-btn-logs:hover  { background:#ede9fe; }
+    @keyframes w-blink {
+      0%, 80%, 100% { transform: scaleY(1); }
+      90% { transform: scaleY(0.08); }
+    }
+    .w-eye-anim { display:inline-flex; align-items:center; margin-left:.4rem;
+                  color:#0d6efd; vertical-align:middle; }
+    .w-eye-anim svg { animation: w-blink 3.5s ease-in-out infinite; transform-origin:center; }
+    .w-empty { text-align:center; color:#9ca3af; padding:2.5rem 1rem; font-size:.875rem; }
+    .w-muted { color:#9ca3af; }
+    .w-ticket-link { color:#0d6efd; font-weight:600; text-decoration:none; }
+    .w-ticket-link:hover { text-decoration:underline; }
+    .w-digest-preview { color:#374151; font-size:.8rem; line-height:1.4; }
+    .w-error-row { color:#dc2626; font-size:.75rem; margin-top:.3rem; }
+    .breadcrumb { font-size:.82rem; color:#94a3b8; }
+    .breadcrumb a { color:#64748b; text-decoration:none; }
+    .breadcrumb a:hover { color:#374151; }
+    /* Live progress panel */
+    .w-progress { background:#0f172a; border:1px solid #1e3a5f; border-radius:10px;
+                  padding:1rem 1.25rem; margin-bottom:2rem; }
+    .w-progress-head { font-weight:600; font-size:.88rem; color:#7dd3fc; margin-bottom:.75rem;
+                       display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+    .w-progress-head a { color:#38bdf8; font-size:.78rem; font-weight:400; margin-left:auto; text-decoration:none; }
+    .w-progress-head a:hover { text-decoration:underline; }
+    @keyframes w-spin { to { transform:rotate(360deg); } }
+    .w-spinner { width:13px; height:13px; border:2px solid #1e3a5f; border-top-color:#38bdf8;
+                 border-radius:50%; animation:w-spin .7s linear infinite; flex-shrink:0; }
+    .w-log-pre { color:#e2e8f0; font-family:'Menlo','Monaco','Consolas',monospace;
+                 font-size:.75rem; line-height:1.55; white-space:pre-wrap; word-break:break-word;
+                 margin:0; max-height:260px; overflow-y:auto; padding:.5rem .75rem;
+                 background:#020617; border-radius:6px; }
+    .w-progress-none { color:#475569; font-size:.8rem; font-style:italic; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Prevoyant Server</h1>
+    <span class="version-badge">v${esc(pluginVersion)}</span>
+    <span class="meta"></span>
+    <a href="/dashboard/activity" class="settings-link">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+      Activity
+    </a>
+    <a href="/dashboard/watch" class="settings-link" style="color:#fff">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+      Watch
+    </a>
+    <a href="/dashboard/settings" class="settings-link">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+      Settings
+    </a>
+  </header>
+
+  <div class="w-wrap">
+    <div class="w-header">
+      <span class="breadcrumb"><a href="/dashboard">Dashboard</a> › Ticket Watcher</span>
+    </div>
+    <div class="w-header">
+      <span class="w-title">Ticket Watcher</span>
+      <span class="w-subtitle">${watching} ticket${watching !== 1 ? 's' : ''} currently being watched</span>
+    </div>
+
+    ${flashHtml}
+
+    ${!enabled ? `<div class="w-warn">
+      <strong>Ticket Watcher is disabled.</strong>
+      Enable it under <a href="/dashboard/settings#ticket-watcher" style="color:#92400e;font-weight:600">Settings → Ticket Watcher</a>
+      and set <code>PRX_WATCH_ENABLED=Y</code>.
+    </div>` : ''}
+
+    <!-- Live progress panel (shown only when a ticket is actively polling) -->
+    <div id="w-progress-panel" style="display:none" class="w-progress">
+      <div class="w-progress-head">
+        <span class="w-spinner"></span>
+        <span id="w-progress-key" style="color:#f0f9ff">Polling…</span>
+        <span style="color:#7dd3fc;font-size:.78rem;font-weight:400" id="w-progress-subtitle"></span>
+        <a id="w-progress-loglink" href="#" target="_blank">Open full log ↗</a>
+      </div>
+      <pre class="w-log-pre" id="w-log-pre"><span class="w-progress-none">Waiting for output…</span></pre>
+    </div>
+
+    <!-- Add ticket form -->
+    <div class="w-add-card">
+      <div class="w-add-title">Watch a Jira Ticket</div>
+      <form method="POST" action="/dashboard/watch/add">
+        <div class="w-form-row">
+          <div class="w-field">
+            <label class="w-label" for="wf-key">Ticket Key</label>
+            <input id="wf-key" name="key" class="w-input" placeholder="e.g. IV-1234" required
+                   pattern="[A-Z][A-Z0-9]+-[0-9]+" title="e.g. PROJ-123" autocomplete="off"
+                   style="text-transform:uppercase" oninput="this.value=this.value.toUpperCase()">
+          </div>
+          <div class="w-field">
+            <label class="w-label" for="wf-interval">Poll Interval</label>
+            <select id="wf-interval" name="interval" class="w-select">
+              <option value="1h"${defaultInterval === '1h' ? ' selected' : ''}>Every hour</option>
+              <option value="1d"${defaultInterval === '1d' || !defaultInterval ? ' selected' : ''}>Every day</option>
+              <option value="2d"${defaultInterval === '2d' ? ' selected' : ''}>Every 2 days</option>
+              <option value="5d"${defaultInterval === '5d' ? ' selected' : ''}>Every 5 days</option>
+            </select>
+          </div>
+          <div class="w-field">
+            <label class="w-label" for="wf-max">Max Polls</label>
+            <input id="wf-max" name="maxPolls" type="number" min="0" class="w-input"
+                   value="${esc(defaultMaxPolls)}" placeholder="0" style="width:90px">
+            <span class="w-hint">0 = unlimited</span>
+          </div>
+          <button type="submit" class="w-submit">Start Watching</button>
+        </div>
+      </form>
+    </div>
+
+    <!-- Watched tickets table -->
+    <div class="w-table-wrap">
+      <div class="w-table-head">
+        <span class="w-table-label">Watched Tickets</span>
+        <span class="w-count">${tickets.length} total</span>
+      </div>
+      <table class="w-table">
+        <thead>
+          <tr>
+            <th>Ticket</th>
+            <th>Status</th>
+            <th>Interval</th>
+            <th style="text-align:center">Polls</th>
+            <th>Last Polled</th>
+            <th>Next Poll</th>
+            <th>Last Digest</th>
+            <th>Actions</th>
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
+  </div>
+
+  <footer class="footer">
+    Prevoyant Server v${esc(pluginVersion)} &mdash; Ticket Watcher
+  </footer>
+
+  <script>
+  (function() {
+    var POLL_MS    = 3000;
+    var panel      = document.getElementById('w-progress-panel');
+    var keyEl      = document.getElementById('w-progress-key');
+    var subtitleEl = document.getElementById('w-progress-subtitle');
+    var logPre     = document.getElementById('w-log-pre');
+    var logLink    = document.getElementById('w-progress-loglink');
+    var tbody      = document.querySelector('table.w-table tbody');
+    var activeKey  = null;
+    var atBottom   = true;
+
+    logPre.addEventListener('scroll', function() {
+      atBottom = logPre.scrollTop + logPre.clientHeight >= logPre.scrollHeight - 40;
+    });
+
+    function fmtTime(iso) {
+      if (!iso) return '—';
+      try {
+        var d = new Date(iso), now = new Date();
+        var diff = Math.floor((now - d) / 1000);
+        if (diff < 5)  return 'just now';
+        if (diff < 60) return diff + 's ago';
+        if (diff < 3600) return Math.floor(diff / 60) + 'm ago';
+        return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      } catch(e) { return ''; }
+    }
+
+    function escHtml(s) {
+      return String(s || '').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+    }
+
+    function fetchLogTail(key, logFile) {
+      if (!logFile) return;
+      fetch('/dashboard/watch/' + key + '/log/tail?file=' + encodeURIComponent(logFile))
+        .then(function(r){ return r.json(); })
+        .then(function(d) {
+          logPre.textContent = d.content || '(empty)';
+          if (atBottom) { logPre.scrollTop = logPre.scrollHeight; }
+        }).catch(function(){});
+    }
+
+    function refresh() {
+      fetch('/dashboard/watch/json').then(function(r){ return r.json(); }).then(function(tickets) {
+        var inflight = tickets.filter(function(t){ return t.pollingNow; });
+
+        if (inflight.length > 0) {
+          var t = inflight[0];
+          panel.style.display = '';
+          keyEl.textContent   = t.key + ' — Polling in progress';
+          subtitleEl.textContent = inflight.length > 1 ? '(+' + (inflight.length - 1) + ' more in queue)' : '';
+          if (t.lastLogFile) {
+            logLink.href = '/dashboard/watch/' + t.key + '/logs/' + encodeURIComponent(t.lastLogFile);
+            logLink.style.display = '';
+          } else {
+            logLink.style.display = 'none';
+          }
+          activeKey = t.key;
+          fetchLogTail(t.key, t.lastLogFile);
+        } else {
+          panel.style.display = 'none';
+          activeKey = null;
+        }
+
+        var STATUS_HTML = {
+          watching:  '<span class="w-badge w-watching">Watching</span>',
+          stopped:   '<span class="w-badge w-stopped">Stopped</span>',
+          completed: '<span class="w-badge w-completed">Completed</span>',
+        };
+        var EYE = '<span class="w-eye-anim" title="Actively watching"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></span>';
+
+        tickets.forEach(function(t) {
+          var row = tbody.querySelector('tr[data-key="' + t.key + '"]');
+          if (!row) return;
+          row.cells[1].innerHTML = STATUS_HTML[t.status] || escHtml(t.status);
+          row.cells[3].textContent = t.pollCount + (t.maxPolls > 0 ? ' / ' + t.maxPolls : '');
+          row.cells[4].textContent = t.lastPollAt ? fmtTime(t.lastPollAt) : '—';
+          row.cells[5].textContent = t.status === 'watching' && t.nextPollAt ? fmtTime(t.nextPollAt) : '—';
+          var eyeSpan = row.cells[0].querySelector('.w-eye-anim');
+          if (t.status === 'watching' && !eyeSpan) row.cells[0].insertAdjacentHTML('beforeend', EYE);
+          if (t.status !== 'watching' && eyeSpan) eyeSpan.remove();
+        });
+      }).catch(function(){});
+    }
+
+    setInterval(refresh, POLL_MS);
+  })();
   </script>
 </body>
 </html>`;
@@ -2610,6 +3284,33 @@ function renderSettings(vals, flash) {
             ${fld('PRX_DISK_CAPACITY_ALERT_PCT','Alert threshold (% of quota)','number',v('PRX_DISK_CAPACITY_ALERT_PCT'),'80','Send an email alert when ~/.prevoyant/ reaches this percentage of the size quota. E.g. 80% of 500 MB = alert at 400 MB. Default: 80.')}
             ${fld('PRX_DISK_CLEANUP_INTERVAL_DAYS','Cleanup interval (days)','number',v('PRX_DISK_CLEANUP_INTERVAL_DAYS'),'7','How many days between scheduled house-cleaning prompts. Set 0 to disable auto-cleanup prompts. Default: 7.')}
           </div>
+        </div>
+      </details>
+
+      <!-- Ticket Watcher -->
+      <details class="s-section"${v('PRX_WATCH_ENABLED') === 'Y' ? ' open' : ''} id="ticket-watcher">
+        <summary>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          Ticket Watcher
+          <span class="s-opt">Optional</span>
+          <span class="s-chevron">›</span>
+        </summary>
+        <div class="s-body" style="padding:0;box-shadow:none;background:transparent">
+          <div class="s-field span2">
+            <div class="s-hint" style="margin-top:0">
+              Watches specified Jira tickets on a recurring schedule. On each poll it reads all comments and attachments,
+              calls Claude to produce a progress digest, and emails it to you.
+              Watched tickets survive server restarts. Manage them at
+              <a href="/dashboard/watch" style="color:#1e40af">Dashboard › Watch</a>.
+            </div>
+          </div>
+          ${fld('PRX_WATCH_ENABLED','Enable ticket watcher','select',v('PRX_WATCH_ENABLED') || 'N','','Starts the background watcher worker.',
+            [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
+          ${fld('PRX_WATCH_POLL_INTERVAL','Default poll interval','select',v('PRX_WATCH_POLL_INTERVAL') || '1d','','Default interval pre-selected when adding a ticket on the Watch page.',
+            [{v:'1h',l:'Every hour'},{v:'1d',l:'Every day (default)'},{v:'2d',l:'Every 2 days'},{v:'5d',l:'Every 5 days'}])}
+          ${fld('PRX_WATCH_MAX_POLLS','Default max polls','number',v('PRX_WATCH_MAX_POLLS'),'0','Default maximum number of polls per ticket. 0 = unlimited. Pre-filled on the Watch page.')}
+          ${fld('PRX_WATCH_LOG_KEEP_DAYS','Log retention (days)','number',v('PRX_WATCH_LOG_KEEP_DAYS') || '30','30','Delete poll log files older than this many days during house-cleaning. Default: 30.')}
+          ${fld('PRX_WATCH_LOG_KEEP_PER_TICKET','Max logs per ticket','number',v('PRX_WATCH_LOG_KEEP_PER_TICKET') || '10','10','Keep at most this many log files per ticket (oldest removed first). Default: 10.')}
         </div>
       </details>
 
@@ -3336,6 +4037,41 @@ router.post('/disk/approve-cleanup', (_req, res) => {
     }
   } catch (_) {}
 
+  // Trim watch poll logs — delete by age AND enforce per-ticket cap
+  const WATCH_KEEP_DAYS = parseInt(process.env.PRX_WATCH_LOG_KEEP_DAYS       || '30', 10);
+  const WATCH_KEEP_PER  = parseInt(process.env.PRX_WATCH_LOG_KEEP_PER_TICKET || '10', 10);
+  const watchCutoff     = Date.now() - WATCH_KEEP_DAYS * 24 * 60 * 60 * 1000;
+  let deletedWatchLogs  = 0;
+  try {
+    const ticketDirs = fs.readdirSync(WATCH_LOG_DIR, { withFileTypes: true })
+      .filter(e => e.isDirectory());
+    for (const td of ticketDirs) {
+      const dir = path.join(WATCH_LOG_DIR, td.name);
+      // Delete files older than cutoff
+      let files;
+      try { files = fs.readdirSync(dir).filter(f => f.endsWith('.log')).sort(); }
+      catch (_) { continue; }
+      for (const f of files) {
+        const fp = path.join(dir, f);
+        try {
+          if (fs.statSync(fp).mtimeMs < watchCutoff) {
+            fs.unlinkSync(fp);
+            deletedWatchLogs++;
+          }
+        } catch (_) {}
+      }
+      // Enforce per-ticket cap on what remains
+      try {
+        const remaining = fs.readdirSync(dir).filter(f => f.endsWith('.log')).sort();
+        if (remaining.length > WATCH_KEEP_PER) {
+          for (const f of remaining.slice(0, remaining.length - WATCH_KEEP_PER)) {
+            try { fs.unlinkSync(path.join(dir, f)); deletedWatchLogs++; } catch (_) {}
+          }
+        }
+      } catch (_) {}
+    }
+  } catch (_) {}
+
   // Update status file
   try {
     const existing = readDiskStatus();
@@ -3345,7 +4081,7 @@ router.post('/disk/approve-cleanup', (_req, res) => {
     );
   } catch (_) {}
 
-  activityLog.record('disk_cleanup', null, 'user', { deletedSessions, trimmedLogs });
+  activityLog.record('disk_cleanup', null, 'user', { deletedSessions, trimmedLogs, deletedWatchLogs });
   res.redirect(303, '/dashboard/disk?cleaned=1');
 });
 
@@ -3662,6 +4398,8 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'PRX_REDIS_ENABLED', 'PRX_REDIS_URL', 'PRX_REDIS_PASSWORD', 'PRX_REDIS_PREFIX', 'PRX_REDIS_TTL_DAYS',
     'PRX_WATCHDOG_ENABLED', 'PRX_WATCHDOG_INTERVAL_SECS', 'PRX_WATCHDOG_FAIL_THRESHOLD',
     'PRX_DISK_MONITOR_ENABLED', 'PRX_DISK_MONITOR_INTERVAL_MINS', 'PRX_PREVOYANT_MAX_SIZE_MB', 'PRX_DISK_CAPACITY_ALERT_PCT', 'PRX_DISK_CLEANUP_INTERVAL_DAYS',
+    'PRX_WATCH_ENABLED', 'PRX_WATCH_POLL_INTERVAL', 'PRX_WATCH_MAX_POLLS',
+    'PRX_WATCH_LOG_KEEP_DAYS', 'PRX_WATCH_LOG_KEEP_PER_TICKET',
   ];
 
   try {
@@ -3803,6 +4541,117 @@ router.post('/upgrade', (_req, res) => {
       child.unref();
     });
   });
+});
+
+// ── Ticket Watcher ────────────────────────────────────────────────────────────
+
+router.get('/watch', (req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(renderWatch(req.query.flash || null));
+});
+
+router.get('/watch/json', (_req, res) => {
+  res.json(watchStore.list());
+});
+
+router.post('/watch/add', express.urlencoded({ extended: false }), (req, res) => {
+  const key      = ((req.body.key || '').toUpperCase().trim()).replace(/[^A-Z0-9_-]/g, '');
+  const interval = ['1h','1d','2d','5d'].includes(req.body.interval) ? req.body.interval : '1d';
+  const maxPolls = parseInt(req.body.maxPolls) || 0;
+
+  if (!key) return res.redirect(303, '/dashboard/watch?flash=nokey');
+
+  const existing = watchStore.get(key);
+  if (existing && existing.status === 'watching') {
+    return res.redirect(303, '/dashboard/watch?flash=exists');
+  }
+
+  watchStore.addTicket(key, interval, maxPolls);
+  watchManager.addTicket(key, interval, maxPolls);
+  res.redirect(303, '/dashboard/watch?flash=added');
+});
+
+router.post('/watch/:key/stop', (req, res) => {
+  const key = (req.params.key || '').toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+  watchStore.stopTicket(key);
+  watchManager.stopTicket(key);
+  res.redirect(303, '/dashboard/watch?flash=stopped');
+});
+
+router.post('/watch/:key/resume', (req, res) => {
+  const key = (req.params.key || '').toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+  watchStore.resumeTicket(key);
+  watchManager.resumeTicket(key);
+  res.redirect(303, '/dashboard/watch?flash=resumed');
+});
+
+router.post('/watch/:key/poll', (req, res) => {
+  const key = (req.params.key || '').toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+  watchManager.pollNow(key);
+  res.redirect(303, '/dashboard/watch?flash=polled');
+});
+
+router.post('/watch/:key/remove', (req, res) => {
+  const key = (req.params.key || '').toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+  watchStore.stopTicket(key);
+  watchManager.stopTicket(key);
+  watchStore.removeTicket(key);
+  res.redirect(303, '/dashboard/watch?flash=removed');
+});
+
+// ── Watch log routes ──────────────────────────────────────────────────────────
+
+// Tail the current (or specified) log file — JSON, used by the live panel
+router.get('/watch/:key/log/tail', (req, res) => {
+  const key    = (req.params.key || '').toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+  const ticket = watchStore.get(key);
+  const file   = path.basename((req.query.file || ticket?.lastLogFile || '').toString());
+  if (!file || !file.endsWith('.log')) return res.json({ content: '', done: true });
+  const logPath = path.join(WATCH_LOG_DIR, key, file);
+  try {
+    const content = fs.readFileSync(logPath, 'utf8');
+    res.json({ content, done: !(ticket?.pollingNow && ticket?.lastLogFile === file) });
+  } catch (_) {
+    res.json({ content: '', done: true });
+  }
+});
+
+// List all log files for a ticket
+router.get('/watch/:key/logs', (req, res) => {
+  const key    = (req.params.key || '').toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+  const logDir = path.join(WATCH_LOG_DIR, key);
+  let files = [];
+  try {
+    files = fs.readdirSync(logDir)
+      .filter(f => f.endsWith('.log'))
+      .sort()
+      .reverse();
+  } catch (_) {}
+  res.send(renderWatchLogs(key, files, watchStore.get(key), req.query.flash || null));
+});
+
+// Delete all log files for a ticket (removes the entire ticket log directory)
+router.post('/watch/:key/logs/clear', (req, res) => {
+  const key    = (req.params.key || '').toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+  const ticket = watchStore.get(key);
+  if (ticket?.pollingNow) return res.redirect(303, `/dashboard/watch/${key}/logs`);
+  const logDir = path.join(WATCH_LOG_DIR, key);
+  try { fs.rmSync(logDir, { recursive: true, force: true }); } catch (_) {}
+  res.redirect(303, `/dashboard/watch/${key}/logs?flash=cleared`);
+});
+
+// View a specific log file
+router.get('/watch/:key/logs/:file', (req, res) => {
+  const key    = (req.params.key || '').toUpperCase().replace(/[^A-Z0-9_-]/g, '');
+  const file   = path.basename(req.params.file || '');
+  if (!file.endsWith('.log')) return res.status(400).send('Invalid log file');
+  const logPath = path.join(WATCH_LOG_DIR, key, file);
+  try {
+    const content = fs.readFileSync(logPath, 'utf8');
+    res.send(renderWatchLogView(key, file, content, watchStore.get(key)));
+  } catch (_) {
+    res.status(404).send('Log file not found');
+  }
 });
 
 module.exports = router;

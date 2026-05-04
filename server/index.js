@@ -20,6 +20,7 @@ const { schedulePollScript, runFallbackPoll } = require('./runner/pollScheduler'
 const { restoreScheduledJobs } = require('./queue/jobQueue');
 const activityLog   = require('./dashboard/activityLog');
 const serverEvents  = require('./serverEvents');
+const watchManager  = require('./watchers/watchManager');
 
 const app = express();
 app.use(express.json());
@@ -39,10 +40,11 @@ app.use('/jira-events', jiraWebhook);
 
 // ── Health-monitor watchdog (worker thread) ───────────────────────────────────
 
-let watchdogWorker  = null;
-let diskWorker      = null;
-let updateWorker    = null;
-let kbSyncWorker    = null;
+let watchdogWorker       = null;
+let diskWorker           = null;
+let updateWorker         = null;
+let kbSyncWorker         = null;
+let ticketWatcherWorker  = null;
 
 function startWatchdog() {
   if (process.env.PRX_WATCHDOG_ENABLED !== 'Y') return;
@@ -211,23 +213,69 @@ function stopKbSync() {
   }
 }
 
-process.on('SIGTERM', () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); setTimeout(() => process.exit(0), 600); });
-process.on('SIGINT',  () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); setTimeout(() => process.exit(0), 600); });
+function startTicketWatcher() {
+  if (process.env.PRX_WATCH_ENABLED !== 'Y') return;
+  if (ticketWatcherWorker) return;
+
+  // Worker reads Jira/project config from process.env directly (shared with parent).
+  // Only SMTP credentials are passed as workerData since they don't change at runtime.
+  const workerData = {
+    smtpHost: process.env.PRX_SMTP_HOST || '',
+    smtpPort: process.env.PRX_SMTP_PORT || '587',
+    smtpUser: process.env.PRX_SMTP_USER || '',
+    smtpPass: process.env.PRX_SMTP_PASS || '',
+  };
+
+  ticketWatcherWorker = new Worker(
+    path.join(__dirname, 'workers', 'ticketWatcherWorker.js'),
+    { workerData }
+  );
+
+  watchManager.setWorker(ticketWatcherWorker);
+
+  ticketWatcherWorker.on('message', msg => {
+    if (msg?.type === 'log') return; // already printed inside worker
+  });
+  ticketWatcherWorker.on('error', err =>
+    console.error('[ticket-watcher] Worker error:', err.message)
+  );
+  ticketWatcherWorker.on('exit', code => {
+    ticketWatcherWorker = null;
+    watchManager.setWorker(null);
+    if (code !== 0) console.error(`[ticket-watcher] Worker exited with code ${code}`);
+  });
+
+  console.log('[prevoyant-server] Ticket watcher active — polling watched tickets every 60 s');
+}
+
+function stopTicketWatcher() {
+  if (ticketWatcherWorker) {
+    ticketWatcherWorker.postMessage({ type: 'graceful-stop' });
+    ticketWatcherWorker = null;
+    watchManager.setWorker(null);
+  }
+}
+
+process.on('SIGTERM', () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); setTimeout(() => process.exit(0), 600); });
+process.on('SIGINT',  () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); setTimeout(() => process.exit(0), 600); });
 
 // Reactively start/stop workers when settings are saved from the dashboard.
 // This avoids requiring a full server restart for monitor enable/disable toggles.
 serverEvents.on('settings-saved', () => {
-  const diskEnabled     = process.env.PRX_DISK_MONITOR_ENABLED === 'Y';
-  const watchdogEnabled = process.env.PRX_WATCHDOG_ENABLED     === 'Y';
-  const kbSyncEnabled   = process.env.PRX_REALTIME_KB_SYNC     === 'Y'
-                       && process.env.PRX_KB_MODE               === 'distributed';
+  const diskEnabled        = process.env.PRX_DISK_MONITOR_ENABLED === 'Y';
+  const watchdogEnabled    = process.env.PRX_WATCHDOG_ENABLED     === 'Y';
+  const kbSyncEnabled      = process.env.PRX_REALTIME_KB_SYNC     === 'Y'
+                          && process.env.PRX_KB_MODE               === 'distributed';
+  const watcherEnabled     = process.env.PRX_WATCH_ENABLED         === 'Y';
 
-  if (diskEnabled && !diskWorker)         startDiskMonitor();
-  if (!diskEnabled && diskWorker)         stopDiskMonitor();
-  if (watchdogEnabled && !watchdogWorker) startWatchdog();
-  if (!watchdogEnabled && watchdogWorker) stopWatchdog();
-  if (kbSyncEnabled && !kbSyncWorker)    startKbSync();
-  if (!kbSyncEnabled && kbSyncWorker)    stopKbSync();
+  if (diskEnabled && !diskWorker)                     startDiskMonitor();
+  if (!diskEnabled && diskWorker)                     stopDiskMonitor();
+  if (watchdogEnabled && !watchdogWorker)             startWatchdog();
+  if (!watchdogEnabled && watchdogWorker)             stopWatchdog();
+  if (kbSyncEnabled && !kbSyncWorker)                startKbSync();
+  if (!kbSyncEnabled && kbSyncWorker)                stopKbSync();
+  if (watcherEnabled && !ticketWatcherWorker)         startTicketWatcher();
+  if (!watcherEnabled && ticketWatcherWorker)         stopTicketWatcher();
 });
 
 // ── Server listen ─────────────────────────────────────────────────────────────
@@ -253,6 +301,7 @@ app.listen(config.port, () => {
   startDiskMonitor();
   startUpdateChecker();
   startKbSync();
+  startTicketWatcher();
 
   if (config.pollIntervalDays > 0) {
     schedulePollScript(config.pollIntervalDays);

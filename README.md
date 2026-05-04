@@ -854,6 +854,22 @@ rm -rf ~/.prevoyant/reports   # or the path set in CLAUDE_REPORT_DIR
 
 ## Changelog
 
+### v1.2.8 — Ticket Watcher
+
+- **Jira ticket monitoring with AI digests:** A new background worker (`server/workers/ticketWatcherWorker.js`) polls any Jira ticket on a configurable schedule (every hour, day, 2 days, or 5 days). On each poll it invokes the skill in **Watch Mode** (`/prx:dev watch KEY`) using the configured Jira MCP — no direct API calls needed. Claude fetches all ticket details and comments, then produces a structured digest: **Ticket Summary**, **Progress Assessment**, **Blockers & Concerns**, **What Should Happen Next**, and an **Overall Verdict** (ON TRACK / NEEDS ATTENTION / BLOCKED / STALLED). The digest is emailed via the existing SMTP stack. Zero new npm dependencies.
+
+- **Watch Mode in SKILL.md:** The skill now recognises the `watch` trigger phrase and runs a dedicated four-step workflow (W0–W3: KB Query → Fetch Ticket → Progress Analysis → Digest Output). Steps are announced in the standard `### Step W{N} — {Label}` format so the dashboard pipeline display and live progress panel can track them.
+
+- **Dedicated Watch page** (`/dashboard/watch`): Add tickets with a key + interval + optional max-poll-count form. The table shows live status, poll counts, last/next poll times, and a truncated digest preview. Per-ticket actions: **Poll now** (immediate on-demand digest + email), **Stop**, **Resume** (restores a stopped ticket to active watching), and **Remove**.
+
+- **Live progress panel:** While a poll is running, a blue in-progress card appears at the top of the Watch page showing which ticket is being processed and a real-time log of each step as Claude announces it. The page polls `/dashboard/watch/json` every 3 seconds and patches the table (status badges, poll counts, timestamps, blinking eye) without a full reload.
+
+- **Animated eye icon on watching tickets:** Active tickets show a blinking eye SVG animation, making it immediately obvious which tickets are under active surveillance.
+
+- **Survives restarts:** Watched tickets and their poll history are persisted to `~/.prevoyant/server/watched-tickets.json`. The worker reattaches all active watches automatically on server start.
+
+- **New config keys** (all editable in Settings → Ticket Watcher): `PRX_WATCH_ENABLED` (Y/N), `PRX_WATCH_POLL_INTERVAL` (default interval for the add form), `PRX_WATCH_MAX_POLLS` (default max polls, 0 = unlimited). Worker starts/stops reactively when the setting is toggled — no restart required.
+
 ### v1.2.7 — Real-time KB Sync (Redis doorbell · Git mail carrier)
 
 - **Live KB propagation across machines:** When a session completes on any machine, `server/kb/kbSync.js` does a `git push` (KB files travel to the private repo) then posts a ~100-byte notification to an [Upstash Redis](https://upstash.com/) stream — just `{ machine, ticket, commit }`. Every other connected machine is polling `XREAD` every 10 seconds (configurable); on a new notification it immediately does `git pull --rebase` and invalidates its local KB cache. Idle machines stay in sync between sessions so Step 0 KB queries always reflect the latest state. **No KB content ever touches Redis** — the stream is the doorbell, Git is the mail carrier.

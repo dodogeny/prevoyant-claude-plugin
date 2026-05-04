@@ -39,5 +39,11 @@
     { "id": "E5b", "label": "Generate PDF" },
     { "id": "E6",  "label": "KB Update" },
     { "id": "E7",  "label": "Bryan's Retrospective" }
+  ],
+  "watch": [
+    { "id": "W0", "label": "KB Query" },
+    { "id": "W1", "label": "Fetch Ticket" },
+    { "id": "W2", "label": "Progress Analysis" },
+    { "id": "W3", "label": "Digest Output" }
   ]
 }

@@ -1157,8 +1157,9 @@ This skill operates in three modes. Detect the mode from the invocation:
 | **Dev Mode** | `IV-XXXX`, `start dev on IV-XXXX`, `pick up IV-XXXX`, `/dev IV-XXXX` | **Step 0** (KB query) → Steps 1–12 (full dev workflow → proposed fix → PDF) → **Step 13** (KB update) |
 | **PR Review Mode** | `review IV-XXXX`, `PR review IV-XXXX`, `code review IV-XXXX`, `/dev review IV-XXXX` | **Step R0** (KB query) → Steps R1–R8 (code diff review → PDF) → **Step R9** (KB update) |
 | **Estimate Mode** | `estimate IV-XXXX`, `size IV-XXXX`, `point IV-XXXX`, `/dev estimate IV-XXXX` | **Step E0** (KB query) → Steps E1–E7 (planning poker → consensus → Jira update → KB update) |
+| **Watch Mode** | `watch IV-XXXX`, `/prx:dev watch IV-XXXX` | **Step W0** (KB query) → **Step W1** (fetch ticket + all comments) → **Step W2** (progress analysis) → **Step W3** (digest output) |
 
-**→ Check for trigger words in order: `estimate`/`size`/`point` → Estimate Mode. `review` → PR Review Mode. Otherwise → Dev Mode.**
+**→ Check for trigger words in order: `estimate`/`size`/`point` → Estimate Mode. `review` → PR Review Mode. `watch` → Watch Mode. Otherwise → Dev Mode.**
 
 ---
 
@@ -5338,6 +5339,104 @@ Identical to Step 14 in Dev Mode with these differences:
 
 ---
 
+## Watch Mode
+
+Watch Mode is invoked automatically by the Prevoyant Server ticket watcher. It runs headlessly (`AUTO_MODE=Y`) and produces a structured progress digest that is emailed to `PRX_EMAIL_TO`.
+
+### Step W0 — KB Query
+
+Query the knowledge base for any prior context on the ticket.
+
+Announce: `### Step W0 — KB Query`
+
+- Load `${PRX_KNOWLEDGE_DIR}` (or the distributed KB clone if configured).
+- Search for any existing entries related to `${TICKET_KEY}`.
+- Summarise prior context in 2–3 sentences. If nothing found, output "No prior KB context found."
+
+---
+
+### Step W1 — Fetch Ticket
+
+Announce: `### Step W1 — Fetch Ticket`
+
+Using the Jira MCP tools:
+1. Fetch the full ticket details for `${TICKET_KEY}` (summary, description, assignee, status, priority, labels, fix version).
+2. Fetch all comments on the ticket, newest first.
+3. Fetch attachment metadata (names, sizes, upload dates) if available.
+
+Output a concise **Ticket Snapshot**:
+
+```
+Ticket   : {KEY} — {Summary}
+Status   : {Status}
+Assignee : {Assignee}
+Priority : {Priority}
+Created  : {Created date}
+Updated  : {Last updated}
+Comments : {N} comment(s)
+```
+
+---
+
+### Step W2 — Progress Analysis
+
+Announce: `### Step W2 — Progress Analysis`
+
+Analyse the full ticket content — description, all comments, and attachment names — to assess current progress.
+
+Evaluate:
+- What work has already been done?
+- Is the team moving forward, stalled, or blocked?
+- Are there open questions or unresolved blockers?
+- Are commitments or deadlines mentioned? Are they at risk?
+- What is the overall trajectory?
+
+---
+
+### Step W3 — Digest Output
+
+Announce: `### Step W3 — Digest Output`
+
+Produce the final digest using **exactly** these section headers (the server parses them for the email):
+
+---
+
+## Ticket Summary
+
+What is this ticket about? 2–3 sentences covering the purpose, scope, and business context. Written for a reader who has not seen the ticket before.
+
+---
+
+## Progress Assessment
+
+What has been accomplished so far? Is work moving forward at a reasonable pace?
+
+---
+
+## Blockers & Concerns
+
+What is blocking progress or causing concern? List specific issues, unanswered questions, or risks.
+
+---
+
+## What Should Happen Next
+
+Concrete, actionable next steps — who should do what and by when where possible.
+
+---
+
+## Overall Verdict
+
+**ONE OF: ON TRACK | NEEDS ATTENTION | BLOCKED | STALLED**
+
+Brief explanation (1–2 sentences) of your verdict.
+
+---
+
+Keep each section under 100 words. Be direct and actionable. Do not include pleasantries or meta-commentary.
+
+---
+
 ## Output Format
 
 Present output in clearly labelled sections. Use markdown headings. Keep each section concise but complete.
@@ -5357,6 +5456,8 @@ The Prevoyant Server dashboard detects these markers in real time to drive the p
 **PR Review Mode:** Step R0 (KB query) → Steps R1–R8 → Step R9 (KB update) → Step R10 (Bryan retrospective). Step R8 produces the PDF confirmation; Step R9 produces the KB update confirmation; Step R10 closes the session.
 
 **Estimate Mode:** Step E0 (KB query) → Steps E1–E5 (scope → planning poker → debate → consensus) → Step E5b (PDF report) → Step E6 (KB update) → Step E7 (Bryan retrospective). Step E5 produces the final estimate block; Step E5b produces the PDF; Step E6 produces the KB update confirmation; Step E7 closes the session.
+
+**Watch Mode:** Step W0 (KB query) → Step W1 (fetch ticket + all comments) → Step W2 (progress analysis) → Step W3 (digest output). Runs headlessly; output is consumed by the Prevoyant Server ticket watcher, which emails the digest automatically. Always announce each step header exactly as `### Step W{N} — {Label}` before any content.
 
 ---
 
