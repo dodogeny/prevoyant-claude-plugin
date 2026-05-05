@@ -2651,7 +2651,7 @@ function renderSettings(vals, flash) {
   const autoKeys   = ['AUTO_MODE','FORCE_FULL_RUN','PRX_REPORT_VERBOSITY','PRX_JIRA_PROJECT','PRX_ATTACHMENT_MAX_MB'];
   const reportKeys = ['CLAUDE_REPORT_DIR'];
   const notifyKeys  = ['PRX_NOTIFY_ENABLED','PRX_NOTIFY_LEVEL','PRX_NOTIFY_MUTE_DAYS','PRX_NOTIFY_MUTE_UNTIL','PRX_NOTIFY_EVENTS'];
-  const waKeys      = ['PRX_WASENDER_ENABLED','PRX_WASENDER_API_KEY','PRX_WASENDER_TO','PRX_WASENDER_PUBLIC_URL','PRX_WASENDER_EVENTS'];
+  const waKeys      = ['PRX_WASENDER_ENABLED','PRX_WASENDER_API_KEY','PRX_WASENDER_TO','PRX_WASENDER_PUBLIC_URL','PRX_WASENDER_EVENTS','PRX_WASENDER_PDF_PASSWORD'];
   const kb = kbStats();
 
   // Notification-specific values
@@ -3064,10 +3064,27 @@ function renderSettings(vals, flash) {
           <div class="s-field span2"><hr style="border:none;border-top:1px solid #e5e7eb;margin:.5rem 0 .8rem"></div>
 
           <div class="s-field span2" style="font-weight:600;font-size:.8rem;color:#6366f1;margin-bottom:-.3rem">Redis backend (team-shared, primary)</div>
+          <div class="s-field span2">
+            <div class="s-hint" style="margin-top:0">
+              Team-shared store — all developers see the same indexed learnings across machines and parallel sessions.
+              Takes priority over JSON when connected; JSON stays warm as a hot-standby.
+              <br><br>
+              <strong>Using the same Upstash instance as KB sync?</strong><br>
+              The REST token in <code>PRX_UPSTASH_REDIS_TOKEN</code> is <em>not</em> the Redis password.
+              To get the native Redis connection string:
+              <ol style="margin:.4rem 0 0 1.1rem;padding:0;line-height:1.8">
+                <li>Open your <strong>Upstash Console</strong> → select your database</li>
+                <li>Click <strong>Connect</strong> → select the <strong>ioredis</strong> tab</li>
+                <li>Copy the <code>rediss://</code> URL — it contains the correct password</li>
+                <li>Paste it into <strong>Redis URL</strong> below and leave <strong>Redis password</strong> blank</li>
+              </ol>
+              <br>Key spaces don't clash — memory uses prefix <code>prx:mem:</code>, KB sync uses its own stream key.
+            </div>
+          </div>
           ${fld('PRX_REDIS_ENABLED','Enable Redis memory','select',v('PRX_REDIS_ENABLED')||'N','','Team-shared memory via Redis. Takes priority over JSON when connected.',
             [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
-          ${fld('PRX_REDIS_URL','Redis URL','text',v('PRX_REDIS_URL'),'redis://localhost:6379','Connection URL. Use rediss:// for TLS. Include credentials in URL or use the fields below.')}
-          ${fld('PRX_REDIS_PASSWORD','Redis password','password',v('PRX_REDIS_PASSWORD'),'','Optional — leave blank if the URL already includes credentials or auth is not required.')}
+          ${fld('PRX_REDIS_URL','Redis URL','text',v('PRX_REDIS_URL'),'rediss://default:<password>@<host>:6379','Connection URL. Use rediss:// for TLS (required for Upstash). Embed credentials directly in the URL.')}
+          ${fld('PRX_REDIS_PASSWORD','Redis password','password',v('PRX_REDIS_PASSWORD'),'','Leave blank when credentials are already embedded in the URL above (recommended for Upstash).')}
           ${fld('PRX_REDIS_PREFIX','Key prefix','text',v('PRX_REDIS_PREFIX'),'prx:mem:','Namespace prefix for all Redis keys. Change if sharing a Redis instance with other apps.')}
           ${fld('PRX_REDIS_TTL_DAYS','Memory TTL (days)','number',v('PRX_REDIS_TTL_DAYS'),'0','Days before indexed entries expire. 0 = never expire (recommended).')}
 
@@ -3257,10 +3274,13 @@ function renderSettings(vals, flash) {
               ${fld('PRX_WASENDER_TO','Recipient phone number','text',v('PRX_WASENDER_TO'),'+1234567890','Include country code, e.g. +23052xxxxxxx. This is the WhatsApp number that receives all notifications.')}
             </div>
 
-            <div class="s-field" style="margin-top:.6rem">
-              <label for="f_PRX_WASENDER_PUBLIC_URL" class="s-label">Public server URL <code class="s-key">PRX_WASENDER_PUBLIC_URL</code></label>
-              <input type="text" id="f_PRX_WASENDER_PUBLIC_URL" name="PRX_WASENDER_PUBLIC_URL" value="${esc(v('PRX_WASENDER_PUBLIC_URL'))}" placeholder="https://yourserver.com" class="s-input">
-              <div class="s-hint">Required for report delivery. WaSenderAPI fetches PDF reports from this URL. Must be publicly reachable from the internet. Leave blank to disable document sending (text notifications still work).</div>
+            <div class="s-grid s-grid-2" style="margin-top:.6rem">
+              <div class="s-field">
+                <label for="f_PRX_WASENDER_PUBLIC_URL" class="s-label">Public server URL <code class="s-key">PRX_WASENDER_PUBLIC_URL</code></label>
+                <input type="text" id="f_PRX_WASENDER_PUBLIC_URL" name="PRX_WASENDER_PUBLIC_URL" value="${esc(v('PRX_WASENDER_PUBLIC_URL'))}" placeholder="https://yourserver.com" class="s-input">
+                <div class="s-hint">Optional. WaSenderAPI fetches the PDF from this URL. Leave blank — reports are auto-uploaded to <strong>tmpfiles.org</strong> (free, 14-day links, no account needed). When a PDF password is set, tmpfiles.org is always used regardless of this field.</div>
+              </div>
+              ${fld('PRX_WASENDER_PDF_PASSWORD','PDF report password','password',v('PRX_WASENDER_PDF_PASSWORD'),'','Optional. Encrypts PDF reports with this password before sending. Requires <code>qpdf</code> — install with <code>brew install qpdf</code> (Mac) or <code>apt install qpdf</code> (Linux). Leave blank to send unencrypted.')}
             </div>
 
             <div style="margin-top:.8rem">
@@ -4478,7 +4498,7 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'PRX_WATCH_ENABLED', 'PRX_WATCH_POLL_INTERVAL', 'PRX_WATCH_MAX_POLLS',
     'PRX_WATCH_LOG_KEEP_DAYS', 'PRX_WATCH_LOG_KEEP_PER_TICKET',
     'PRX_WASENDER_ENABLED', 'PRX_WASENDER_API_KEY', 'PRX_WASENDER_TO',
-    'PRX_WASENDER_PUBLIC_URL', 'PRX_WASENDER_EVENTS',
+    'PRX_WASENDER_PUBLIC_URL', 'PRX_WASENDER_EVENTS', 'PRX_WASENDER_PDF_PASSWORD',
   ];
 
   try {

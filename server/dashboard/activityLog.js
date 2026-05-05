@@ -1,11 +1,12 @@
 'use strict';
 
-const fs    = require('fs');
-const path  = require('path');
-const os    = require('os');
-const http  = require('http');
-const https = require('https');
-const wa    = require('../notifications/whatsapp');
+const fs             = require('fs');
+const path           = require('path');
+const os             = require('os');
+const http           = require('http');
+const https          = require('https');
+const { spawn }      = require('child_process');
+const wa             = require('../notifications/whatsapp');
 
 const MAX_EVENTS = 5000;
 let events  = [];
@@ -116,7 +117,59 @@ function findLatestReport(ticketKey) {
   } catch (_) { return null; }
 }
 
-function fireWhatsApp(event) {
+// Encrypt a PDF with qpdf and return the temp output path.
+// Caller must delete the temp file after use.
+function encryptPdf(inputPath, password) {
+  return new Promise((resolve, reject) => {
+    const tmpOut = path.join(os.tmpdir(), `prx-enc-${Date.now()}.pdf`);
+    const proc   = spawn('qpdf', ['--encrypt', password, password, '256', '--', inputPath, tmpOut]);
+    proc.on('error', err => reject(new Error(`qpdf unavailable: ${err.message}`)));
+    proc.on('close', code => code === 0 ? resolve(tmpOut) : reject(new Error(`qpdf exited ${code}`)));
+  });
+}
+
+// Upload a local file to tmpfiles.org and return a direct download URL.
+function uploadToTmpFiles(filePath) {
+  return new Promise((resolve, reject) => {
+    let fileData;
+    try { fileData = fs.readFileSync(filePath); } catch (e) { return reject(e); }
+
+    const filename = path.basename(filePath);
+    const boundary = `----PRXBoundary${Date.now()}`;
+    const head     = Buffer.from(
+      `--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="${filename}"\r\nContent-Type: application/pdf\r\n\r\n`
+    );
+    const tail = Buffer.from(`\r\n--${boundary}--\r\n`);
+    const body = Buffer.concat([head, fileData, tail]);
+
+    const req = https.request({
+      hostname: 'tmpfiles.org',
+      path:     '/api/v1/upload',
+      method:   'POST',
+      headers:  { 'Content-Type': `multipart/form-data; boundary=${boundary}`, 'Content-Length': body.length },
+    }, res => {
+      let raw = '';
+      res.on('data', c => { raw += c; });
+      res.on('end', () => {
+        try {
+          const d = JSON.parse(raw);
+          if (d.status === 'success' && d.data?.url) {
+            // Convert page URL → direct download URL
+            resolve(d.data.url.replace('tmpfiles.org/', 'tmpfiles.org/dl/'));
+          } else {
+            reject(new Error(`tmpfiles.org: ${raw.slice(0, 120)}`));
+          }
+        } catch (e) { reject(e); }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(30000, () => { req.destroy(); reject(new Error('tmpfiles.org timeout')); });
+    req.write(body);
+    req.end();
+  });
+}
+
+async function fireWhatsApp(event) {
   if (!wa.shouldSend(event.type)) return;
 
   const text = wa.eventText(event.type, event.ticketKey, event.details);
@@ -124,14 +177,47 @@ function fireWhatsApp(event) {
 
   wa.sendText(text).catch(() => {});
 
-  // For report events, also send the PDF as a document if a public URL is configured.
-  if (REPORT_EVENTS.has(event.type) && event.ticketKey) {
-    const publicUrl = (process.env.PRX_WASENDER_PUBLIC_URL || '').replace(/\/$/, '');
-    if (!publicUrl) return;
-    const filename = findLatestReport(event.ticketKey);
-    if (!filename) return;
-    const docUrl  = `${publicUrl}/dashboard/reports/serve/${encodeURIComponent(filename)}`;
-    const caption = `${event.ticketKey} — ${filename}`;
+  if (!REPORT_EVENTS.has(event.type) || !event.ticketKey) return;
+
+  const filename = findLatestReport(event.ticketKey);
+  if (!filename) return;
+
+  const srcPath   = path.join(reportsDir(), filename);
+  const password  = (process.env.PRX_WASENDER_PDF_PASSWORD || '').trim();
+  const publicUrl = (process.env.PRX_WASENDER_PUBLIC_URL  || '').replace(/\/$/, '');
+
+  let sendPath   = srcPath;
+  let tmpCreated = null;
+
+  // Encrypt first if a password is configured.
+  if (password) {
+    try {
+      sendPath   = await encryptPdf(srcPath, password);
+      tmpCreated = sendPath;
+    } catch (e) {
+      console.warn('[whatsapp] PDF encryption failed (install qpdf):', e.message);
+      // Fall through — send unencrypted rather than silently dropping the document.
+    }
+  }
+
+  let docUrl = null;
+  try {
+    // When a password is set the encrypted temp file can't be served via the
+    // public-URL endpoint (which reads from reportsDir), so always upload to
+    // tmpfiles.org in that case. Without a password, use the public URL if set.
+    if (!password && publicUrl) {
+      docUrl = `${publicUrl}/dashboard/reports/serve/${encodeURIComponent(filename)}`;
+    } else {
+      docUrl = await uploadToTmpFiles(sendPath);
+    }
+  } catch (e) {
+    console.warn('[whatsapp] PDF upload failed:', e.message);
+  } finally {
+    if (tmpCreated) try { fs.unlinkSync(tmpCreated); } catch (_) {}
+  }
+
+  if (docUrl) {
+    const caption = `${event.ticketKey} — ${filename}${password ? ' 🔒' : ''}`;
     wa.sendDocument(docUrl, caption).catch(() => {});
   }
 }
