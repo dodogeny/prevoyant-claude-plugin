@@ -508,6 +508,7 @@ async function pollTicket(key) {
       recordActivity('watch_poll_completed', key, {
         pollCount: t.pollCount, emailed: true,
         completed: t.status === 'completed',
+        digest,
       });
     }
 

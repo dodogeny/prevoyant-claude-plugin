@@ -2650,7 +2650,8 @@ function renderSettings(vals, flash) {
   const bryanKeys  = ['PRX_INCLUDE_SM_IN_SESSIONS_ENABLED','PRX_SKILL_UPGRADE_MIN_SESSIONS','PRX_SKILL_COMPACTION_INTERVAL','PRX_MONTHLY_BUDGET'];
   const autoKeys   = ['AUTO_MODE','FORCE_FULL_RUN','PRX_REPORT_VERBOSITY','PRX_JIRA_PROJECT','PRX_ATTACHMENT_MAX_MB'];
   const reportKeys = ['CLAUDE_REPORT_DIR'];
-  const notifyKeys = ['PRX_NOTIFY_ENABLED','PRX_NOTIFY_LEVEL','PRX_NOTIFY_MUTE_DAYS','PRX_NOTIFY_MUTE_UNTIL','PRX_NOTIFY_EVENTS'];
+  const notifyKeys  = ['PRX_NOTIFY_ENABLED','PRX_NOTIFY_LEVEL','PRX_NOTIFY_MUTE_DAYS','PRX_NOTIFY_MUTE_UNTIL','PRX_NOTIFY_EVENTS'];
+  const waKeys      = ['PRX_WASENDER_ENABLED','PRX_WASENDER_API_KEY','PRX_WASENDER_TO','PRX_WASENDER_PUBLIC_URL','PRX_WASENDER_EVENTS'];
   const kb = kbStats();
 
   // Notification-specific values
@@ -2661,6 +2662,12 @@ function renderSettings(vals, flash) {
   const nEvents    = v('PRX_NOTIFY_EVENTS') || NOTIFY_EVENTS.map(e => e.key).join(',');
   const emailTo    = v('PRX_EMAIL_TO');
   const nOpen      = nEnabled === 'Y' || sectionHasValues(notifyKeys, vals);
+
+  // WhatsApp / WaSender values
+  const waEnabled  = v('PRX_WASENDER_ENABLED');
+  const waEvents   = v('PRX_WASENDER_EVENTS') || NOTIFY_EVENTS.map(e => e.key).join(',');
+  const waOpen     = waEnabled === 'Y' || sectionHasValues(waKeys, vals);
+  const waChecked  = new Set(waEvents.split(',').map(s => s.trim()).filter(Boolean));
 
   const checkedEvents = new Set(nEvents.split(',').map(s => s.trim()).filter(Boolean));
 
@@ -2682,6 +2689,19 @@ function renderSettings(vals, flash) {
       : '';
     return `<div class="n-group">
       <div class="n-group-lbl">${esc(groupName)}${groupHint}</div>
+      <div class="n-events-grid">${boxes}</div>
+    </div>`;
+  }).join('');
+
+  const waEventCheckboxes = Object.entries(eventGroups).map(([groupName, evts]) => {
+    const boxes = evts.map(e =>
+      `<label class="n-evt-lbl">
+        <input type="checkbox" class="wa-evt-cb" value="${e.key}" ${waChecked.has(e.key) ? 'checked' : ''} onchange="syncWaEvents()">
+        ${esc(e.label)}
+      </label>`
+    ).join('');
+    return `<div class="n-group">
+      <div class="n-group-lbl">${esc(groupName)}</div>
       <div class="n-events-grid">${boxes}</div>
     </div>`;
   }).join('');
@@ -3211,6 +3231,55 @@ function renderSettings(vals, flash) {
         </div>
       </details>
 
+      <!-- WhatsApp / WaSender -->
+      <details class="s-section"${waOpen ? ' open' : ''}>
+        <summary>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          WhatsApp Notifications
+          <span class="s-opt">Optional — via WaSenderAPI</span>
+          <span class="s-chevron">›</span>
+        </summary>
+        <div class="s-body full-width">
+
+          <div class="s-field">
+            <label for="f_PRX_WASENDER_ENABLED" class="s-label">Enable WhatsApp notifications <code class="s-key">PRX_WASENDER_ENABLED</code></label>
+            <select id="f_PRX_WASENDER_ENABLED" name="PRX_WASENDER_ENABLED" class="s-input" style="max-width:280px" onchange="document.getElementById('wa-config').style.display=this.value==='Y'?'':'none'">
+              <option value="N"${waEnabled !== 'Y' ? ' selected' : ''}>N — disabled</option>
+              <option value="Y"${waEnabled === 'Y' ? ' selected' : ''}>Y — enabled</option>
+            </select>
+            <div class="s-hint">Sends concise WhatsApp alerts for selected events. PDF reports are also delivered as documents when a public URL is configured. Requires a <a href="https://wasenderapi.com" target="_blank" rel="noopener">WaSenderAPI</a> account (free 3-day trial).</div>
+          </div>
+
+          <div id="wa-config" style="display:${waEnabled === 'Y' ? '' : 'none'}">
+
+            <div class="s-grid s-grid-2" style="margin-top:.6rem">
+              ${fld('PRX_WASENDER_API_KEY','Session API Key','password',v('PRX_WASENDER_API_KEY'),'','Session-specific key from your WaSenderAPI dashboard (Settings → Sessions → API Key).')}
+              ${fld('PRX_WASENDER_TO','Recipient phone number','text',v('PRX_WASENDER_TO'),'+1234567890','Include country code, e.g. +23052xxxxxxx. This is the WhatsApp number that receives all notifications.')}
+            </div>
+
+            <div class="s-field" style="margin-top:.6rem">
+              <label for="f_PRX_WASENDER_PUBLIC_URL" class="s-label">Public server URL <code class="s-key">PRX_WASENDER_PUBLIC_URL</code></label>
+              <input type="text" id="f_PRX_WASENDER_PUBLIC_URL" name="PRX_WASENDER_PUBLIC_URL" value="${esc(v('PRX_WASENDER_PUBLIC_URL'))}" placeholder="https://yourserver.com" class="s-input">
+              <div class="s-hint">Required for report delivery. WaSenderAPI fetches PDF reports from this URL. Must be publicly reachable from the internet. Leave blank to disable document sending (text notifications still work).</div>
+            </div>
+
+            <div style="margin-top:.8rem">
+              <input type="hidden" id="wa-events-hidden" name="PRX_WASENDER_EVENTS" value="${esc(waEvents)}">
+              <div class="s-field">
+                <div class="n-sel-all-row">
+                  <span class="s-label" style="margin:0">Events to notify <code class="s-key">PRX_WASENDER_EVENTS</code></span>
+                  <button type="button" class="n-sel-btn" onclick="selectAllWaEvents(true)">Select all</button>
+                  <button type="button" class="n-sel-btn" onclick="selectAllWaEvents(false)">Deselect all</button>
+                </div>
+                <div class="s-hint" style="margin-bottom:.5rem">Messages are brief one-liners with emoji. Report events also send the PDF as a WhatsApp document (requires Public server URL above).</div>
+                <div class="n-events-groups">${waEventCheckboxes}</div>
+              </div>
+            </div>
+
+          </div>
+        </div>
+      </details>
+
       <!-- Bryan -->
       <details class="s-section"${sectionHasValues(bryanKeys, vals) ? ' open' : ''}>
         <summary>
@@ -3415,6 +3484,14 @@ function renderSettings(vals, flash) {
     function selectAllEvents(select) {
       document.querySelectorAll('.n-evt-cb').forEach(cb => cb.checked = select);
       syncNotifyEvents();
+    }
+    function syncWaEvents() {
+      const vals = [...document.querySelectorAll('.wa-evt-cb:checked')].map(cb => cb.value);
+      document.getElementById('wa-events-hidden').value = vals.join(',');
+    }
+    function selectAllWaEvents(select) {
+      document.querySelectorAll('.wa-evt-cb').forEach(cb => cb.checked = select);
+      syncWaEvents();
     }
   </script>
 </body>
@@ -4400,6 +4477,8 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'PRX_DISK_MONITOR_ENABLED', 'PRX_DISK_MONITOR_INTERVAL_MINS', 'PRX_PREVOYANT_MAX_SIZE_MB', 'PRX_DISK_CAPACITY_ALERT_PCT', 'PRX_DISK_CLEANUP_INTERVAL_DAYS',
     'PRX_WATCH_ENABLED', 'PRX_WATCH_POLL_INTERVAL', 'PRX_WATCH_MAX_POLLS',
     'PRX_WATCH_LOG_KEEP_DAYS', 'PRX_WATCH_LOG_KEEP_PER_TICKET',
+    'PRX_WASENDER_ENABLED', 'PRX_WASENDER_API_KEY', 'PRX_WASENDER_TO',
+    'PRX_WASENDER_PUBLIC_URL', 'PRX_WASENDER_EVENTS',
   ];
 
   try {
@@ -4656,6 +4735,23 @@ router.get('/watch/:key/logs/:file', (req, res) => {
   } catch (_) {
     res.status(404).send('Log file not found');
   }
+});
+
+// ── Report file serving (for WhatsApp document delivery) ─────────────────────
+// WaSenderAPI fetches the document from a URL — this endpoint serves PDFs from
+// CLAUDE_REPORT_DIR so WaSenderAPI can retrieve them. Requires PRX_WASENDER_PUBLIC_URL
+// to be set to a publicly reachable base URL (e.g. https://yourserver.com).
+
+router.get('/reports/serve/:filename', (req, res) => {
+  const filename = path.basename(req.params.filename || '');
+  if (!filename.match(/^[A-Za-z0-9_\-]+\.pdf$/i)) return res.status(400).send('Invalid filename');
+  const dir      = process.env.CLAUDE_REPORT_DIR || path.join(os.homedir(), '.prevoyant', 'reports');
+  const filePath = path.join(dir, filename);
+  if (!filePath.startsWith(dir + path.sep)) return res.status(403).send('Forbidden');
+  if (!fs.existsSync(filePath)) return res.status(404).send('Report not found');
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
+  fs.createReadStream(filePath).pipe(res);
 });
 
 module.exports = router;

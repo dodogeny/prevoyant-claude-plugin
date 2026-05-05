@@ -1,4 +1,4 @@
-# Prevoyant - Claude Code Plugin `v1.2.8`
+# Prevoyant - Claude Code Plugin `v1.2.9`
 
 **Prevoyant** is a [Claude Code](https://claude.ai/code) plugin — an AI agent team that runs a structured, end-to-end developer workflow for Jira tickets. Three modes:
 
@@ -293,6 +293,24 @@ Set `PRX_NOTIFY_ENABLED=Y` to enable. Requires `PRX_EMAIL_TO` to be set.
 | `PRX_NOTIFY_MUTE_DAYS` | `0` | Temporarily mute all notifications for N days. |
 | `PRX_NOTIFY_MUTE_UNTIL` | — | Internal — set by the mute command. Do not edit manually. |
 | `PRX_NOTIFY_EVENTS` | all events | Comma-separated list of events to notify on: `jira_assigned`, `ticket_scheduled`, `ticket_queued`, `ticket_started`, `ticket_completed`, `ticket_failed`, `ticket_interrupted`, `poll_ran`. |
+
+### WhatsApp Notifications (optional — via WaSenderAPI)
+
+Sends concise WhatsApp messages for ticket lifecycle events. PDF reports are also delivered as WhatsApp documents. Requires a [WaSenderAPI](https://wasenderapi.com) account (free 3-day trial, from $6/month). Uses Node's built-in `https` — no new npm dependencies.
+
+Set `PRX_WASENDER_ENABLED=Y` to activate. All fields are also editable from Settings → WhatsApp Notifications.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PRX_WASENDER_ENABLED` | `N` | Set to `Y` to enable WhatsApp notifications. |
+| `PRX_WASENDER_API_KEY` | — | Session-specific API key from your WaSenderAPI dashboard (Settings → Sessions → API Key). |
+| `PRX_WASENDER_TO` | — | Recipient WhatsApp number with country code, e.g. `+23052xxxxxxx`. |
+| `PRX_WASENDER_PUBLIC_URL` | — | Public base URL of this server, e.g. `https://yourserver.com`. Required for PDF report delivery — WaSenderAPI fetches the document from `{PRX_WASENDER_PUBLIC_URL}/dashboard/reports/serve/{filename}`. Omit to disable document sending (text notifications still work). |
+| `PRX_WASENDER_EVENTS` | all events | Comma-separated list of events that trigger a WhatsApp message. Leave blank to send on all events. Independent of `PRX_NOTIFY_EVENTS`. |
+
+**Supported events:** `jira_assigned`, `ticket_queued`, `ticket_started`, `ticket_completed`, `ticket_failed`, `ticket_interrupted`, `ticket_scheduled`, `poll_ran`, `stage_dev_root_cause`, `stage_dev_fix`, `stage_dev_impact`, `stage_dev_report`, `stage_review_panel`, `stage_review_report`, `stage_est_final`, `stage_est_report`, `watch_poll_completed`, `watch_poll_failed`, `watch_completed`.
+
+**Messages are brief one-liners with emoji** — e.g. `✅ IV-3804 complete`, `📄 IV-3804 dev report ready`, `👁 IV-3804 watch digest sent`. Report events (`stage_dev_report`, `stage_review_report`, `stage_est_report`) additionally send the PDF as a WhatsApp document when `PRX_WASENDER_PUBLIC_URL` is configured.
 
 ### Health Monitor — Watchdog (optional)
 
@@ -652,6 +670,9 @@ Story points = **Complexity + Risk + Repetition** (not hours). Scale: 1 · 2 · 
 │   │   ├── memoryAdapter.js      # Unified adapter: Redis primary, JSON fallback
 │   │   ├── redisMemory.js        # Redis backend (PRX_REDIS_ENABLED)
 │   │   └── jsonMemory.js         # JSON backend (PRX_MEMORY_INDEX_ENABLED)
+│   ├── notifications/            # Notification dispatchers
+│   │   ├── email.js              # Email stub (wired via activityLog)
+│   │   └── whatsapp.js           # WaSenderAPI WhatsApp client (zero new deps)
 │   ├── queue/                    # FIFO job queue (one Claude session at a time)
 │   ├── runner/                   # Claude CLI spawner + poll scheduler
 │   ├── watchers/                 # Ticket watcher coordination
@@ -897,6 +918,18 @@ rm -rf ~/.prevoyant/reports   # or the path set in CLAUDE_REPORT_DIR
 ---
 
 ## Changelog
+
+### v1.2.9 — WhatsApp Notifications + Activity Tracking + ast-grep Code Search
+
+- **WhatsApp notifications via WaSenderAPI:** A new `server/notifications/whatsapp.js` module (zero new npm dependencies — uses Node's built-in `https`) dispatches concise one-liner WhatsApp alerts for any selected ticket lifecycle event. Messages are brief and emoji-tagged — `✅ IV-3804 complete`, `❌ IV-3804 failed`, `👁 IV-3804 watch digest sent`, etc. Fires from `activityLog.record()` alongside the existing webhook dispatch, so every event source (tracker, watcher, routes) is covered automatically.
+
+- **PDF reports delivered as WhatsApp documents:** When `PRX_WASENDER_PUBLIC_URL` is set, report events (`stage_dev_report`, `stage_review_report`, `stage_est_report`) additionally send the PDF as a WhatsApp document. A new `GET /dashboard/reports/serve/:filename` endpoint serves PDFs from `CLAUDE_REPORT_DIR` so WaSenderAPI can fetch them — path-traversal safe, PDF-only.
+
+- **Independent WhatsApp event selection:** `PRX_WASENDER_EVENTS` is a separate comma-separated list from `PRX_NOTIFY_EVENTS`, letting you configure email and WhatsApp independently. The Settings → WhatsApp Notifications section provides the same checkbox grid as the email Notifications section, plus fields for API key, recipient number, and public URL.
+
+- **Watch events tracked in Activity log:** Ticket watcher activity is now visible on the `/dashboard/activity` page. New event types: `watch_added`, `watch_stopped`, `watch_resumed`, `watch_removed` (recorded from routes), `watch_poll_started`, `watch_poll_skipped`, `watch_poll_completed` (with `emailed` flag and `reason`), `watch_poll_failed`, `watch_completed`. The worker emits `activity` messages to the main thread, which routes them to `activityLog.record()` — same pattern as other worker event dispatch.
+
+- **ast-grep structural code search in Step 5:** The Locate Affected Code step now uses a three-pass search sequence: **Pass 1** — grep (fast candidate filter across the whole repo, ~0 tokens), **Pass 2** — ast-grep (`sg`) for structural precision (finds method calls, subclasses, and overrides by AST pattern, eliminating false positives from comments and string literals), **Pass 3** — targeted Read of the confirmed line range. A reference table of common Java patterns is embedded in the step. The class hierarchy search is updated to use ast-grep `class $NAME extends {Parent}` patterns. Falls back to grep-only if `sg` is not installed.
 
 ### v1.2.8 — Ticket Watcher
 

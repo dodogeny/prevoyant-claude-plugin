@@ -5,6 +5,7 @@ const path  = require('path');
 const os    = require('os');
 const http  = require('http');
 const https = require('https');
+const wa    = require('../notifications/whatsapp');
 
 const MAX_EVENTS = 5000;
 let events  = [];
@@ -91,6 +92,50 @@ function fireWebhook(event) {
   req.end();
 }
 
+// ── WhatsApp dispatch ─────────────────────────────────────────────────────────
+
+// Report events that should also send the PDF as a WhatsApp document.
+const REPORT_EVENTS = new Set(['stage_dev_report', 'stage_review_report', 'stage_est_report']);
+
+function reportsDir() {
+  return process.env.CLAUDE_REPORT_DIR || path.join(os.homedir(), '.prevoyant', 'reports');
+}
+
+function findLatestReport(ticketKey) {
+  const dir    = reportsDir();
+  const prefix = ticketKey.toLowerCase();
+  try {
+    const files = fs.readdirSync(dir)
+      .filter(f => {
+        const l = f.toLowerCase();
+        return (l.startsWith(prefix + '_') || l.startsWith(prefix + '-')) && l.endsWith('.pdf');
+      })
+      .map(f => ({ name: f, mtime: fs.statSync(path.join(dir, f)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+    return files.length ? files[0].name : null;
+  } catch (_) { return null; }
+}
+
+function fireWhatsApp(event) {
+  if (!wa.shouldSend(event.type)) return;
+
+  const text = wa.eventText(event.type, event.ticketKey, event.details);
+  if (!text) return;
+
+  wa.sendText(text).catch(() => {});
+
+  // For report events, also send the PDF as a document if a public URL is configured.
+  if (REPORT_EVENTS.has(event.type) && event.ticketKey) {
+    const publicUrl = (process.env.PRX_WASENDER_PUBLIC_URL || '').replace(/\/$/, '');
+    if (!publicUrl) return;
+    const filename = findLatestReport(event.ticketKey);
+    if (!filename) return;
+    const docUrl  = `${publicUrl}/dashboard/reports/serve/${encodeURIComponent(filename)}`;
+    const caption = `${event.ticketKey} — ${filename}`;
+    wa.sendDocument(docUrl, caption).catch(() => {});
+  }
+}
+
 // ── Core ──────────────────────────────────────────────────────────────────────
 
 function record(type, ticketKey = null, actor = 'system', details = {}) {
@@ -110,6 +155,7 @@ function record(type, ticketKey = null, actor = 'system', details = {}) {
     setImmediate(saveLog);
   }
   fireWebhook(event);
+  fireWhatsApp(event);
   return event;
 }
 
