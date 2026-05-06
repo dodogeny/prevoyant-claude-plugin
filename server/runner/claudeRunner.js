@@ -67,20 +67,14 @@ async function isBudgetExceeded() {
 const BILLING_ERROR_RE = /credit balance is too low|credit_balance_too_low|insufficient.*credit|billing.*error|subscription.*expired|account.*suspended|payment required/i;
 
 // Returns basic-memory MCP server entries for all 7 agents when
-// PRX_BASIC_MEMORY_ENABLED=Y. BASIC_MEMORY_HOME resolves from the KB path
-// so personal memory travels with the shared KB in distributed mode.
+// PRX_BASIC_MEMORY_ENABLED=Y. BASIC_MEMORY_HOME defaults to a path outside
+// any KB clone — personal memory stays local to each developer's machine
+// and never accidentally rides along with the shared KB git push.
 function buildBasicMemoryServers() {
   if ((process.env.PRX_BASIC_MEMORY_ENABLED || '').toUpperCase() !== 'Y') return {};
 
-  const home = process.env.BASIC_MEMORY_HOME || (() => {
-    const kbMode = process.env.PRX_KB_MODE || 'local';
-    if (kbMode === 'distributed') {
-      const clone = process.env.PRX_KB_LOCAL_CLONE || path.join(os.homedir(), '.prevoyant', 'kb');
-      return path.join(clone, 'agents');
-    }
-    const knowledgeDir = process.env.PRX_KNOWLEDGE_DIR || path.join(os.homedir(), '.prevoyant', 'knowledge-base');
-    return path.join(knowledgeDir, 'agents');
-  })();
+  const home = process.env.BASIC_MEMORY_HOME
+    || path.join(os.homedir(), '.prevoyant', 'personal-memory');
 
   const agents = ['morgan', 'alex', 'sam', 'jordan', 'henk', 'riley', 'bryan'];
   return Object.fromEntries(agents.map(agent => [

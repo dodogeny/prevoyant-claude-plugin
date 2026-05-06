@@ -383,11 +383,19 @@ fi
 
 # ── 5. basic-memory (per-agent personal memory MCP) ──────────────────────────
 
-step "5/9  basic-memory  (per-agent MCP)  [optional — set PRX_BASIC_MEMORY_ENABLED=Y in .env]"
+step "5/9  basic-memory  (per-agent MCP)  [downloads & configures]"
 
 if command -v uvx &>/dev/null; then
-  ok "basic-memory available via uvx — no separate install needed"
-  info "Seven per-agent MCP projects auto-provisioned when PRX_BASIC_MEMORY_ENABLED=Y"
+  info "Pre-fetching basic-memory package (priming uvx cache)..."
+  BM_VERSION=$(uvx --quiet basic-memory --version 2>&1 | tail -1)
+  if [ $? -eq 0 ] && [ -n "$BM_VERSION" ]; then
+    ok "basic-memory ready — $BM_VERSION"
+    info "Seven per-agent MCP projects auto-provisioned when PRX_BASIC_MEMORY_ENABLED=Y"
+  else
+    warn "Could not pre-fetch basic-memory — it will download on first MCP startup"
+    impact "First plugin run with PRX_BASIC_MEMORY_ENABLED=Y may take longer"
+    info "Try manually: uvx basic-memory --version"
+  fi
 else
   warn "uvx not found — basic-memory requires uvx (step 1/9 must succeed first)"
   impact "Personal agent memory MCP will not start until uvx is installed"

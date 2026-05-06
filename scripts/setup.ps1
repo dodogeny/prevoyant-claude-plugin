@@ -199,11 +199,24 @@ if (cmd_exists 'qpdf') {
 }
 
 # ── 5. basic-memory (per-agent personal memory MCP) ──────────────────────────
-step "5/9  basic-memory  (per-agent MCP)  [optional — set PRX_BASIC_MEMORY_ENABLED=Y in .env]"
+step "5/9  basic-memory  (per-agent MCP)  [downloads & configures]"
 
 if (cmd_exists 'uvx') {
-    ok "basic-memory available via uvx — no separate install needed"
-    info "Seven per-agent MCP projects auto-provisioned when PRX_BASIC_MEMORY_ENABLED=Y"
+    info "Pre-fetching basic-memory package (priming uvx cache)..."
+    try {
+        $bmVersion = (& uvx --quiet basic-memory --version 2>&1 | Select-Object -Last 1)
+        if ($LASTEXITCODE -eq 0 -and $bmVersion) {
+            ok "basic-memory ready — $bmVersion"
+            info "Seven per-agent MCP projects auto-provisioned when PRX_BASIC_MEMORY_ENABLED=Y"
+        } else {
+            warn "Could not pre-fetch basic-memory — it will download on first MCP startup"
+            impact "First plugin run with PRX_BASIC_MEMORY_ENABLED=Y may take longer"
+            info "Try manually: uvx basic-memory --version"
+        }
+    } catch {
+        warn "basic-memory pre-fetch failed: $($_.Exception.Message)"
+        impact "First plugin run with PRX_BASIC_MEMORY_ENABLED=Y may take longer"
+    }
 } else {
     warn "uvx not found — basic-memory requires uvx (step 1/9 must succeed first)"
     impact "Personal agent memory MCP will not start until uvx is installed"

@@ -1951,6 +1951,13 @@ function countFiles(dir) {
   try { return fs.readdirSync(dir).filter(f => !f.startsWith('.')).length; } catch (_) { return 0; }
 }
 
+function basicMemoryHome() {
+  if (process.env.BASIC_MEMORY_HOME) return process.env.BASIC_MEMORY_HOME;
+  // Default to a location OUTSIDE any KB clone so per-agent personal memory
+  // never accidentally rides along with the shared KB git push.
+  return path.join(os.homedir(), '.prevoyant', 'personal-memory');
+}
+
 function kbStats() {
   const kb        = kbDir();
   const sessions  = path.join(os.homedir(), '.prevoyant', 'sessions');
@@ -1958,6 +1965,8 @@ function kbStats() {
   const serverDir = path.join(os.homedir(), '.prevoyant', 'server');
   const watchLogs = path.join(os.homedir(), '.prevoyant', 'watch', 'logs');
   const memoryDir = path.join(os.homedir(), '.prevoyant', 'memory');
+  const basicMemDir   = basicMemoryHome();
+  const basicMemInsideKb = basicMemDir.startsWith(kb + path.sep) || basicMemDir === kb;
   return {
     kbDir:      kb,
     kbExists:   fs.existsSync(kb),
@@ -1972,6 +1981,9 @@ function kbStats() {
     watchLogFiles: countFilesRecursive(watchLogs),
     memoryDir,
     memoryFiles:   countFilesRecursive(memoryDir),
+    basicMemDir,
+    basicMemInsideKb,
+    basicMemFiles: basicMemInsideKb ? 0 : countFilesRecursive(basicMemDir),
   };
 }
 
@@ -2989,7 +3001,7 @@ function renderSettings(vals, flash) {
   const v = k => vals[k] || '';
 
   const kbKeys     = ['PRX_KB_MODE','PRX_SOURCE_REPO_URL','PRX_KNOWLEDGE_DIR','PRX_KB_REPO','PRX_KB_LOCAL_CLONE','PRX_KB_KEY','PRX_REALTIME_KB_SYNC','PRX_UPSTASH_REDIS_URL','PRX_UPSTASH_REDIS_TOKEN','PRX_KB_SYNC_MACHINE','PRX_KB_SYNC_POLL_SECS','PRX_KB_SYNC_TRIGGER','PRX_KB_SYNC_DEBOUNCE_SECS'];
-  const memKeys    = ['PRX_MEMORY_INDEX_ENABLED','PRX_MEMORY_LIMIT','PRX_REDIS_ENABLED','PRX_REDIS_URL','PRX_REDIS_PASSWORD','PRX_REDIS_PREFIX','PRX_REDIS_TTL_DAYS'];
+  const memKeys    = ['PRX_MEMORY_INDEX_ENABLED','PRX_MEMORY_LIMIT','PRX_REDIS_ENABLED','PRX_REDIS_URL','PRX_REDIS_PASSWORD','PRX_REDIS_PREFIX','PRX_REDIS_TTL_DAYS','PRX_BASIC_MEMORY_ENABLED','BASIC_MEMORY_HOME'];
   const emailKeys  = ['PRX_EMAIL_TO','PRX_SMTP_HOST','PRX_SMTP_PORT','PRX_SMTP_USER','PRX_SMTP_PASS'];
   const bryanKeys  = ['PRX_INCLUDE_SM_IN_SESSIONS_ENABLED','PRX_SKILL_UPGRADE_MIN_SESSIONS','PRX_SKILL_COMPACTION_INTERVAL','PRX_MONTHLY_BUDGET'];
   const autoKeys   = ['AUTO_MODE','FORCE_FULL_RUN','PRX_REPORT_VERBOSITY','PRX_JIRA_PROJECT','PRX_ATTACHMENT_MAX_MB'];
@@ -3369,6 +3381,11 @@ function renderSettings(vals, flash) {
                 <span class="bk-stat-lbl">Memory</span>
                 <span class="bk-stat-val ${kb.memoryFiles === 0 ? 'muted' : ''}">${kb.memoryFiles === 0 ? 'none' : kb.memoryFiles}</span>
               </div>
+              ${kb.basicMemInsideKb ? '' : `
+              <div class="bk-stat">
+                <span class="bk-stat-lbl">Agent memory</span>
+                <span class="bk-stat-val ${kb.basicMemFiles === 0 ? 'muted' : ''}">${kb.basicMemFiles === 0 ? 'none' : kb.basicMemFiles}</span>
+              </div>`}
             </div>
             <div class="s-hint" style="margin-bottom:.7rem">
               Download a <code>.tar.gz</code> archive of all selected items. Extract with
@@ -3400,6 +3417,11 @@ function renderSettings(vals, flash) {
                 <input type="checkbox" id="bk-inc-memory" ${kb.memoryFiles === 0 ? '' : 'checked'}>
                 Agent memory index (${kb.memoryFiles})
               </label>
+              ${kb.basicMemInsideKb ? '' : `
+              <label class="bk-inc-lbl">
+                <input type="checkbox" id="bk-inc-agentmem" ${kb.basicMemFiles === 0 ? '' : 'checked'}>
+                Agent memory store — basic-memory MCP (${kb.basicMemFiles})
+              </label>`}
             </div>
 
             <button type="button" class="btn-export" onclick="downloadKbBackup()" ${!kb.kbExists && kb.sessionFiles === 0 && kb.reportFiles === 0 && kb.serverFiles === 0 ? 'disabled' : ''}>
@@ -3508,6 +3530,22 @@ function renderSettings(vals, flash) {
             </button>
             <span id="redis-test-result" style="margin-left:.75rem;font-size:.78rem;color:#6b7280"></span>
           </div>
+
+          <div class="s-field span2"><hr style="border:none;border-top:1px solid #e5e7eb;margin:.5rem 0 .8rem"></div>
+
+          <div class="s-field span2" style="font-weight:600;font-size:.8rem;color:#6366f1;margin-bottom:-.3rem">Basic-memory MCP (per-agent personal memory)</div>
+          <div class="s-field span2">
+            <div class="s-hint" style="margin-top:0">
+              Gives each of the 7 agents (Morgan, Alex, Sam, Jordan, Henk, Riley, Bryan) a persistent
+              <code>basic-memory</code> MCP project for individual calibration data, corrected assumptions,
+              and recurring surprises that belong to the agent rather than the shared KB.
+              Storage path resolves automatically from the KB location — override below if needed.
+              Requires <code>uvx</code> (already installed in setup step 1/9).
+            </div>
+          </div>
+          ${fld('PRX_BASIC_MEMORY_ENABLED','Enable basic-memory MCP','select',v('PRX_BASIC_MEMORY_ENABLED')||'N','','When enabled, 7 per-agent MCP servers are spawned alongside Jira MCP for every Claude run.',
+            [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
+          ${fld('BASIC_MEMORY_HOME','Storage path (override)','text',v('BASIC_MEMORY_HOME'),'','Optional. Defaults to ~/.prevoyant/personal-memory — kept outside any KB clone so personal memory stays local and never ships with shared KB pushes. Override only if you have a specific reason to relocate it.')}
         </div>
       </details>
 
@@ -3866,9 +3904,11 @@ function renderSettings(vals, flash) {
       const server    = document.getElementById('bk-inc-server').checked    ? '1' : '0';
       const watchlogs = document.getElementById('bk-inc-watchlogs').checked ? '1' : '0';
       const memory    = document.getElementById('bk-inc-memory').checked    ? '1' : '0';
+      const agentmemEl = document.getElementById('bk-inc-agentmem');
+      const agentmem  = agentmemEl && agentmemEl.checked ? '1' : '0';
       window.location.href = '/dashboard/kb/export?sessions=' + sessions +
         '&reports=' + reports + '&server=' + server +
-        '&watchlogs=' + watchlogs + '&memory=' + memory;
+        '&watchlogs=' + watchlogs + '&memory=' + memory + '&agentmem=' + agentmem;
     }
 
     function importKbBackup() {
@@ -4741,15 +4781,17 @@ router.get('/kb/export', (req, res) => {
   const includeServer    = req.query.server    === '1';
   const includeWatchLogs = req.query.watchlogs === '1';
   const includeMemory    = req.query.memory    === '1';
+  const includeAgentMem  = req.query.agentmem  === '1';
 
   const kb = kbStats();
   const dirs = [];
-  if (kb.kbExists)                                      dirs.push(kb.kbDir);
-  if (includeSessions  && kb.sessionFiles  > 0)         dirs.push(kb.sessions);
-  if (includeReports   && kb.reportFiles   > 0)         dirs.push(kb.reports);
-  if (includeServer    && kb.serverFiles   > 0)         dirs.push(kb.serverDir);
-  if (includeWatchLogs && kb.watchLogFiles > 0)         dirs.push(kb.watchLogs);
-  if (includeMemory    && kb.memoryFiles   > 0)         dirs.push(kb.memoryDir);
+  if (kb.kbExists)                                                              dirs.push(kb.kbDir);
+  if (!kb.basicMemInsideKb && includeAgentMem && kb.basicMemFiles > 0)          dirs.push(kb.basicMemDir);
+  if (includeSessions  && kb.sessionFiles  > 0)                                 dirs.push(kb.sessions);
+  if (includeReports   && kb.reportFiles   > 0)                                 dirs.push(kb.reports);
+  if (includeServer    && kb.serverFiles   > 0)                                 dirs.push(kb.serverDir);
+  if (includeWatchLogs && kb.watchLogFiles > 0)                                 dirs.push(kb.watchLogs);
+  if (includeMemory    && kb.memoryFiles   > 0)                                 dirs.push(kb.memoryDir);
 
   const validDirs = dirs.filter(d => fs.existsSync(d));
   if (validDirs.length === 0) return res.status(404).send('No files found to export.');
@@ -4763,7 +4805,7 @@ router.get('/kb/export', (req, res) => {
       return res.status(500).send('Failed to create backup archive: ' + err.message);
     }
     activityLog.record('kb_exported', null, 'user', {
-      includeSessions, includeReports, includeServer, includeWatchLogs, includeMemory,
+      includeSessions, includeReports, includeServer, includeWatchLogs, includeMemory, includeAgentMem,
     });
     res.download(tmpFile, `prevoyant-backup-${stamp}.tar.gz`, () => {
       try { fs.unlinkSync(tmpFile); } catch (_) {}
@@ -4926,6 +4968,7 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'PRX_SKILL_COMPACTION_INTERVAL', 'PRX_MONTHLY_BUDGET',
     'PRX_MEMORY_INDEX_ENABLED', 'PRX_MEMORY_LIMIT',
     'PRX_REDIS_ENABLED', 'PRX_REDIS_URL', 'PRX_REDIS_PASSWORD', 'PRX_REDIS_PREFIX', 'PRX_REDIS_TTL_DAYS',
+    'PRX_BASIC_MEMORY_ENABLED', 'BASIC_MEMORY_HOME',
     'PRX_WATCHDOG_ENABLED', 'PRX_WATCHDOG_INTERVAL_SECS', 'PRX_WATCHDOG_FAIL_THRESHOLD',
     'PRX_DISK_MONITOR_ENABLED', 'PRX_DISK_MONITOR_INTERVAL_MINS', 'PRX_PREVOYANT_MAX_SIZE_MB', 'PRX_DISK_CAPACITY_ALERT_PCT', 'PRX_DISK_CLEANUP_INTERVAL_DAYS',
     'PRX_WATCH_ENABLED', 'PRX_WATCH_POLL_INTERVAL', 'PRX_WATCH_MAX_POLLS',

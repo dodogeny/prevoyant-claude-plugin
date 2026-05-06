@@ -348,10 +348,10 @@ function _buildChartData() {
     if (idx >= 0 && idx < 30) processed[idx]++;
   }
 
-  // Token cost per day (last 30 days)
+  // Token cost per day (last 30 days) — failed runs cost real money too
   const tokenCost = new Array(30).fill(0);
   for (const e of events) {
-    if (e.type !== 'ticket_completed' || !e.details || e.details.costUsd == null) continue;
+    if ((e.type !== 'ticket_completed' && e.type !== 'ticket_failed') || !e.details || e.details.costUsd == null) continue;
     const ms = new Date(e.ts).getTime();
     if (ms < dayStart) continue;
     const idx = Math.floor((ms - dayStart) / 86400000);
