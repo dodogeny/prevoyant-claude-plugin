@@ -998,6 +998,10 @@ function renderDashboard(stats, budget) {
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
       Watch
     </a>
+    <a href="/dashboard/knowledge-builder" class="settings-link" title="Knowledge Builder">
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
+      Knowledge
+    </a>
     ${readDiskStatus().pendingCleanup
       ? `<a href="/dashboard/disk" class="settings-link" title="Disk Monitor — cleanup pending" style="color:#ea580c">`
       : `<a href="/dashboard/disk" class="settings-link" title="Disk Monitor">`}
@@ -1530,6 +1534,9 @@ const EVENT_DISPLAY = {
   kb_exported:        { label: 'KB Exported',        bg: '#dcfce7', color: '#166534' },
   kb_imported:        { label: 'KB Imported',        bg: '#dcfce7', color: '#166534' },
   disk_cleanup:       { label: 'Disk Cleanup',       bg: '#fef3c7', color: '#92400e' },
+  kbflow_scan_started:   { label: 'KB Flow Scan Started',   bg: '#eff6ff', color: '#1d4ed8' },
+  kbflow_scan_completed: { label: 'KB Flow Scan Done',      bg: '#dcfce7', color: '#166534' },
+  kbflow_scan_failed:    { label: 'KB Flow Scan Failed',    bg: '#fee2e2', color: '#991b1b' },
 };
 
 const ACTOR_STYLE = {
@@ -3854,6 +3861,32 @@ function renderSettings(vals, flash) {
         </div>
       </details>
 
+      <!-- KB Flow Analyst -->
+      <details class="s-section"${v('PRX_KBFLOW_ENABLED') === 'Y' ? ' open' : ''} id="kb-flow-analyst">
+        <summary>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
+          KB Flow Analyst
+          <span class="s-opt">Optional</span>
+          <span class="s-chevron">›</span>
+        </summary>
+        <div class="s-body">
+          <div class="s-field span2">
+            <div class="s-hint" style="margin-top:0">
+              Background worker that periodically queries Jira for recent incidents, auto-discovers the
+              most-impacted business flows, traces them in the codebase, and proposes Core Mental Map
+              updates to <code>shared/kbflow-pending.md</code> for the team to vote on at Step 13j.
+              No manual flow configuration is required. Review activity at
+              <a href="/dashboard/knowledge-builder" style="color:#1e40af">Dashboard › Knowledge</a>.
+            </div>
+          </div>
+          ${fld('PRX_KBFLOW_ENABLED','Enable KB Flow Analyst','select',v('PRX_KBFLOW_ENABLED') || 'N','','Starts the autonomous KB Flow Analyst worker.',
+            [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
+          ${fld('PRX_KBFLOW_INTERVAL_DAYS','Run interval (days)','text',v('PRX_KBFLOW_INTERVAL_DAYS'),'7','Days between autonomous scan runs. Fractional values supported (0.5 = every 12 h). Minimum: 1. Default: 7.')}
+          ${fld('PRX_KBFLOW_LOOKBACK_DAYS','Jira lookback (days)','number',v('PRX_KBFLOW_LOOKBACK_DAYS'),'30','Days of Jira ticket history scanned to identify high-frequency flows. Default: 30.')}
+          ${fld('PRX_KBFLOW_MAX_FLOWS','Max flows per run','number',v('PRX_KBFLOW_MAX_FLOWS'),'3','Maximum number of business flows analysed per run. Keeps each run focused. Default: 3.')}
+        </div>
+      </details>
+
       <div class="s-actions">
         <button type="submit" class="btn-save">Save</button>
         <button type="button" class="btn-restart" onclick="saveAndRestart()">Save &amp; Restart Server</button>
@@ -4973,6 +5006,7 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'PRX_DISK_MONITOR_ENABLED', 'PRX_DISK_MONITOR_INTERVAL_MINS', 'PRX_PREVOYANT_MAX_SIZE_MB', 'PRX_DISK_CAPACITY_ALERT_PCT', 'PRX_DISK_CLEANUP_INTERVAL_DAYS',
     'PRX_WATCH_ENABLED', 'PRX_WATCH_POLL_INTERVAL', 'PRX_WATCH_MAX_POLLS',
     'PRX_WATCH_LOG_KEEP_DAYS', 'PRX_WATCH_LOG_KEEP_PER_TICKET',
+    'PRX_KBFLOW_ENABLED', 'PRX_KBFLOW_INTERVAL_DAYS', 'PRX_KBFLOW_LOOKBACK_DAYS', 'PRX_KBFLOW_MAX_FLOWS',
     'PRX_WASENDER_ENABLED', 'PRX_WASENDER_API_KEY', 'PRX_WASENDER_TO',
     'PRX_WASENDER_PUBLIC_URL', 'PRX_WASENDER_EVENTS', 'PRX_WASENDER_PDF_PASSWORD',
   ];
@@ -5248,6 +5282,349 @@ router.get('/reports/serve/:filename', (req, res) => {
   res.setHeader('Content-Type', 'application/pdf');
   res.setHeader('Content-Disposition', `inline; filename="${filename}"`);
   fs.createReadStream(filePath).pipe(res);
+});
+
+// ── Knowledge Builder ─────────────────────────────────────────────────────────
+// Tracks the autonomous KB Flow Analyst worker: status, contributions queued for
+// approval (shared/kbflow-pending.md), and the run history (shared/kbflow-sessions.md).
+
+const KBFLOW_STATE_FILE = path.join(os.homedir(), '.prevoyant', 'server', 'kbflow-analyst-state.json');
+
+function readKbflowState() {
+  try { return JSON.parse(fs.readFileSync(KBFLOW_STATE_FILE, 'utf8')); }
+  catch (_) { return {}; }
+}
+
+// Parse shared/kbflow-pending.md into structured proposals.
+// Format (one block per proposal, separated by ---):
+//   ## JP-NNN — Title
+//   Status: PENDING APPROVAL | APPROVED | ... | REJECTED
+//   Flow: ...
+//   Incidents: ...
+//   Proposed: YYYY-MM-DD
+//   Type: CMM-ARCH | CMM-BIZ | CMM-DATA | CMM-GOTCHA
+//   Action: NEW | CORRECT | CONFIRM
+//   {body}
+//   ref: file:line
+function parseKbflowPending(filePath) {
+  let raw;
+  try { raw = fs.readFileSync(filePath, 'utf8'); } catch (_) { return []; }
+
+  const blocks = raw.split(/^---\s*$/m).map(b => b.trim()).filter(Boolean);
+  const items  = [];
+
+  for (const block of blocks) {
+    const titleMatch = block.match(/^##\s+(JP-\d+)\s*[—–-]\s*(.+?)\s*$/m);
+    if (!titleMatch) continue;
+
+    const meta = {
+      id:        titleMatch[1],
+      title:     titleMatch[2],
+      status:    (block.match(/^Status:\s*(.+?)\s*$/m)        || [, ''])[1],
+      flow:      (block.match(/^Flow:\s*(.+?)\s*$/m)          || [, ''])[1],
+      incidents: (block.match(/^Incidents:\s*(.+?)\s*$/m)     || [, ''])[1],
+      proposed:  (block.match(/^Proposed:\s*(.+?)\s*$/m)      || [, ''])[1],
+      type:      (block.match(/^Type:\s*(.+?)\s*$/m)          || [, ''])[1],
+      action:    (block.match(/^Action:\s*(.+?)\s*$/m)        || [, ''])[1],
+      ref:       (block.match(/^ref:\s*(.+?)\s*$/m)           || [, ''])[1],
+    };
+
+    // The body sits between the metadata block and the `ref:` line.
+    const lines = block.split('\n');
+    const bodyLines = [];
+    let inBody = false;
+    for (const line of lines) {
+      if (/^(##|Status:|Flow:|Incidents:|Proposed:|Type:|Action:|ref:)/.test(line)) {
+        if (!line.startsWith('##') && !inBody) continue;
+      }
+      if (line.startsWith('##')) { inBody = true; continue; }
+      if (line.startsWith('ref:')) { inBody = false; continue; }
+      if (inBody && /^(Status|Flow|Incidents|Proposed|Type|Action):/.test(line)) continue;
+      if (inBody) bodyLines.push(line);
+    }
+    meta.body = bodyLines.join('\n').trim();
+
+    items.push(meta);
+  }
+  return items;
+}
+
+// Parse shared/kbflow-sessions.md — a markdown table.
+// | Date | Flows Analysed | Proposals | Confirmations | Status |
+function parseKbflowSessions(filePath) {
+  let raw;
+  try { raw = fs.readFileSync(filePath, 'utf8'); } catch (_) { return []; }
+
+  const lines = raw.split('\n');
+  const rows  = [];
+  for (const line of lines) {
+    if (!line.startsWith('|')) continue;
+    const cells = line.split('|').slice(1, -1).map(c => c.trim());
+    if (cells.length < 5) continue;
+    if (/^[-:\s]+$/.test(cells[0])) continue;       // separator row
+    if (cells[0].toLowerCase() === 'date') continue; // header row
+    rows.push({
+      date:          cells[0],
+      flows:         cells[1],
+      proposals:     cells[2],
+      confirmations: cells[3],
+      status:        cells[4],
+    });
+  }
+  return rows.reverse(); // newest first
+}
+
+function statusBadge(status) {
+  const s = String(status || '').trim().toUpperCase();
+  if (s.startsWith('PENDING'))  return `<span style="padding:2px 8px;border-radius:8px;font-size:.72rem;font-weight:600;background:#fef3c7;color:#92400e">PENDING</span>`;
+  if (s.startsWith('APPROVED')) return `<span style="padding:2px 8px;border-radius:8px;font-size:.72rem;font-weight:600;background:#dcfce7;color:#166534">APPROVED</span>`;
+  if (s.startsWith('REJECTED')) return `<span style="padding:2px 8px;border-radius:8px;font-size:.72rem;font-weight:600;background:#fee2e2;color:#991b1b">REJECTED</span>`;
+  if (s.startsWith('PARTIAL'))  return `<span style="padding:2px 8px;border-radius:8px;font-size:.72rem;font-weight:600;background:#fef3c7;color:#b45309">PARTIAL</span>`;
+  if (s === 'INFO')             return `<span style="padding:2px 8px;border-radius:8px;font-size:.72rem;font-weight:600;background:#e0f2fe;color:#0369a1">INFO</span>`;
+  return `<span style="padding:2px 8px;border-radius:8px;font-size:.72rem;font-weight:600;background:#f3f4f6;color:#374151">${esc(status || '—')}</span>`;
+}
+
+function fmtDuration(ms) {
+  if (!ms || ms < 0) return '—';
+  const s = Math.floor(ms / 1000);
+  if (s < 60)   return `${s}s`;
+  const m = Math.floor(s / 60);
+  if (m < 60)   return `${m}m ${s % 60}s`;
+  const h = Math.floor(m / 60);
+  return `${h}h ${m % 60}m`;
+}
+
+function renderKnowledgeBuilder(flash) {
+  const enabled    = process.env.PRX_KBFLOW_ENABLED === 'Y';
+  const interval   = process.env.PRX_KBFLOW_INTERVAL_DAYS  || '7';
+  const lookback   = process.env.PRX_KBFLOW_LOOKBACK_DAYS  || '30';
+  const maxFlows   = process.env.PRX_KBFLOW_MAX_FLOWS      || '3';
+
+  const state      = readKbflowState();
+  const kbBase     = (process.env.PRX_KB_MODE || 'local').toLowerCase() === 'distributed'
+    ? (process.env.PRX_KB_LOCAL_CLONE || path.join(os.homedir(), '.prevoyant', 'kb'))
+    : kbDir();
+  const pendingFile = path.join(kbBase, 'shared', 'kbflow-pending.md');
+  const sessionFile = path.join(kbBase, 'shared', 'kbflow-sessions.md');
+
+  const items     = parseKbflowPending(pendingFile);
+  const sessions  = parseKbflowSessions(sessionFile);
+
+  const counts = items.reduce((acc, it) => {
+    const s = (it.status || '').toUpperCase();
+    if (s.startsWith('PENDING'))   acc.pending++;
+    else if (s.startsWith('APPROVED')) acc.approved++;
+    else if (s.startsWith('REJECTED')) acc.rejected++;
+    else if (s === 'INFO')             acc.info++;
+    else acc.other++;
+    return acc;
+  }, { pending: 0, approved: 0, rejected: 0, info: 0, other: 0 });
+
+  const lastRunAt    = state.lastRunAt    ? new Date(state.lastRunAt)    : null;
+  const nextRunAt    = state.nextRunAt    ? new Date(state.nextRunAt)    : null;
+  const now          = Date.now();
+  const totalRuntime = sessions.length;
+  const lastStatus   = state.lastRunStatus || '—';
+
+  const flashMsg = flash === 'run-queued'   ? `<div style="background:#dcfce7;color:#166534;padding:.6rem 1rem;border-radius:8px;margin-bottom:1rem;font-size:.85rem">✓ Run queued — the KB Flow Analyst will start its scan momentarily.</div>` :
+                   flash === 'run-disabled' ? `<div style="background:#fee2e2;color:#991b1b;padding:.6rem 1rem;border-radius:8px;margin-bottom:1rem;font-size:.85rem">✗ Cannot run — the KB Flow Analyst is disabled. Enable it in Settings first.</div>` :
+                   '';
+
+  return `<!doctype html>
+<html><head><meta charset="utf-8"><title>Knowledge Builder · Prevoyant</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; background:#f8fafc; color:#111827; }
+  .topbar { background:#1e293b; color:#fff; padding:.85rem 1.5rem; display:flex; align-items:center; gap:1rem; }
+  .topbar h1 { font-size:1rem; margin:0; font-weight:600; }
+  .topbar .nav { margin-left:auto; display:flex; gap:.75rem; }
+  .topbar .nav a { color:#cbd5e1; text-decoration:none; font-size:.85rem; padding:.3rem .6rem; border-radius:6px; }
+  .topbar .nav a:hover { background:#334155; color:#fff; }
+  .wrap { max-width: 1100px; margin: 1.5rem auto; padding: 0 1.5rem 4rem; }
+  .panel { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:1.25rem 1.5rem; margin-bottom:1.25rem; }
+  .panel h2 { font-size:.95rem; margin:0 0 .9rem; color:#1f2937; font-weight:600; display:flex; align-items:center; gap:.5rem; }
+  .panel .hint { font-size:.8rem; color:#6b7280; margin-top:.6rem; }
+  .stat-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap:.9rem; }
+  .stat { background:#f9fafb; border:1px solid #e5e7eb; border-radius:8px; padding:.7rem .9rem; }
+  .stat .lbl { font-size:.7rem; text-transform:uppercase; letter-spacing:.04em; color:#6b7280; }
+  .stat .val { font-size:1.15rem; font-weight:600; color:#111827; margin-top:.15rem; }
+  .stat .sub { font-size:.72rem; color:#9ca3af; margin-top:.15rem; }
+  table { width:100%; border-collapse:collapse; font-size:.84rem; }
+  th { text-align:left; padding:.5rem .6rem; background:#f9fafb; color:#6b7280; font-weight:600; font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; border-bottom:1px solid #e5e7eb; }
+  td { padding:.55rem .6rem; border-bottom:1px solid #f1f5f9; vertical-align:top; }
+  tr:hover td { background:#fafafa; }
+  .empty { color:#9ca3af; font-size:.85rem; padding:1rem; text-align:center; font-style:italic; }
+  .pill { display:inline-block; padding:1px 7px; border-radius:6px; font-size:.7rem; font-weight:600; background:#e5e7eb; color:#374151; }
+  .btn { display:inline-flex; align-items:center; gap:.4rem; padding:.45rem .9rem; background:#1e40af; color:#fff; border:0; border-radius:7px; font-size:.82rem; font-weight:500; cursor:pointer; text-decoration:none; }
+  .btn:hover { background:#1e3a8a; }
+  .btn[disabled] { background:#9ca3af; cursor:not-allowed; }
+  .btn-secondary { background:#fff; color:#374151; border:1px solid #d1d5db; }
+  .btn-secondary:hover { background:#f9fafb; }
+  .row-hdr { display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:.9rem; }
+  .row-hdr h2 { margin:0; }
+  code { background:#f3f4f6; padding:1px 5px; border-radius:4px; font-size:.78rem; color:#374151; }
+  .body-text { font-size:.78rem; color:#4b5563; max-width:380px; white-space:pre-wrap; line-height:1.4; }
+  .ref-link { font-size:.72rem; color:#6b7280; font-family:ui-monospace, monospace; margin-top:.25rem; display:block; }
+  .status-on  { color:#166534; font-weight:600; }
+  .status-off { color:#9ca3af; font-weight:600; }
+</style>
+</head><body>
+  <div class="topbar">
+    <h1>Knowledge Builder</h1>
+    <div class="nav">
+      <a href="/dashboard">Dashboard</a>
+      <a href="/dashboard/activity">Activity</a>
+      <a href="/dashboard/watch">Watch</a>
+      <a href="/dashboard/settings#kb-flow-analyst">Settings</a>
+    </div>
+  </div>
+  <div class="wrap">
+    ${flashMsg}
+
+    <div class="panel">
+      <div class="row-hdr">
+        <h2>KB Flow Analyst — Status</h2>
+        <form method="POST" action="/dashboard/knowledge-builder/run-now" style="margin:0">
+          <button type="submit" class="btn" ${enabled ? '' : 'disabled title="Enable the worker in Settings first"'}>
+            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+            Run Scan Now
+          </button>
+        </form>
+      </div>
+      <div class="stat-grid">
+        <div class="stat">
+          <div class="lbl">Worker</div>
+          <div class="val ${enabled ? 'status-on' : 'status-off'}">${enabled ? '● Enabled' : '○ Disabled'}</div>
+          <div class="sub">PRX_KBFLOW_ENABLED=${enabled ? 'Y' : 'N'}</div>
+        </div>
+        <div class="stat">
+          <div class="lbl">Last run</div>
+          <div class="val">${lastRunAt ? lastRunAt.toLocaleString() : '—'}</div>
+          <div class="sub">Status: ${esc(lastStatus)}</div>
+        </div>
+        <div class="stat">
+          <div class="lbl">Next run</div>
+          <div class="val">${nextRunAt ? nextRunAt.toLocaleString() : '—'}</div>
+          <div class="sub">${nextRunAt ? (nextRunAt.getTime() > now ? 'in ' + fmtDuration(nextRunAt - now) : 'overdue') : 'never run'}</div>
+        </div>
+        <div class="stat">
+          <div class="lbl">Runs total</div>
+          <div class="val">${state.runCount || 0}</div>
+          <div class="sub">${totalRuntime} session${totalRuntime === 1 ? '' : 's'} logged</div>
+        </div>
+        <div class="stat">
+          <div class="lbl">Interval</div>
+          <div class="val">${esc(interval)}d</div>
+          <div class="sub">scan every ${esc(interval)} day(s)</div>
+        </div>
+        <div class="stat">
+          <div class="lbl">Lookback</div>
+          <div class="val">${esc(lookback)}d</div>
+          <div class="sub">Jira incident window</div>
+        </div>
+        <div class="stat">
+          <div class="lbl">Max flows / run</div>
+          <div class="val">${esc(maxFlows)}</div>
+          <div class="sub">top-ranked flows analysed</div>
+        </div>
+      </div>
+      <div class="hint">
+        Pending file: <code>${esc(pendingFile)}</code><br>
+        Sessions log: <code>${esc(sessionFile)}</code>
+      </div>
+    </div>
+
+    <div class="panel">
+      <h2>
+        Contributions
+        <span class="pill">${counts.pending} pending</span>
+        <span class="pill" style="background:#dcfce7;color:#166534">${counts.approved} approved</span>
+        <span class="pill" style="background:#fee2e2;color:#991b1b">${counts.rejected} rejected</span>
+        ${counts.info ? `<span class="pill" style="background:#e0f2fe;color:#0369a1">${counts.info} info</span>` : ''}
+      </h2>
+      ${items.length === 0 ? `
+        <div class="empty">No contributions yet. The KB Flow Analyst writes proposals to <code>shared/kbflow-pending.md</code> after each run.</div>
+      ` : `
+        <table>
+          <thead>
+            <tr>
+              <th style="width:78px">ID</th>
+              <th>Title / Body</th>
+              <th>Flow</th>
+              <th>Type</th>
+              <th>Action</th>
+              <th>Proposed</th>
+              <th>Incidents</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${items.map(it => `
+              <tr>
+                <td><strong>${esc(it.id)}</strong></td>
+                <td>
+                  <div style="font-weight:600;font-size:.85rem">${esc(it.title)}</div>
+                  ${it.body ? `<div class="body-text">${esc(it.body)}</div>` : ''}
+                  ${it.ref ? `<span class="ref-link">ref: ${esc(it.ref)}</span>` : ''}
+                </td>
+                <td>${esc(it.flow || '—')}</td>
+                <td>${esc(it.type || '—')}</td>
+                <td>${esc(it.action || '—')}</td>
+                <td>${esc(it.proposed || '—')}</td>
+                <td>${esc(it.incidents || '—')}</td>
+                <td>${statusBadge(it.status)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `}
+    </div>
+
+    <div class="panel">
+      <h2>Run history (most recent first)</h2>
+      ${sessions.length === 0 ? `
+        <div class="empty">No runs logged yet.</div>
+      ` : `
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Flows analysed</th>
+              <th>Proposals</th>
+              <th>Confirmations</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${sessions.map(s => `
+              <tr>
+                <td>${esc(s.date)}</td>
+                <td>${esc(s.flows)}</td>
+                <td>${esc(s.proposals)}</td>
+                <td>${esc(s.confirmations)}</td>
+                <td>${statusBadge(s.status)}</td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `}
+    </div>
+  </div>
+</body></html>`;
+}
+
+router.get('/knowledge-builder', (req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(renderKnowledgeBuilder(req.query.flash || null));
+});
+
+router.post('/knowledge-builder/run-now', (_req, res) => {
+  if (process.env.PRX_KBFLOW_ENABLED !== 'Y') {
+    return res.redirect(303, '/dashboard/knowledge-builder?flash=run-disabled');
+  }
+  serverEvents.emit('kbflow-run-now');
+  activityLog.record('kbflow_scan_started', null, 'user', { trigger: 'manual' });
+  res.redirect(303, '/dashboard/knowledge-builder?flash=run-queued');
 });
 
 module.exports = router;

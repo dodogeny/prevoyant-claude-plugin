@@ -45,6 +45,7 @@ let diskWorker           = null;
 let updateWorker         = null;
 let kbSyncWorker         = null;
 let ticketWatcherWorker  = null;
+let kbFlowAnalystWorker  = null;
 
 function startWatchdog() {
   if (process.env.PRX_WATCHDOG_ENABLED !== 'Y') return;
@@ -260,8 +261,51 @@ function stopTicketWatcher() {
   }
 }
 
-process.on('SIGTERM', () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); setTimeout(() => process.exit(0), 600); });
-process.on('SIGINT',  () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); setTimeout(() => process.exit(0), 600); });
+function startKbFlowAnalyst() {
+  if (process.env.PRX_KBFLOW_ENABLED !== 'Y') return;
+  if (kbFlowAnalystWorker) return;
+
+  const workerData = {
+    smtpHost: process.env.PRX_SMTP_HOST || '',
+    smtpPort: process.env.PRX_SMTP_PORT || '587',
+    smtpUser: process.env.PRX_SMTP_USER || '',
+    smtpPass: process.env.PRX_SMTP_PASS || '',
+  };
+
+  kbFlowAnalystWorker = new Worker(
+    path.join(__dirname, 'workers', 'kbFlowAnalystWorker.js'),
+    { workerData }
+  );
+
+  kbFlowAnalystWorker.on('message', msg => {
+    if (!msg) return;
+    if (msg.type === 'log') return;
+    if (msg.type === 'activity') {
+      activityLog.record(msg.event, msg.key || null, 'system', msg.details || {});
+    }
+  });
+  kbFlowAnalystWorker.on('error', err =>
+    console.error('[kb-flow-analyst] Worker error:', err.message)
+  );
+  kbFlowAnalystWorker.on('exit', code => {
+    kbFlowAnalystWorker = null;
+    if (code !== 0) console.error(`[kb-flow-analyst] Worker exited with code ${code}`);
+  });
+
+  const interval = process.env.PRX_KBFLOW_INTERVAL_DAYS || '7';
+  const lookback = process.env.PRX_KBFLOW_LOOKBACK_DAYS  || '30';
+  console.log(`[prevoyant-server] KB Flow Analyst active — every ${interval} day(s), ${lookback}d Jira lookback`);
+}
+
+function stopKbFlowAnalyst() {
+  if (kbFlowAnalystWorker) {
+    kbFlowAnalystWorker.postMessage({ type: 'graceful-stop' });
+    kbFlowAnalystWorker = null;
+  }
+}
+
+process.on('SIGTERM', () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); stopKbFlowAnalyst(); setTimeout(() => process.exit(0), 600); });
+process.on('SIGINT',  () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); stopKbFlowAnalyst(); setTimeout(() => process.exit(0), 600); });
 
 // Reactively start/stop workers when settings are saved from the dashboard.
 // This avoids requiring a full server restart for monitor enable/disable toggles.
@@ -271,15 +315,25 @@ serverEvents.on('settings-saved', () => {
   const kbSyncEnabled      = process.env.PRX_REALTIME_KB_SYNC     === 'Y'
                           && process.env.PRX_KB_MODE               === 'distributed';
   const watcherEnabled     = process.env.PRX_WATCH_ENABLED         === 'Y';
+  const kbflowEnabled      = process.env.PRX_KBFLOW_ENABLED        === 'Y';
 
-  if (diskEnabled && !diskWorker)                     startDiskMonitor();
-  if (!diskEnabled && diskWorker)                     stopDiskMonitor();
-  if (watchdogEnabled && !watchdogWorker)             startWatchdog();
-  if (!watchdogEnabled && watchdogWorker)             stopWatchdog();
-  if (kbSyncEnabled && !kbSyncWorker)                startKbSync();
-  if (!kbSyncEnabled && kbSyncWorker)                stopKbSync();
-  if (watcherEnabled && !ticketWatcherWorker)         startTicketWatcher();
-  if (!watcherEnabled && ticketWatcherWorker)         stopTicketWatcher();
+  if (diskEnabled && !diskWorker)                         startDiskMonitor();
+  if (!diskEnabled && diskWorker)                         stopDiskMonitor();
+  if (watchdogEnabled && !watchdogWorker)                 startWatchdog();
+  if (!watchdogEnabled && watchdogWorker)                 stopWatchdog();
+  if (kbSyncEnabled && !kbSyncWorker)                    startKbSync();
+  if (!kbSyncEnabled && kbSyncWorker)                    stopKbSync();
+  if (watcherEnabled && !ticketWatcherWorker)             startTicketWatcher();
+  if (!watcherEnabled && ticketWatcherWorker)             stopTicketWatcher();
+  if (kbflowEnabled && !kbFlowAnalystWorker)              startKbFlowAnalyst();
+  if (!kbflowEnabled && kbFlowAnalystWorker)              stopKbFlowAnalyst();
+});
+
+// Manual scan trigger from /dashboard/knowledge-builder run-now button.
+serverEvents.on('kbflow-run-now', () => {
+  if (kbFlowAnalystWorker) {
+    kbFlowAnalystWorker.postMessage({ type: 'run-now' });
+  }
 });
 
 // ── Server listen ─────────────────────────────────────────────────────────────
@@ -306,6 +360,7 @@ app.listen(config.port, () => {
   startUpdateChecker();
   startKbSync();
   startTicketWatcher();
+  startKbFlowAnalyst();
 
   if (config.pollIntervalDays > 0) {
     schedulePollScript(config.pollIntervalDays);

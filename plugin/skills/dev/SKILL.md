@@ -86,6 +86,25 @@ FORCE_FULL_RUN     = (optional — Y/YES/true to force every step in the workflo
                                already contains results. Without this flag the skill may condense
                                steps 1–12 into a summary on repeat runs. Set to Y when replaying
                                a ticket to produce a fresh, complete analysis from scratch; default: N.)
+
+PRX_KBFLOW_ENABLED = (optional — enable the autonomous KB Flow Analyst worker in prevoyant-server;
+                               default: N. Set to Y to activate. When enabled, the analyst queries Jira
+                               for recent incidents, auto-discovers the most-impacted business flows,
+                               traces them in the codebase, and proposes CMM contributions to
+                               shared/kbflow-pending.md. The team reviews and votes at Step 13j.
+                               No manual flow configuration is required — focus areas come from real
+                               incident data.)
+
+PRX_KBFLOW_INTERVAL_DAYS = (optional — days between autonomous scan runs; default: 7.
+                               Fractional values supported: 0.5 = every 12 hours. Minimum: 1.
+                               Only relevant when PRX_KBFLOW_ENABLED=Y.)
+
+PRX_KBFLOW_LOOKBACK_DAYS = (optional — Jira ticket history window scanned to identify high-frequency
+                               flows; default: 30. A wider window finds structural patterns; a narrower
+                               one tracks recent spikes. Only relevant when PRX_KBFLOW_ENABLED=Y.)
+
+PRX_KBFLOW_MAX_FLOWS = (optional — maximum number of business flows analysed per run; default: 3.
+                               Keeps each run focused. Only relevant when PRX_KBFLOW_ENABLED=Y.)
 ```
 
 **`KB_MODE=local` (default):** KB lives in the developer's home directory. No git sync. No encryption. Private to one machine.
@@ -228,7 +247,9 @@ _(Applies to `KB_MODE=distributed`.)_
 │   ├── patterns.md        (or .md.enc) ← recurring bug/fix patterns with frequency counters
 │   ├── regression-risks.md (or .md.enc)← known fragile areas requiring care on every change
 │   ├── process-efficiency.md (or .md.enc) ← Bryan's session log: cost, budget, changes applied
-│   └── skill-changelog.md    (or .md.enc) ← full audit trail of every Bryan SKILL.md change (before/after, commit hash, revert status)
+│   ├── skill-changelog.md    (or .md.enc) ← full audit trail of every Bryan SKILL.md change (before/after, commit hash, revert status)
+│   ├── kbflow-pending.md     (or .md.enc) ← KB Flow Analyst's proposed CMM contributions awaiting team approval (Step 13j)
+│   └── kbflow-sessions.md    (or .md.enc) ← KB Flow Analyst's run log: timestamp, flows analysed, proposals, approval status
 ├── core-mental-map/                    ← compressed codebase mental model (contributed by all agents)
 │   ├── INDEX.md   (or INDEX.md.enc)   ← quick index: what topics exist, entry counts, last-updated
 │   ├── architecture.md  (or .md.enc)  ← system layers, component boundaries, key class relationships
@@ -1127,6 +1148,7 @@ When `AUTO_MODE_ON=1`, the skill runs in **analysis-only mode** with no interact
 | Step 0 — KB initialisation | Create directory if needed, present Prior Knowledge block | Create directory if needed; present Prior Knowledge block as normal — no interactive element |
 | Step 13 — KB update failure | Warn developer if a write fails | Log `KB_WRITE_WARN: {reason}` and continue — do not block session completion |
 | Step 13i — Agent personal memory | Write session memory file for each participating agent | Runs automatically; if write fails, log `KB_WRITE_WARN: persona memory — {reason}` and continue |
+| Step 13j — Javed pending review | Review and vote on Javed's pending CMM contributions | Skip if `PRX_KBFLOW_ENABLED` is not `Y` or `shared/kbflow-pending.md` has no PENDING APPROVAL entries |
 | Step R0 — KB initialisation (Review mode) | Same as Step 0 | Same as Step 0 |
 | Step R9 — KB update failure (Review mode) | Same as Step 13 | Same as Step 13 |
 | Step 1 — MCP failure | Stop and wait for developer | Print `HEADLESS_ERROR: {reason}` and exit immediately |
@@ -3852,11 +3874,65 @@ Display on completion:
 
 ---
 
+#### 13j. Review Javed's Pending KB Contributions
+
+**Skip condition:** If `PRX_KBFLOW_ENABLED` is not `Y`/`YES`/`true` (case-insensitive), OR `shared/kbflow-pending.md` does not exist, OR the file contains no entries with `Status: PENDING APPROVAL` — skip entirely. Display: `⏭️  Step 13j skipped — no pending Javed contributions.`
+
+Javed is an optional autonomous analyst who auto-discovers high-incident business flows from recent Jira activity, traces them in the codebase, and proposes Core Mental Map updates. He never writes directly to the KB. This step is the team's approval gate.
+
+**13j-1. Read `shared/kbflow-pending.md`**
+
+Read the file and list all entries with `Status: PENDING APPROVAL`. Display each entry's title, flow, proposed date, type, and action tag.
+
+**13j-2. Panel Vote — Morgan chairs**
+
+For each PENDING APPROVAL entry, Morgan presents it to the full panel. Each team member gives a one-line verdict:
+
+- **Morgan** — is this substantively new vs. already covered elsewhere in the KB? Is the evidence (file:line) still valid?
+- **Alex** — does git history support or contradict the claim?
+- **Sam** — does the runtime behaviour match what Javed traced statically?
+- **Jordan** — is the entry format correct? Does it duplicate an existing CMM entry?
+- **Henk** — does it conflict with any recorded business rule in `shared/business-rules.md`?
+- **Riley** — does approving this entry introduce or omit any regression risk?
+
+**Decision rule: unanimous approval required.** A single REJECT blocks the entry. A PARTIAL (some members abstain) counts as APPROVED only if the abstaining member explicitly states no objection.
+
+**13j-3. Apply Approved Contributions**
+
+For each APPROVED entry:
+- Determine the target file: CMM-ARCH → `core-mental-map/architecture.md`, CMM-BIZ → `core-mental-map/business-logic.md`, CMM-DATA → `core-mental-map/data-flows.md`, CMM-GOTCHA → `core-mental-map/gotchas.md`.
+- Write the CMM entry following the standard compressed format (see Core Mental Map section).
+- Update `shared/kbflow-pending.md`: change `Status: PENDING APPROVAL` → `Status: APPROVED | {today's date}`.
+- Update `core-mental-map/INDEX.md` counts for the modified file.
+
+For each REJECTED entry:
+- Update `shared/kbflow-pending.md`: change `Status: PENDING APPROVAL` → `Status: REJECTED | {today's date} | Reason: {one-line reason}`.
+- Do not write anything to `core-mental-map/`.
+
+**13j-4. Update `shared/kbflow-sessions.md`**
+
+Find the matching row for the reviewed batch (by flow and date) and update the `Status` column:
+- All approved → `APPROVED`
+- Partially approved → `PARTIAL ({N}/{M} approved)`
+- All rejected → `REJECTED`
+
+Display on completion:
+```
+🔍 Javed's KB Contributions — Review Complete
+   Flow         : {flow name}
+   Total entries: {N}
+   Approved     : {N} → written to core-mental-map/
+   Rejected     : {N} → archived with rejection reason
+   Skipped      : {N} INFO entries (no action required)
+```
+
+---
+
 ### Step 14 — Bryan's Retrospective
 
 **Skip condition:** If `PRX_INCLUDE_SM_IN_SESSIONS_ENABLED` is not set or is not `Y`/`YES`/`true` (case-insensitive), skip this step entirely. Display: `⏭️  Step 14 skipped — set PRX_INCLUDE_SM_IN_SESSIONS_ENABLED=Y in .env to activate Bryan's retrospective.`
 
-Bryan runs after every Dev Mode session, immediately after Step 13h. Bryan is a **silent observer** — he does not interrupt Steps 0–13. He now convenes a structured retrospective with the team.
+Bryan runs after every Dev Mode session, immediately after Step 13j. Bryan is a **silent observer** — he does not interrupt Steps 0–13j. He now convenes a structured retrospective with the team.
 
 #### Bryan's Mandate
 
@@ -4979,6 +5055,12 @@ PR Review sessions are especially well-suited to confirming (or correcting) exis
 #### R9h. Save Lessons Learned
 
 Apply the same process as Step 13h in Dev Mode. Collect `[LL+]` markers emitted during Steps R4 and R5, and append them to `lessons-learned/{developer}.md`.
+
+#### R9i. Review Javed's Pending KB Contributions
+
+Apply the same process as Step 13j in Dev Mode. Skip condition is identical: if `PRX_KBFLOW_ENABLED` is not `Y`/`YES`/`true` or `shared/kbflow-pending.md` has no `Status: PENDING APPROVAL` entries, skip entirely.
+
+PR Review sessions are especially well-positioned to evaluate Javed's contributions because reviewers have just read the code changes — they can verify whether a proposed CMM fact reflects the current state of the patched code.
 
 ---
 

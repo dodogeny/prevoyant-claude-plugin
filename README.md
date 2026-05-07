@@ -919,7 +919,7 @@ rm -rf ~/.prevoyant/reports   # or the path set in CLAUDE_REPORT_DIR
 
 ## Changelog
 
-### v1.2.10 — Memory Efficiency, Animated Sun Logo, Backup & Export, Per-agent Personal Memory
+### v1.2.10 — Memory Efficiency, Animated Sun Logo, Backup & Export, Per-agent Personal Memory, KB Flow Analyst
 
 - **Memory efficiency:** Replaced full `/dashboard/json` polling with a new `/dashboard/busy` endpoint (O(1) in-memory Map scan) used by the sun-logo indicator — eliminates disk I/O and array sorting on every 4-second poll. `loadSessions()` now caps in-memory history at 50 recent completed tickets (was unbounded — servers with thousands of session files loaded all into RAM). `getChartData()` result is cached for 60 seconds and invalidated on new events instead of recomputing on every page load. `seenThisSession` dedup Set is now capped at 1 000 entries with LRU eviction.
 
@@ -934,6 +934,8 @@ rm -rf ~/.prevoyant/reports   # or the path set in CLAUDE_REPORT_DIR
 - **Setup script fixes:** `setup.ps1` corrected `ccusage` → `codeburn` in the permissions allowlist and section header. Both scripts now consistently reference the `codeburn` budget-tracking CLI.
 
 - **Cost trend includes failed runs:** The dashboard's "Cost trend — 30d" sparkline now aggregates `costUsd` from both `ticket_completed` and `ticket_failed` events. Failed runs spend real tokens, so excluding them under-reported daily cost.
+
+- **KB Flow Analyst (Javed) — autonomous CMM contributor:** A new background worker (`server/workers/kbFlowAnalystWorker.js`) runs as Javed, the team's senior-developer KB analyst persona. On a configurable day interval it queries Jira for recent incidents, auto-discovers the highest-impact business flows from real ticket data (no manual flow configuration), traces them in the repo, and proposes Core Mental Map entries to `shared/kbflow-pending.md` tagged `Status: PENDING APPROVAL`. The panel votes at the new Step 13j (Dev Mode) / R9i (PR Review Mode) — nothing reaches `core-mental-map/` without unanimous approval. Configure via `PRX_KBFLOW_ENABLED` / `PRX_KBFLOW_INTERVAL_DAYS` / `PRX_KBFLOW_LOOKBACK_DAYS` / `PRX_KBFLOW_MAX_FLOWS` (Settings → KB Flow Analyst). A new dashboard page at `/dashboard/knowledge-builder` shows worker status, run history (`shared/kbflow-sessions.md`), pending/approved/rejected counts, and a Run-Now button to trigger an off-cycle scan. Activity events `kbflow_scan_started` / `kbflow_scan_completed` / `kbflow_scan_failed` flow through the existing notifications + activity log pipeline.
 
 ### v1.2.9 — WhatsApp Notifications + Activity Tracking + ast-grep Code Search
 
