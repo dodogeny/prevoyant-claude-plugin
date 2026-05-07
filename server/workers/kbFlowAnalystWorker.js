@@ -6,7 +6,10 @@
 //      are generating the most problems — no manual flow configuration required.
 //   2. Trace the top recurring flows in the codebase.
 //   3. Cross-check against the Core Mental Map and propose CMM updates.
-// Contributions land in shared/kbflow-pending.md (PENDING APPROVAL).
+// Contributions land in ~/.prevoyant/knowledge-buildup/kbflow-pending.md (PENDING APPROVAL).
+// The buildup dir lives outside the KB tree on purpose — pending/session files
+// must never be synced or committed; only entries promoted to core-mental-map/
+// via the Step 13j vote enter the shared KB.
 // The team votes at Step 13j in the next dev session.
 // State persists in ~/.prevoyant/server/kbflow-analyst-state.json.
 
@@ -49,6 +52,12 @@ function knowledgeDir() {
 
 const PROJECT_ROOT = path.resolve(__dirname, '../..');
 const MCP_CONFIG   = path.resolve(__dirname, '../../.mcp.json');
+
+// Working dir for unapproved KB Flow Analyst output. Kept outside the KB tree
+// so neither distributed-sync nor manual git operations can pick these up.
+const BUILDUP_DIR     = path.join(os.homedir(), '.prevoyant', 'knowledge-buildup');
+const PENDING_FILE    = path.join(BUILDUP_DIR, 'kbflow-pending.md');
+const SESSIONS_FILE   = path.join(BUILDUP_DIR, 'kbflow-sessions.md');
 
 // ── State persistence ──────────────────────────────────────────────────────────
 
@@ -138,9 +147,10 @@ function buildPrompt(kbDir, repoDir) {
     `deserve attention based on real incident data from Jira.`,
     ``,
     `Do NOT write directly to core-mental-map/ files. All proposals go to`,
-    `shared/kbflow-pending.md as PENDING APPROVAL. The team votes at Step 13j.`,
+    `${PENDING_FILE} as PENDING APPROVAL. The team votes at Step 13j.`,
     ``,
     `KNOWLEDGE_DIR : ${kbDir}`,
+    `BUILDUP_DIR   : ${BUILDUP_DIR}  (unapproved working files — outside the KB tree)`,
     `REPO_DIR      : ${repoDir}`,
     `DATE          : ${today}`,
     `MAX_FLOWS     : ${maxFlows()} (analyse at most this many flows per run)`,
@@ -153,9 +163,9 @@ function buildPrompt(kbDir, repoDir) {
     `  ${kbDir}/core-mental-map/business-logic.md`,
     `  ${kbDir}/core-mental-map/data-flows.md`,
     `  ${kbDir}/core-mental-map/gotchas.md`,
-    `  ${kbDir}/shared/kbflow-pending.md   ← skip flows already queued to avoid duplicates`,
+    `  ${PENDING_FILE}   ← skip flows already queued to avoid duplicates`,
     ``,
-    `Output: list flows already queued in kbflow-pending.md (or "None pending").`,
+    `Output: list flows already queued in ${PENDING_FILE} (or "None pending").`,
     ``,
     `### Step J2 — Query Jira for Recent Incidents`,
     `Use the Jira MCP to run this JQL query (last ${lookbackDays()} days):`,
@@ -185,7 +195,7 @@ function buildPrompt(kbDir, repoDir) {
     `  - Representative ticket keys (up to 3)`,
     `  - Why it ranked: what pattern makes this flow high-risk`,
     ``,
-    `Skip any flow that already has PENDING entries in kbflow-pending.md (from J1).`,
+    `Skip any flow that already has PENDING entries in the pending file (from J1).`,
     ``,
     `### Step J4 — Trace Each Flow in the Codebase`,
     `For each flow selected in J3:`,
@@ -214,8 +224,8 @@ function buildPrompt(kbDir, repoDir) {
     ``,
     `Each marker must include a ref: file:line anchor.`,
     ``,
-    `### Step J6 — Write to shared/kbflow-pending.md`,
-    `File: ${kbDir}/shared/kbflow-pending.md`,
+    `### Step J6 — Write to the pending-proposals file`,
+    `File: ${PENDING_FILE}`,
     ``,
     `Read the file to find the highest existing JP-NNN number (start at JP-001 if none).`,
     ``,
@@ -243,8 +253,8 @@ function buildPrompt(kbDir, repoDir) {
     `Reason: {no recurring flows identified | Jira unavailable | all flows already pending}`,
     `---`,
     ``,
-    `### Step J7 — Update shared/kbflow-sessions.md`,
-    `File: ${kbDir}/shared/kbflow-sessions.md`,
+    `### Step J7 — Update the sessions log`,
+    `File: ${SESSIONS_FILE}`,
     ``,
     `If the file does not exist, create it with this header:`,
     `# KB Flow Analyst — Session Log`,
@@ -442,6 +452,7 @@ async function runScan() {
   _running = true;
 
   const kbDir  = knowledgeDir();
+  try { fs.mkdirSync(BUILDUP_DIR, { recursive: true }); } catch (_) {}
   const state  = loadState();
   const runNum = (state.runCount || 0) + 1;
   const { stream: logStream, logFile } = openLogStream(runNum);
@@ -451,6 +462,7 @@ async function runScan() {
     `=== KB Flow Analyst Run #${runNum} ===\n` +
     `Started   : ${startedAt.toISOString()}\n` +
     `KB Dir    : ${kbDir}\n` +
+    `Buildup   : ${BUILDUP_DIR}\n` +
     `Lookback  : ${lookbackDays()}d | Max flows: ${maxFlows()}\n` +
     `${'─'.repeat(60)}\n\n`
   );
@@ -486,7 +498,7 @@ async function runScan() {
       output,
       '',
       divider,
-      `Proposals: ${kbDir}/shared/kbflow-pending.md`,
+      `Proposals: ${PENDING_FILE}`,
       `Next run : ${new Date(nextRunAt).toUTCString()}`,
       `Review pending contributions at Step 13j in the next dev session.`,
     ].join('\n');

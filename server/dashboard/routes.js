@@ -3874,7 +3874,7 @@ function renderSettings(vals, flash) {
             <div class="s-hint" style="margin-top:0">
               Background worker that periodically queries Jira for recent incidents, auto-discovers the
               most-impacted business flows, traces them in the codebase, and proposes Core Mental Map
-              updates to <code>shared/kbflow-pending.md</code> for the team to vote on at Step 13j.
+              updates to <code>~/.prevoyant/knowledge-buildup/kbflow-pending.md</code> for the team to vote on at Step 13j.
               No manual flow configuration is required. Review activity at
               <a href="/dashboard/knowledge-builder" style="color:#1e40af">Dashboard › Knowledge</a>.
             </div>
@@ -5286,7 +5286,8 @@ router.get('/reports/serve/:filename', (req, res) => {
 
 // ── Knowledge Builder ─────────────────────────────────────────────────────────
 // Tracks the autonomous KB Flow Analyst worker: status, contributions queued for
-// approval (shared/kbflow-pending.md), and the run history (shared/kbflow-sessions.md).
+// approval, and the run history. Both files live in ~/.prevoyant/knowledge-buildup/
+// (outside the KB tree so they cannot accidentally be synced or committed).
 
 const KBFLOW_STATE_FILE = path.join(os.homedir(), '.prevoyant', 'server', 'kbflow-analyst-state.json');
 
@@ -5295,7 +5296,7 @@ function readKbflowState() {
   catch (_) { return {}; }
 }
 
-// Parse shared/kbflow-pending.md into structured proposals.
+// Parse the kbflow-pending.md buildup file into structured proposals.
 // Format (one block per proposal, separated by ---):
 //   ## JP-NNN — Title
 //   Status: PENDING APPROVAL | APPROVED | ... | REJECTED
@@ -5349,7 +5350,7 @@ function parseKbflowPending(filePath) {
   return items;
 }
 
-// Parse shared/kbflow-sessions.md — a markdown table.
+// Parse the kbflow-sessions.md buildup file — a markdown table.
 // | Date | Flows Analysed | Proposals | Confirmations | Status |
 function parseKbflowSessions(filePath) {
   let raw;
@@ -5401,11 +5402,9 @@ function renderKnowledgeBuilder(flash) {
   const maxFlows   = process.env.PRX_KBFLOW_MAX_FLOWS      || '3';
 
   const state      = readKbflowState();
-  const kbBase     = (process.env.PRX_KB_MODE || 'local').toLowerCase() === 'distributed'
-    ? (process.env.PRX_KB_LOCAL_CLONE || path.join(os.homedir(), '.prevoyant', 'kb'))
-    : kbDir();
-  const pendingFile = path.join(kbBase, 'shared', 'kbflow-pending.md');
-  const sessionFile = path.join(kbBase, 'shared', 'kbflow-sessions.md');
+  const buildupDir = path.join(os.homedir(), '.prevoyant', 'knowledge-buildup');
+  const pendingFile = path.join(buildupDir, 'kbflow-pending.md');
+  const sessionFile = path.join(buildupDir, 'kbflow-sessions.md');
 
   const items     = parseKbflowPending(pendingFile);
   const sessions  = parseKbflowSessions(sessionFile);
@@ -5543,7 +5542,7 @@ function renderKnowledgeBuilder(flash) {
         ${counts.info ? `<span class="pill" style="background:#e0f2fe;color:#0369a1">${counts.info} info</span>` : ''}
       </h2>
       ${items.length === 0 ? `
-        <div class="empty">No contributions yet. The KB Flow Analyst writes proposals to <code>shared/kbflow-pending.md</code> after each run.</div>
+        <div class="empty">No contributions yet. The KB Flow Analyst writes proposals to <code>~/.prevoyant/knowledge-buildup/kbflow-pending.md</code> after each run.</div>
       ` : `
         <table>
           <thead>

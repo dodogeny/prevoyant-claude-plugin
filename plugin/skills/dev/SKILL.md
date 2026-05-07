@@ -91,7 +91,7 @@ PRX_KBFLOW_ENABLED = (optional — enable the autonomous KB Flow Analyst worker 
                                default: N. Set to Y to activate. When enabled, the analyst queries Jira
                                for recent incidents, auto-discovers the most-impacted business flows,
                                traces them in the codebase, and proposes CMM contributions to
-                               shared/kbflow-pending.md. The team reviews and votes at Step 13j.
+                               ~/.prevoyant/knowledge-buildup/kbflow-pending.md. The team reviews and votes at Step 13j.
                                No manual flow configuration is required — focus areas come from real
                                incident data.)
 
@@ -247,9 +247,7 @@ _(Applies to `KB_MODE=distributed`.)_
 │   ├── patterns.md        (or .md.enc) ← recurring bug/fix patterns with frequency counters
 │   ├── regression-risks.md (or .md.enc)← known fragile areas requiring care on every change
 │   ├── process-efficiency.md (or .md.enc) ← Bryan's session log: cost, budget, changes applied
-│   ├── skill-changelog.md    (or .md.enc) ← full audit trail of every Bryan SKILL.md change (before/after, commit hash, revert status)
-│   ├── kbflow-pending.md     (or .md.enc) ← KB Flow Analyst's proposed CMM contributions awaiting team approval (Step 13j)
-│   └── kbflow-sessions.md    (or .md.enc) ← KB Flow Analyst's run log: timestamp, flows analysed, proposals, approval status
+│   └── skill-changelog.md    (or .md.enc) ← full audit trail of every Bryan SKILL.md change (before/after, commit hash, revert status)
 ├── core-mental-map/                    ← compressed codebase mental model (contributed by all agents)
 │   ├── INDEX.md   (or INDEX.md.enc)   ← quick index: what topics exist, entry counts, last-updated
 │   ├── architecture.md  (or .md.enc)  ← system layers, component boundaries, key class relationships
@@ -270,6 +268,8 @@ _(Applies to `KB_MODE=distributed`.)_
 └── lessons-learned/                    ← per-developer sprint retrospective entries; read by all agents
     └── {developer}.md  (or .md.enc)   ← one file per developer (name from git config or PRX_DEVELOPER_NAME)
 ```
+
+**KB Flow Analyst working files** (unapproved, never committed): the autonomous Javed worker writes to `~/.prevoyant/knowledge-buildup/kbflow-pending.md` (proposed CMM contributions awaiting Step 13j vote) and `~/.prevoyant/knowledge-buildup/kbflow-sessions.md` (run log: timestamp, flows analysed, proposals, approval status). This dir lives outside the KB tree on purpose so neither distributed sync nor manual git operations can pick the files up — only entries promoted to `core-mental-map/` after the panel vote enter the shared KB.
 
 **Persona definitions** (static, developer-editable): stored in the plugin at `plugin/config/personas/{agent}.md`. These files define each agent's voice, reasoning style, and priorities. Any developer may improve them. Each agent has a separate file, so concurrent edits to different agents never conflict.
 
@@ -1148,7 +1148,7 @@ When `AUTO_MODE_ON=1`, the skill runs in **analysis-only mode** with no interact
 | Step 0 — KB initialisation | Create directory if needed, present Prior Knowledge block | Create directory if needed; present Prior Knowledge block as normal — no interactive element |
 | Step 13 — KB update failure | Warn developer if a write fails | Log `KB_WRITE_WARN: {reason}` and continue — do not block session completion |
 | Step 13i — Agent personal memory | Write session memory file for each participating agent | Runs automatically; if write fails, log `KB_WRITE_WARN: persona memory — {reason}` and continue |
-| Step 13j — Javed pending review | Review and vote on Javed's pending CMM contributions | Skip if `PRX_KBFLOW_ENABLED` is not `Y` or `shared/kbflow-pending.md` has no PENDING APPROVAL entries |
+| Step 13j — Javed pending review | Review and vote on Javed's pending CMM contributions | Skip if `PRX_KBFLOW_ENABLED` is not `Y` or `~/.prevoyant/knowledge-buildup/kbflow-pending.md` has no PENDING APPROVAL entries |
 | Step R0 — KB initialisation (Review mode) | Same as Step 0 | Same as Step 0 |
 | Step R9 — KB update failure (Review mode) | Same as Step 13 | Same as Step 13 |
 | Step 1 — MCP failure | Stop and wait for developer | Print `HEADLESS_ERROR: {reason}` and exit immediately |
@@ -3876,11 +3876,11 @@ Display on completion:
 
 #### 13j. Review Javed's Pending KB Contributions
 
-**Skip condition:** If `PRX_KBFLOW_ENABLED` is not `Y`/`YES`/`true` (case-insensitive), OR `shared/kbflow-pending.md` does not exist, OR the file contains no entries with `Status: PENDING APPROVAL` — skip entirely. Display: `⏭️  Step 13j skipped — no pending Javed contributions.`
+**Skip condition:** If `PRX_KBFLOW_ENABLED` is not `Y`/`YES`/`true` (case-insensitive), OR `~/.prevoyant/knowledge-buildup/kbflow-pending.md` does not exist, OR the file contains no entries with `Status: PENDING APPROVAL` — skip entirely. Display: `⏭️  Step 13j skipped — no pending Javed contributions.`
 
-Javed is an optional autonomous analyst who auto-discovers high-incident business flows from recent Jira activity, traces them in the codebase, and proposes Core Mental Map updates. He never writes directly to the KB. This step is the team's approval gate.
+Javed is an optional autonomous analyst who auto-discovers high-incident business flows from recent Jira activity, traces them in the codebase, and proposes Core Mental Map updates. He never writes directly to the KB — proposals live in `~/.prevoyant/knowledge-buildup/` (outside the KB tree, never committed) until the panel promotes them here at Step 13j. This step is the team's approval gate.
 
-**13j-1. Read `shared/kbflow-pending.md`**
+**13j-1. Read `~/.prevoyant/knowledge-buildup/kbflow-pending.md`**
 
 Read the file and list all entries with `Status: PENDING APPROVAL`. Display each entry's title, flow, proposed date, type, and action tag.
 
@@ -3902,14 +3902,14 @@ For each PENDING APPROVAL entry, Morgan presents it to the full panel. Each team
 For each APPROVED entry:
 - Determine the target file: CMM-ARCH → `core-mental-map/architecture.md`, CMM-BIZ → `core-mental-map/business-logic.md`, CMM-DATA → `core-mental-map/data-flows.md`, CMM-GOTCHA → `core-mental-map/gotchas.md`.
 - Write the CMM entry following the standard compressed format (see Core Mental Map section).
-- Update `shared/kbflow-pending.md`: change `Status: PENDING APPROVAL` → `Status: APPROVED | {today's date}`.
+- Update `~/.prevoyant/knowledge-buildup/kbflow-pending.md`: change `Status: PENDING APPROVAL` → `Status: APPROVED | {today's date}`.
 - Update `core-mental-map/INDEX.md` counts for the modified file.
 
 For each REJECTED entry:
-- Update `shared/kbflow-pending.md`: change `Status: PENDING APPROVAL` → `Status: REJECTED | {today's date} | Reason: {one-line reason}`.
+- Update `~/.prevoyant/knowledge-buildup/kbflow-pending.md`: change `Status: PENDING APPROVAL` → `Status: REJECTED | {today's date} | Reason: {one-line reason}`.
 - Do not write anything to `core-mental-map/`.
 
-**13j-4. Update `shared/kbflow-sessions.md`**
+**13j-4. Update `~/.prevoyant/knowledge-buildup/kbflow-sessions.md`**
 
 Find the matching row for the reviewed batch (by flow and date) and update the `Status` column:
 - All approved → `APPROVED`
@@ -5058,7 +5058,7 @@ Apply the same process as Step 13h in Dev Mode. Collect `[LL+]` markers emitted 
 
 #### R9i. Review Javed's Pending KB Contributions
 
-Apply the same process as Step 13j in Dev Mode. Skip condition is identical: if `PRX_KBFLOW_ENABLED` is not `Y`/`YES`/`true` or `shared/kbflow-pending.md` has no `Status: PENDING APPROVAL` entries, skip entirely.
+Apply the same process as Step 13j in Dev Mode. Skip condition is identical: if `PRX_KBFLOW_ENABLED` is not `Y`/`YES`/`true` or `~/.prevoyant/knowledge-buildup/kbflow-pending.md` has no `Status: PENDING APPROVAL` entries, skip entirely.
 
 PR Review sessions are especially well-positioned to evaluate Javed's contributions because reviewers have just read the code changes — they can verify whether a proposed CMM fact reflects the current state of the patched code.
 
