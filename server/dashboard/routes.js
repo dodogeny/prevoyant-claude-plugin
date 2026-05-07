@@ -4667,6 +4667,22 @@ router.post('/disk/approve-cleanup', (_req, res) => {
     }
   } catch (_) {}
 
+  // Delete KB Flow Analyst run logs older than KEEP_DAYS days
+  const KBFLOW_LOG_DIR = path.join(os.homedir(), '.prevoyant', 'kbflow', 'logs');
+  let deletedKbflowLogs = 0;
+  try {
+    const files = fs.readdirSync(KBFLOW_LOG_DIR).filter(f => f.endsWith('.log'));
+    for (const f of files) {
+      const fp = path.join(KBFLOW_LOG_DIR, f);
+      try {
+        if (fs.statSync(fp).mtimeMs < cutoff) {
+          fs.unlinkSync(fp);
+          deletedKbflowLogs++;
+        }
+      } catch (_) {}
+    }
+  } catch (_) {}
+
   // Update status file
   try {
     const existing = readDiskStatus();
@@ -4676,7 +4692,7 @@ router.post('/disk/approve-cleanup', (_req, res) => {
     );
   } catch (_) {}
 
-  activityLog.record('disk_cleanup', null, 'user', { deletedSessions, trimmedLogs, deletedWatchLogs });
+  activityLog.record('disk_cleanup', null, 'user', { deletedSessions, trimmedLogs, deletedWatchLogs, deletedKbflowLogs });
   res.redirect(303, '/dashboard/disk?cleaned=1');
 });
 

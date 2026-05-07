@@ -575,7 +575,17 @@ tail -20 scripts/poll-jira.log
 
 An optional Node.js service that runs alongside the plugin as an always-on ambient agent. It receives Jira webhook events, queues tickets for analysis, spawns Claude, and surfaces live progress on a web dashboard — so tickets are processed automatically the moment they land in your queue, with no manual invocation needed.
 
-**Key capabilities:** real-time webhook receiver · live pipeline dashboard · job queue with stop/kill · session persistence across restarts · automatic PDF report discovery
+**Key capabilities:**
+- **Webhook receiver** — accepts Jira webhook events and auto-queues assigned tickets
+- **Pipeline dashboard** — live job queue with stop/kill, session history, cost tracking (30-day sparkline), and PDF report viewer
+- **KB Flow Analyst** — autonomous background worker that queries Jira for recent incidents, identifies the highest-impact business flows, traces them in the codebase, and proposes Core Mental Map updates to `~/.prevoyant/knowledge-buildup/kbflow-pending.md` for team vote at Step 13j; manageable via the Knowledge Builder dashboard page
+- **Health watchdog** — polls `/health` on a configurable interval and emails on DOWN/UP transitions
+- **Ticket watcher** — monitors watched Jira tickets and sends digest alerts on status changes
+- **Disk monitor** — tracks `~/.prevoyant/` disk usage against a configurable quota; alerts at threshold and runs periodic cleanup (sessions, server logs, watch logs, KB Flow Analyst run logs)
+- **Update checker** — polls GitHub for new plugin releases and surfaces an upgrade prompt on the dashboard
+- **WhatsApp notifications** — sends ticket and report events via WaSender API (zero new dependencies)
+- **Redis memory index** — dual-backend agent memory (Redis primary, JSON fallback) for KB query enrichment
+- **Session persistence** — state survives server restarts; automatic PDF report discovery
 
 → **[Full documentation: docs/prevoyant-server.md](docs/prevoyant-server.md)**
 
@@ -656,6 +666,7 @@ Story points = **Complexity + Risk + Repetition** (not hours). Scale: 1 · 2 · 
 │   │       ├── henk.md           # Technical Lead: business rules & client-value authority
 │   │       ├── riley.md          # Senior Lead Tester: regression risk & testability
 │   │       ├── bryan.md          # Scrum Master: token audit & process retrospective
+│   │       ├── javed.md          # KB Flow Analyst: autonomous Core Mental Map contributor
 │   │       └── _memory-template.md  # Template for session memory files
 │   └── skills/dev/
 │       └── SKILL.md              # All skill logic lives here
@@ -682,6 +693,7 @@ Story points = **Complexity + Risk + Repetition** (not hours). Scale: 1 · 2 · 
 │   ├── workers/                  # Background worker threads
 │   │   ├── diskMonitor.js        # Disk space tracking and alerts
 │   │   ├── healthMonitor.js      # Watchdog: polls /health, emails on DOWN/UP
+│   │   ├── kbFlowAnalystWorker.js # Autonomous KB Flow Analyst: Jira-driven CMM proposals
 │   │   ├── kbSyncWorker.js       # KB sync worker: Redis XREAD poll loop
 │   │   ├── ticketWatcherWorker.js # Jira ticket watcher: scheduled digest polls
 │   │   └── updateChecker.js      # Checks GitHub for plugin updates
