@@ -40,6 +40,9 @@ function lookbackDays(){ return parseInt(process.env.PRX_KBFLOW_LOOKBACK_DAYS ||
 // Maximum number of flows to analyse in one scan. Keeps runs focused.
 function maxFlows()    { return parseInt(process.env.PRX_KBFLOW_MAX_FLOWS || '3', 10); }
 
+// Maximum hours the Claude process is allowed to run before being killed.
+function timeoutHours(){ return Math.max(0.25, parseFloat(process.env.PRX_KBFLOW_TIMEOUT_HOURS || '2')); }
+
 function knowledgeDir() {
   const mode = (process.env.PRX_KB_MODE || 'local').toLowerCase();
   if (mode === 'distributed') {
@@ -107,6 +110,28 @@ function recordActivity(event, details) {
   if (parentPort) parentPort.postMessage({ type: 'activity', event, key: null, details: details || {} });
 }
 
+// ── Persona loader ─────────────────────────────────────────────────────────────
+
+function loadPersona() {
+  try {
+    return fs.readFileSync(
+      path.join(PROJECT_ROOT, 'plugin', 'config', 'personas', 'javed.md'), 'utf8'
+    );
+  } catch (_) { return ''; }
+}
+
+// ── Summary parser — extract proposal counts from Claude's final summary block ─
+
+function parseSummary(output) {
+  const num = (re) => { const m = output.match(re); return m ? parseInt(m[1], 10) : null; };
+  return {
+    flowsAnalysed:  num(/Flows analysed\s*:\s*(\d+)/),
+    newProposals:   num(/New proposals\s*:\s*(\d+)/),
+    corrections:    num(/Corrections\s*:\s*(\d+)/),
+    confirmations:  num(/Confirmations\s*:\s*(\d+)/),
+  };
+}
+
 // ── MCP config builder ─────────────────────────────────────────────────────────
 
 function buildMcpConfig() {
@@ -136,9 +161,12 @@ function buildPrompt(kbDir, repoDir) {
   const jiraBase    = (process.env.JIRA_URL || '').replace(/\/$/, '');
   const projectScope = jiraProject
     ? `project = ${jiraProject} AND`
-    : 'assignee = currentUser() AND';
+    : 'updated >= -30d AND';
+
+  const persona = loadPersona();
 
   return [
+    persona ? `<persona>\n${persona}\n</persona>` : '',
     `You are Javed, a senior software developer and KB Flow Analyst for the Prevoyant team.`,
     ``,
     `Your job today: identify which business flows in the codebase are generating the most`,
@@ -310,6 +338,25 @@ function runClaude(kbDir, onText) {
 
     let text    = '';
     let lineBuf = '';
+    let settled = false;
+
+    function cleanup() {
+      clearTimeout(killer);
+      if (usingTmpCfg) try { fs.unlinkSync(mcpConfig); } catch (_) {}
+    }
+    function done(err, val) {
+      if (settled) return; settled = true;
+      cleanup();
+      if (err) reject(err); else resolve(val);
+    }
+
+    // Kill the process if it exceeds the configured timeout.
+    const killer = setTimeout(() => {
+      log('warn', `Claude timed out after ${timeoutHours()}h — sending SIGTERM`);
+      proc.kill('SIGTERM');
+      setTimeout(() => { try { proc.kill('SIGKILL'); } catch (_) {} }, 5000);
+      done(new Error(`Claude process timed out after ${timeoutHours()}h`));
+    }, timeoutHours() * 3600 * 1000);
 
     proc.stdout.on('data', chunk => {
       lineBuf += chunk.toString();
@@ -340,13 +387,9 @@ function runClaude(kbDir, onText) {
       if (msg) log('warn', `claude stderr: ${msg.slice(0, 200)}`);
     });
 
-    proc.on('error', err => {
-      if (usingTmpCfg) try { fs.unlinkSync(mcpConfig); } catch (_) {}
-      reject(new Error(`Failed to spawn claude: ${err.message}`));
-    });
+    proc.on('error', err => done(new Error(`Failed to spawn claude: ${err.message}`)));
 
     proc.on('close', code => {
-      if (usingTmpCfg) try { fs.unlinkSync(mcpConfig); } catch (_) {}
       if (lineBuf.trim()) {
         try {
           const ev = JSON.parse(lineBuf);
@@ -357,8 +400,8 @@ function runClaude(kbDir, onText) {
           }
         } catch (_) {}
       }
-      if (code === 0 || text.trim()) resolve(text.trim() || '(no output produced)');
-      else reject(new Error(`claude exited with code ${code}`));
+      if (code === 0 || text.trim()) done(null, text.trim() || '(no output produced)');
+      else done(new Error(`claude exited with code ${code}`));
     });
   });
 }
@@ -469,6 +512,12 @@ async function runScan() {
 
   log('info', `Starting run #${runNum} — discovering high-frequency flows from Jira`);
   recordActivity('kbflow_scan_started', { runNum });
+  saveState({
+    ...loadState(),
+    isRunning:          true,
+    currentRunNum:      runNum,
+    currentRunStartedAt: startedAt.toISOString(),
+  });
 
   try {
     const output = await runClaude(kbDir, text => { logStream.write(text); });
@@ -478,14 +527,22 @@ async function runScan() {
 
     const outputHash = crypto.createHash('sha1').update(output).digest('hex');
     const nextRunAt  = new Date(Date.now() + intervalMs()).toISOString();
+    const summary    = parseSummary(output);
 
     saveState({
-      lastRunAt:      startedAt.toISOString(),
-      runCount:       runNum,
-      lastRunStatus:  'completed',
-      lastOutputHash: outputHash,
-      lastLogFile:    logFile,
+      lastRunAt:        startedAt.toISOString(),
+      runCount:         runNum,
+      lastRunStatus:    'completed',
+      lastOutputHash:   outputHash,
+      lastLogFile:      logFile,
       nextRunAt,
+      isRunning:        false,
+      currentRunNum:    null,
+      currentRunStartedAt: null,
+      lastFlowsAnalysed: summary.flowsAnalysed,
+      lastNewProposals:  summary.newProposals,
+      lastCorrections:   summary.corrections,
+      lastConfirmations: summary.confirmations,
     });
 
     const divider   = '─'.repeat(60);
@@ -519,12 +576,15 @@ async function runScan() {
     const nextRunAt = new Date(Date.now() + intervalMs()).toISOString();
     saveState({
       ...loadState(),
-      lastRunAt:     startedAt.toISOString(),
-      runCount:      runNum,
-      lastRunStatus: 'failed',
-      lastError:     err.message,
-      lastLogFile:   logFile,
+      lastRunAt:          startedAt.toISOString(),
+      runCount:           runNum,
+      lastRunStatus:      'failed',
+      lastError:          err.message,
+      lastLogFile:        logFile,
       nextRunAt,
+      isRunning:          false,
+      currentRunNum:      null,
+      currentRunStartedAt: null,
     });
   } finally {
     _running = false;

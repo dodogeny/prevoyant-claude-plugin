@@ -5392,6 +5392,16 @@ function parseKbflowSessions(filePath) {
   return rows.reverse(); // newest first
 }
 
+function linkIncidents(incidents, jiraBase) {
+  if (!incidents || incidents === '—') return esc(incidents || '—');
+  if (!jiraBase) return esc(incidents);
+  return incidents.split(/,\s*/).map(key => {
+    const k = key.trim();
+    if (!k) return '';
+    return `<a href="${esc(jiraBase)}/browse/${esc(k)}" target="_blank" rel="noopener" style="color:#1e40af;text-decoration:none;font-family:ui-monospace,monospace;font-size:.75rem;white-space:nowrap">${esc(k)}</a>`;
+  }).filter(Boolean).join('<span style="color:#d1d5db"> · </span>');
+}
+
 function statusBadge(status) {
   const s = String(status || '').trim().toUpperCase();
   if (s.startsWith('PENDING'))  return `<span style="padding:2px 8px;border-radius:8px;font-size:.72rem;font-weight:600;background:#fef3c7;color:#92400e">PENDING</span>`;
@@ -5413,76 +5423,106 @@ function fmtDuration(ms) {
 }
 
 function renderKnowledgeBuilder(flash) {
-  const enabled    = process.env.PRX_KBFLOW_ENABLED === 'Y';
-  const interval   = process.env.PRX_KBFLOW_INTERVAL_DAYS  || '7';
-  const lookback   = process.env.PRX_KBFLOW_LOOKBACK_DAYS  || '30';
-  const maxFlows   = process.env.PRX_KBFLOW_MAX_FLOWS      || '3';
+  const enabled     = process.env.PRX_KBFLOW_ENABLED === 'Y';
+  const interval    = process.env.PRX_KBFLOW_INTERVAL_DAYS  || '7';
+  const lookback    = process.env.PRX_KBFLOW_LOOKBACK_DAYS  || '30';
+  const maxFlowsCfg = process.env.PRX_KBFLOW_MAX_FLOWS      || '3';
+  const jiraBase    = (process.env.JIRA_URL || '').replace(/\/$/, '');
+  const jiraProject = process.env.PRX_JIRA_PROJECT || '';
 
-  const state      = readKbflowState();
-  const buildupDir = path.join(os.homedir(), '.prevoyant', 'knowledge-buildup');
+  const state       = readKbflowState();
+  const buildupDir  = path.join(os.homedir(), '.prevoyant', 'knowledge-buildup');
   const pendingFile = path.join(buildupDir, 'kbflow-pending.md');
   const sessionFile = path.join(buildupDir, 'kbflow-sessions.md');
 
-  const items     = parseKbflowPending(pendingFile);
-  const sessions  = parseKbflowSessions(sessionFile);
+  const items    = parseKbflowPending(pendingFile);
+  const sessions = parseKbflowSessions(sessionFile);
+
+  // Sort: PENDING first, then APPROVED, REJECTED, INFO, other
+  const STATUS_ORDER = { 'PENDING': 0, 'APPROVED': 1, 'REJECTED': 2, 'INFO': 3 };
+  items.sort((a, b) => {
+    const ka = Object.keys(STATUS_ORDER).find(k => (a.status || '').toUpperCase().startsWith(k)) || 'Z';
+    const kb = Object.keys(STATUS_ORDER).find(k => (b.status || '').toUpperCase().startsWith(k)) || 'Z';
+    return (STATUS_ORDER[ka] ?? 4) - (STATUS_ORDER[kb] ?? 4);
+  });
 
   const counts = items.reduce((acc, it) => {
     const s = (it.status || '').toUpperCase();
-    if (s.startsWith('PENDING'))   acc.pending++;
-    else if (s.startsWith('APPROVED')) acc.approved++;
-    else if (s.startsWith('REJECTED')) acc.rejected++;
-    else if (s === 'INFO')             acc.info++;
+    if (s.startsWith('PENDING'))        acc.pending++;
+    else if (s.startsWith('APPROVED'))  acc.approved++;
+    else if (s.startsWith('REJECTED'))  acc.rejected++;
+    else if (s === 'INFO')              acc.info++;
     else acc.other++;
     return acc;
   }, { pending: 0, approved: 0, rejected: 0, info: 0, other: 0 });
 
-  const lastRunAt    = state.lastRunAt    ? new Date(state.lastRunAt)    : null;
-  const nextRunAt    = state.nextRunAt    ? new Date(state.nextRunAt)    : null;
-  const now          = Date.now();
-  const totalRuntime = sessions.length;
-  const lastStatus   = state.lastRunStatus || '—';
+  const lastRunAt  = state.lastRunAt ? new Date(state.lastRunAt) : null;
+  const nextRunAt  = state.nextRunAt ? new Date(state.nextRunAt) : null;
+  const now        = Date.now();
+  const lastStatus = state.lastRunStatus || '—';
+  const isRunning  = state.isRunning === true;
+  const hasSummary = state.lastNewProposals != null || state.lastCorrections != null;
 
   const flashMsg = flash === 'run-queued'   ? `<div style="background:#dcfce7;color:#166534;padding:.6rem 1rem;border-radius:8px;margin-bottom:1rem;font-size:.85rem">✓ Run queued — the KB Flow Analyst will start its scan momentarily.</div>` :
                    flash === 'run-disabled' ? `<div style="background:#fee2e2;color:#991b1b;padding:.6rem 1rem;border-radius:8px;margin-bottom:1rem;font-size:.85rem">✗ Cannot run — the KB Flow Analyst is disabled. Enable it in Settings first.</div>` :
                    '';
 
+  const runningBanner = isRunning ? `
+    <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:.75rem 1rem;margin-bottom:1rem;font-size:.84rem;color:#1e40af;display:flex;align-items:center;gap:.65rem">
+      <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;animation:spin 1.4s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
+      <span><strong>Scan in progress</strong>${state.currentRunNum ? ` — run #${state.currentRunNum}` : ''}${state.currentRunStartedAt ? ` · started ${new Date(state.currentRunStartedAt).toLocaleTimeString()}` : ''} · page refreshes every 30 s</span>
+    </div>` : '';
+
+  const logFilePath = state.lastLogFile
+    ? path.join(os.homedir(), '.prevoyant', 'kbflow', 'logs', state.lastLogFile)
+    : null;
+
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Knowledge Builder · Prevoyant</title>
+${isRunning ? '<meta http-equiv="refresh" content="30">' : ''}
 <style>
   * { box-sizing: border-box; }
   body { margin:0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; background:#f8fafc; color:#111827; }
+  @keyframes spin { to { transform: rotate(360deg); } }
   .topbar { background:#1e293b; color:#fff; padding:.85rem 1.5rem; display:flex; align-items:center; gap:1rem; }
   .topbar h1 { font-size:1rem; margin:0; font-weight:600; }
   .topbar .nav { margin-left:auto; display:flex; gap:.75rem; }
   .topbar .nav a { color:#cbd5e1; text-decoration:none; font-size:.85rem; padding:.3rem .6rem; border-radius:6px; }
   .topbar .nav a:hover { background:#334155; color:#fff; }
-  .wrap { max-width: 1100px; margin: 1.5rem auto; padding: 0 1.5rem 4rem; }
+  .wrap { max-width:1100px; margin:1.5rem auto; padding:0 1.5rem 4rem; }
   .panel { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:1.25rem 1.5rem; margin-bottom:1.25rem; }
-  .panel h2 { font-size:.95rem; margin:0 0 .9rem; color:#1f2937; font-weight:600; display:flex; align-items:center; gap:.5rem; }
-  .panel .hint { font-size:.8rem; color:#6b7280; margin-top:.6rem; }
-  .stat-grid { display:grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap:.9rem; }
+  .panel h2 { font-size:.95rem; margin:0 0 .9rem; color:#1f2937; font-weight:600; display:flex; align-items:center; gap:.5rem; flex-wrap:wrap; }
+  .panel .hint { font-size:.8rem; color:#6b7280; margin-top:.6rem; line-height:1.6; }
+  .stat-grid { display:grid; grid-template-columns:repeat(auto-fit, minmax(140px, 1fr)); gap:.9rem; }
   .stat { background:#f9fafb; border:1px solid #e5e7eb; border-radius:8px; padding:.7rem .9rem; }
   .stat .lbl { font-size:.7rem; text-transform:uppercase; letter-spacing:.04em; color:#6b7280; }
   .stat .val { font-size:1.15rem; font-weight:600; color:#111827; margin-top:.15rem; }
   .stat .sub { font-size:.72rem; color:#9ca3af; margin-top:.15rem; }
+  .stat-running { border-color:#93c5fd; background:#eff6ff; }
+  .stat-running .lbl { color:#1d4ed8; }
+  .stat-running .val { color:#1e40af; font-size:.9rem; }
   table { width:100%; border-collapse:collapse; font-size:.84rem; }
   th { text-align:left; padding:.5rem .6rem; background:#f9fafb; color:#6b7280; font-weight:600; font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; border-bottom:1px solid #e5e7eb; }
   td { padding:.55rem .6rem; border-bottom:1px solid #f1f5f9; vertical-align:top; }
   tr:hover td { background:#fafafa; }
+  tr.row-hidden { display:none; }
   .empty { color:#9ca3af; font-size:.85rem; padding:1rem; text-align:center; font-style:italic; }
   .pill { display:inline-block; padding:1px 7px; border-radius:6px; font-size:.7rem; font-weight:600; background:#e5e7eb; color:#374151; }
   .btn { display:inline-flex; align-items:center; gap:.4rem; padding:.45rem .9rem; background:#1e40af; color:#fff; border:0; border-radius:7px; font-size:.82rem; font-weight:500; cursor:pointer; text-decoration:none; }
   .btn:hover { background:#1e3a8a; }
   .btn[disabled] { background:#9ca3af; cursor:not-allowed; }
-  .btn-secondary { background:#fff; color:#374151; border:1px solid #d1d5db; }
-  .btn-secondary:hover { background:#f9fafb; }
   .row-hdr { display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:.9rem; }
   .row-hdr h2 { margin:0; }
   code { background:#f3f4f6; padding:1px 5px; border-radius:4px; font-size:.78rem; color:#374151; }
   .body-text { font-size:.78rem; color:#4b5563; max-width:380px; white-space:pre-wrap; line-height:1.4; }
-  .ref-link { font-size:.72rem; color:#6b7280; font-family:ui-monospace, monospace; margin-top:.25rem; display:block; }
+  .ref-link { font-size:.72rem; color:#6b7280; font-family:ui-monospace,monospace; margin-top:.25rem; display:block; }
   .status-on  { color:#166534; font-weight:600; }
   .status-off { color:#9ca3af; font-weight:600; }
+  .filter-tabs { display:flex; gap:.4rem; margin-bottom:.85rem; flex-wrap:wrap; }
+  .ftab { padding:.28rem .7rem; border-radius:6px; font-size:.78rem; font-weight:600; cursor:pointer; border:1px solid #d1d5db; background:#fff; color:#374151; }
+  .ftab.active { background:#1e40af; color:#fff; border-color:#1e40af; }
+  .ftab:hover:not(.active) { background:#f3f4f6; }
+  .error-box { font-size:.78rem; color:#991b1b; background:#fef2f2; border:1px solid #fecaca; border-radius:6px; padding:.5rem .8rem; margin-top:.65rem; word-break:break-all; }
 </style>
 </head><body>
   <div class="topbar">
@@ -5496,18 +5536,26 @@ function renderKnowledgeBuilder(flash) {
   </div>
   <div class="wrap">
     ${flashMsg}
+    ${runningBanner}
 
     <div class="panel">
       <div class="row-hdr">
         <h2>KB Flow Analyst — Status</h2>
         <form method="POST" action="/dashboard/knowledge-builder/run-now" style="margin:0">
-          <button type="submit" class="btn" ${enabled ? '' : 'disabled title="Enable the worker in Settings first"'}>
+          <button type="submit" class="btn" ${enabled && !isRunning ? '' : 'disabled'}
+                  title="${!enabled ? 'Enable the worker in Settings first' : isRunning ? 'Scan already in progress' : ''}">
             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
             Run Scan Now
           </button>
         </form>
       </div>
       <div class="stat-grid">
+        ${isRunning ? `
+        <div class="stat stat-running">
+          <div class="lbl">Currently</div>
+          <div class="val">⟳ Running</div>
+          <div class="sub">run #${state.currentRunNum || '?'}${state.currentRunStartedAt ? ' · ' + new Date(state.currentRunStartedAt).toLocaleTimeString() : ''}</div>
+        </div>` : ''}
         <div class="stat">
           <div class="lbl">Worker</div>
           <div class="val ${enabled ? 'status-on' : 'status-off'}">${enabled ? '● Enabled' : '○ Disabled'}</div>
@@ -5515,18 +5563,29 @@ function renderKnowledgeBuilder(flash) {
         </div>
         <div class="stat">
           <div class="lbl">Last run</div>
-          <div class="val">${lastRunAt ? lastRunAt.toLocaleString() : '—'}</div>
+          <div class="val" style="font-size:.9rem">${lastRunAt ? lastRunAt.toLocaleString() : '—'}</div>
           <div class="sub">Status: ${esc(lastStatus)}</div>
         </div>
         <div class="stat">
           <div class="lbl">Next run</div>
-          <div class="val">${nextRunAt ? nextRunAt.toLocaleString() : '—'}</div>
+          <div class="val" style="font-size:.9rem">${nextRunAt ? nextRunAt.toLocaleString() : '—'}</div>
           <div class="sub">${nextRunAt ? (nextRunAt.getTime() > now ? 'in ' + fmtDuration(nextRunAt - now) : 'overdue') : 'never run'}</div>
         </div>
         <div class="stat">
           <div class="lbl">Runs total</div>
           <div class="val">${state.runCount || 0}</div>
-          <div class="sub">${totalRuntime} session${totalRuntime === 1 ? '' : 's'} logged</div>
+          <div class="sub">${sessions.length} session${sessions.length === 1 ? '' : 's'} logged</div>
+        </div>
+        ${hasSummary ? `
+        <div class="stat">
+          <div class="lbl">Last output</div>
+          <div class="val" style="font-size:.85rem">${state.lastNewProposals ?? '—'} new · ${state.lastCorrections ?? '—'} fix</div>
+          <div class="sub">${state.lastConfirmations ?? '—'} confirmed · ${state.lastFlowsAnalysed ?? '—'} flows</div>
+        </div>` : ''}
+        <div class="stat">
+          <div class="lbl">Jira scope</div>
+          <div class="val" style="font-size:.82rem;word-break:break-all">${esc(jiraProject || 'currentUser()')}</div>
+          <div class="sub">${jiraProject ? 'PRX_JIRA_PROJECT' : 'set PRX_JIRA_PROJECT to narrow scope'}</div>
         </div>
         <div class="stat">
           <div class="lbl">Interval</div>
@@ -5539,15 +5598,18 @@ function renderKnowledgeBuilder(flash) {
           <div class="sub">Jira incident window</div>
         </div>
         <div class="stat">
-          <div class="lbl">Max flows / run</div>
-          <div class="val">${esc(maxFlows)}</div>
-          <div class="sub">top-ranked flows analysed</div>
+          <div class="lbl">Max flows</div>
+          <div class="val">${esc(maxFlowsCfg)}</div>
+          <div class="sub">per run</div>
         </div>
       </div>
       <div class="hint">
-        Pending file: <code>${esc(pendingFile)}</code><br>
-        Sessions log: <code>${esc(sessionFile)}</code>
+        Pending:  <code>${esc(pendingFile)}</code><br>
+        Sessions: <code>${esc(sessionFile)}</code>
+        ${logFilePath ? `<br>Last log: <code>${esc(logFilePath)}</code>` : ''}
       </div>
+      ${state.lastRunStatus === 'failed' && state.lastError ? `
+      <div class="error-box">⚠ Last run failed: ${esc(state.lastError)}</div>` : ''}
     </div>
 
     <div class="panel">
@@ -5561,7 +5623,14 @@ function renderKnowledgeBuilder(flash) {
       ${items.length === 0 ? `
         <div class="empty">No contributions yet. The KB Flow Analyst writes proposals to <code>~/.prevoyant/knowledge-buildup/kbflow-pending.md</code> after each run.</div>
       ` : `
-        <table>
+        <div class="filter-tabs">
+          <button class="ftab active" onclick="filterContribs('all',this)">All (${items.length})</button>
+          ${counts.pending  ? `<button class="ftab" onclick="filterContribs('pending',this)">Pending (${counts.pending})</button>`   : ''}
+          ${counts.approved ? `<button class="ftab" onclick="filterContribs('approved',this)">Approved (${counts.approved})</button>` : ''}
+          ${counts.rejected ? `<button class="ftab" onclick="filterContribs('rejected',this)">Rejected (${counts.rejected})</button>` : ''}
+          ${counts.info     ? `<button class="ftab" onclick="filterContribs('info',this)">Info (${counts.info})</button>`             : ''}
+        </div>
+        <table id="contrib-table">
           <thead>
             <tr>
               <th style="width:78px">ID</th>
@@ -5575,8 +5644,14 @@ function renderKnowledgeBuilder(flash) {
             </tr>
           </thead>
           <tbody>
-            ${items.map(it => `
-              <tr>
+            ${items.map(it => {
+              const sk = (it.status || '').toUpperCase();
+              const statusKey = sk.startsWith('PENDING') ? 'pending'
+                : sk.startsWith('APPROVED') ? 'approved'
+                : sk.startsWith('REJECTED') ? 'rejected'
+                : sk === 'INFO' ? 'info' : 'other';
+              return `
+              <tr data-status="${statusKey}">
                 <td><strong>${esc(it.id)}</strong></td>
                 <td>
                   <div style="font-weight:600;font-size:.85rem">${esc(it.title)}</div>
@@ -5587,10 +5662,10 @@ function renderKnowledgeBuilder(flash) {
                 <td>${esc(it.type || '—')}</td>
                 <td>${esc(it.action || '—')}</td>
                 <td>${esc(it.proposed || '—')}</td>
-                <td>${esc(it.incidents || '—')}</td>
+                <td>${linkIncidents(it.incidents, jiraBase)}</td>
                 <td>${statusBadge(it.status)}</td>
-              </tr>
-            `).join('')}
+              </tr>`;
+            }).join('')}
           </tbody>
         </table>
       `}
@@ -5626,6 +5701,16 @@ function renderKnowledgeBuilder(flash) {
       `}
     </div>
   </div>
+
+  <script>
+  function filterContribs(filter, btn) {
+    document.querySelectorAll('.ftab').forEach(t => t.classList.remove('active'));
+    btn.classList.add('active');
+    document.querySelectorAll('#contrib-table tbody tr').forEach(row => {
+      row.classList.toggle('row-hidden', filter !== 'all' && row.dataset.status !== filter);
+    });
+  }
+  </script>
 </body></html>`;
 }
 
