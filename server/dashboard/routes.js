@@ -2113,7 +2113,7 @@ function renderDisk(status, diskLog, flash) {
         Last cleanup: ${lastCleanupAt ? lastCleanupAt.toLocaleString('en-GB') : 'never'}.
         Cleanup interval: every ${cleanupInterval} day(s).
         <div class="cleanup-form">
-          <form method="POST" action="/dashboard/disk/approve-cleanup" onsubmit="return confirm('Run house-cleaning now?\\n\\n• Old session files (>30 days) will be deleted\\n• Server logs will be trimmed\\n• Watch poll logs will be pruned\\n\\nThis cannot be undone.')">
+          <form method="POST" action="/dashboard/disk/approve-cleanup" onsubmit="return confirm('Run house-cleaning now?\\n\\n• Old session files (>30 days) will be deleted\\n• Server logs will be trimmed\\n• Watch poll logs will be pruned\\n• KB Flow Analyst run logs (>30 days) will be deleted\\n\\nThis cannot be undone.')">
             <button type="submit" class="btn-approve">Approve Cleanup</button>
             <button type="button" class="btn-dismiss" onclick="dismissCleanup()">Dismiss for now</button>
           </form>
@@ -2241,6 +2241,7 @@ function renderDisk(status, diskLog, flash) {
             <li>✓ Trim disk history log to last 200 entries<br><span style="font-size:.75rem;color:#4ade80;opacity:.8">~/.prevoyant/server/disk-log.json</span></li>
             <li>✓ Trim activity log to last 2 000 entries<br><span style="font-size:.75rem;color:#4ade80;opacity:.8">~/.prevoyant/server/activity-log.json</span></li>
             <li>✓ Watch poll logs older than ${wlStats.keepDays} days &amp; beyond last ${wlStats.keepPer} per ticket<br><span style="font-size:.75rem;color:#4ade80;opacity:.8">~/.prevoyant/watch/logs/</span></li>
+            <li>✓ KB Flow Analyst run logs older than 30 days<br><span style="font-size:.75rem;color:#4ade80;opacity:.8">~/.prevoyant/kbflow/logs/</span></li>
           </ul>
         </div>
         <!-- Protected -->
@@ -2256,7 +2257,7 @@ function renderDisk(status, diskLog, flash) {
       </div>
 
       <form method="POST" action="/dashboard/disk/approve-cleanup"
-            onsubmit="return confirm('Run immediate house-cleaning?\\n\\n✓ Deletes session directories older than 30 days\\n✓ Trims disk history and activity logs\\n✓ Trims watch poll logs (>${wlStats.keepDays}d or beyond last ${wlStats.keepPer} per ticket)\\n\\n✗ Will NOT touch knowledge base, reports, or .env\\n\\nThis cannot be undone.')">
+            onsubmit="return confirm('Run immediate house-cleaning?\\n\\n✓ Deletes session directories older than 30 days\\n✓ Trims disk history and activity logs\\n✓ Trims watch poll logs (>${wlStats.keepDays}d or beyond last ${wlStats.keepPer} per ticket)\\n✓ Deletes KB Flow Analyst run logs older than 30 days\\n\\n✗ Will NOT touch knowledge base, reports, or .env\\n\\nThis cannot be undone.')">
         <button type="submit" class="btn-approve">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="vertical-align:middle;margin-right:5px"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4h6v2"/></svg>
           Run Cleanup Now
