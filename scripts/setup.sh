@@ -173,11 +173,15 @@ persist_user_path_win() {
 # by following the redirect from /releases/latest.  Echoes e.g. "v3.5" or "3.5".
 github_latest_tag() {
   local repo="$1" url
-  url=$(curl -sLI -o /dev/null -w '%{url_effective}' \
-    "https://github.com/${repo}/releases/latest" 2>/dev/null)
+  if command -v curl &>/dev/null; then
+    url=$(curl -sLI -o /dev/null -w '%{url_effective}' \
+      "https://github.com/${repo}/releases/latest" 2>/dev/null)
+  elif command -v wget &>/dev/null; then
+    url=$(wget -qS --spider "https://github.com/${repo}/releases/latest" 2>&1 \
+      | grep -i 'Location:' | tail -1 | awk '{print $2}' | tr -d '\r')
+  fi
   [ -n "$url" ] || return 1
   local tag="${url##*/tag/}"
-  # Strip any trailing slash or query string defensively
   tag="${tag%%/*}"; tag="${tag%%\?*}"
   [ -n "$tag" ] && [ "$tag" != "$url" ] || return 1
   printf '%s\n' "$tag"
@@ -277,10 +281,12 @@ install_pandoc_portable_win() {
 
   info "→ Portable zip (no admin required)"
 
-  local tag version asset url target zip bin_dir
+  local tag version arch asset url target zip bin_dir
   tag=$(github_latest_tag "jgm/pandoc") || { warn "Could not resolve latest pandoc release"; return 1; }
   version="${tag#v}"
-  asset="pandoc-${version}-windows-x86_64.zip"
+  arch="x86_64"
+  case "$(uname -m 2>/dev/null)" in arm64|aarch64) arch="aarch64" ;; esac
+  asset="pandoc-${version}-windows-${arch}.zip"
   url="https://github.com/jgm/pandoc/releases/download/${tag}/${asset}"
   info "   Latest release: ${tag}"
 
@@ -331,7 +337,6 @@ install_pandoc_win() {
   [ "$ok" -eq 1 ]
 }
 
-# Install qpdf portably on Windows — no admin rights required.
 # Install pandoc portably on Linux (no sudo required).
 # Downloads the official GitHub release tarball into ~/.local/bin.
 install_pandoc_portable_linux() {
@@ -370,6 +375,7 @@ install_pandoc_portable_linux() {
 
   export PATH="$target/bin:$PATH"
   info "   Installed pandoc to $target/bin/pandoc"
+  info "   Add to your shell profile: export PATH=\"\$HOME/.local/bin:\$PATH\""
   return 0
 }
 
@@ -409,9 +415,11 @@ install_pandoc_portable_mac() {
 
   export PATH="$target/bin:$PATH"
   info "   Installed pandoc to $target/bin/pandoc"
+  info "   Add to your shell profile: export PATH=\"\$HOME/.local/bin:\$PATH\""
   return 0
 }
 
+# Install qpdf portably on Windows — no admin rights required.
 install_qpdf_portable_win() {
   command -v curl  &>/dev/null || { warn "curl not available";  return 1; }
   command -v unzip &>/dev/null || { warn "unzip not available"; return 1; }
@@ -529,7 +537,7 @@ printf "════════════════════════
 
 # ── 1. uvx (Jira MCP) ─────────────────────────────────────────────────────────
 
-step "1/9 uvx  (Jira MCP server)  [required]"
+step "1/9  uvx  (Jira MCP server)  [required]"
 
 if command -v uvx &>/dev/null; then
   ok "uvx already installed"
@@ -719,8 +727,7 @@ step "5/9  basic-memory  (per-agent MCP)  [downloads & configures]"
 
 if command -v uvx &>/dev/null; then
   info "Pre-fetching basic-memory package (priming uvx cache)..."
-  BM_VERSION=$(uvx --quiet basic-memory --version 2>&1 | tail -1)
-  if [ $? -eq 0 ] && [ -n "$BM_VERSION" ]; then
+  if BM_VERSION=$(uvx --quiet basic-memory --version 2>&1 | tail -1) && [ -n "$BM_VERSION" ]; then
     ok "basic-memory ready — $BM_VERSION"
     info "Seven per-agent MCP projects auto-provisioned when PRX_BASIC_MEMORY_ENABLED=Y"
   else
