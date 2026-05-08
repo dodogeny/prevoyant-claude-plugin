@@ -1147,6 +1147,24 @@ function renderDashboard(stats, budget) {
     <strong>Queue paused</strong> — no new jobs will start until you resume. Running jobs are unaffected.
     <button onclick="toggleQueuePause()" style="margin-left:auto;padding:.25rem .75rem;background:#d97706;color:#fff;border:none;border-radius:5px;font-size:.78rem;cursor:pointer;font-family:inherit">Resume Queue</button>
   </div>` : ''}
+  ${(() => {
+    const kbState = readKbflowState();
+    const pending = kbState.pendingCount || 0;
+    const oldestDays = kbState.oldestPendingDays || 0;
+    if (!pending || process.env.PRX_KBFLOW_ENABLED !== 'Y') return '';
+    const isOverdue = oldestDays >= parseInt(process.env.PRX_KBFLOW_REVIEW_NUDGE_DAYS || '7', 10);
+    const bg    = isOverdue ? '#fef2f2' : '#fffbeb';
+    const bdr   = isOverdue ? '#fecaca' : '#fde68a';
+    const color = isOverdue ? '#991b1b' : '#92400e';
+    const icon  = isOverdue
+      ? `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>`
+      : `<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>`;
+    return `<div style="background:${bg};border:1px solid ${bdr};border-radius:8px;padding:.6rem 1rem;margin-bottom:.75rem;display:flex;align-items:center;gap:.6rem;font-size:.83rem;color:${color}">
+      ${icon}
+      <span>${isOverdue ? '<strong>KB review overdue</strong>' : '<strong>KB proposals pending</strong>'} — ${pending} Javed proposal${pending === 1 ? '' : 's'} await${pending === 1 ? 's' : ''} team vote at Step 13j${oldestDays ? ` (oldest: ${oldestDays}d)` : ''}.${isOverdue ? ' Run a dev session and review before starting new tickets.' : ''}</span>
+      <a href="/dashboard/knowledge-builder" style="margin-left:auto;padding:.25rem .75rem;background:${color};color:#fff;border:none;border-radius:5px;font-size:.78rem;cursor:pointer;text-decoration:none;white-space:nowrap">Review →</a>
+    </div>`;
+  })()}
   <div class="cards">
     <div class="card"><div class="num">${stats.tickets.length}</div><div class="lbl">Total</div></div>
     <div class="card running"><div class="num">${counts.running || 0}</div><div class="lbl">Running</div></div>
@@ -1537,6 +1555,7 @@ const EVENT_DISPLAY = {
   kbflow_scan_started:   { label: 'KB Flow Scan Started',   bg: '#eff6ff', color: '#1d4ed8' },
   kbflow_scan_completed: { label: 'KB Flow Scan Done',      bg: '#dcfce7', color: '#166534' },
   kbflow_scan_failed:    { label: 'KB Flow Scan Failed',    bg: '#fee2e2', color: '#991b1b' },
+  kbflow_review_nudge:   { label: 'KB Review Nudge Sent',   bg: '#fef3c7', color: '#92400e' },
 };
 
 const ACTOR_STYLE = {
@@ -5459,9 +5478,12 @@ function renderKnowledgeBuilder(flash) {
   const lastRunAt  = state.lastRunAt ? new Date(state.lastRunAt) : null;
   const nextRunAt  = state.nextRunAt ? new Date(state.nextRunAt) : null;
   const now        = Date.now();
-  const lastStatus = state.lastRunStatus || '—';
-  const isRunning  = state.isRunning === true;
-  const hasSummary = state.lastNewProposals != null || state.lastCorrections != null;
+  const lastStatus   = state.lastRunStatus || '—';
+  const isRunning    = state.isRunning === true;
+  const hasSummary   = state.lastNewProposals != null || state.lastCorrections != null;
+  const pendingCount = state.pendingCount || counts.pending;
+  const oldestPendingDays = state.oldestPendingDays || 0;
+  const nudgeDays    = parseInt(process.env.PRX_KBFLOW_REVIEW_NUDGE_DAYS || '7', 10);
 
   const flashMsg = flash === 'run-queued'   ? `<div style="background:#dcfce7;color:#166534;padding:.6rem 1rem;border-radius:8px;margin-bottom:1rem;font-size:.85rem">✓ Run queued — the KB Flow Analyst will start its scan momentarily.</div>` :
                    flash === 'run-disabled' ? `<div style="background:#fee2e2;color:#991b1b;padding:.6rem 1rem;border-radius:8px;margin-bottom:1rem;font-size:.85rem">✗ Cannot run — the KB Flow Analyst is disabled. Enable it in Settings first.</div>` :
@@ -5579,14 +5601,20 @@ ${isRunning ? '<meta http-equiv="refresh" content="30">' : ''}
         ${hasSummary ? `
         <div class="stat">
           <div class="lbl">Last output</div>
-          <div class="val" style="font-size:.85rem">${state.lastNewProposals ?? '—'} new · ${state.lastCorrections ?? '—'} fix</div>
-          <div class="sub">${state.lastConfirmations ?? '—'} confirmed · ${state.lastFlowsAnalysed ?? '—'} flows</div>
+          <div class="val" style="font-size:.85rem">${state.lastNewProposals ?? '—'} CMM · ${state.lastNewPatterns ?? '—'} pat · ${state.lastNewLessons ?? '—'} lesson</div>
+          <div class="sub">${state.lastCorrections ?? '—'} fix · ${state.lastConfirmations ?? '—'} confirm · ${state.lastFlowsAnalysed ?? '—'} flows</div>
         </div>` : ''}
         <div class="stat">
           <div class="lbl">Jira scope</div>
-          <div class="val" style="font-size:.82rem;word-break:break-all">${esc(jiraProject || 'currentUser()')}</div>
+          <div class="val" style="font-size:.82rem;word-break:break-all">${esc(jiraProject || 'all recent')}</div>
           <div class="sub">${jiraProject ? 'PRX_JIRA_PROJECT' : 'set PRX_JIRA_PROJECT to narrow scope'}</div>
         </div>
+        ${pendingCount > 0 ? `
+        <div class="stat" style="${oldestPendingDays >= nudgeDays ? 'border-color:#fca5a5;background:#fef2f2' : 'border-color:#fde68a;background:#fffbeb'}">
+          <div class="lbl" style="color:${oldestPendingDays >= nudgeDays ? '#991b1b' : '#92400e'}">${oldestPendingDays >= nudgeDays ? '⚠ Review overdue' : 'Awaiting review'}</div>
+          <div class="val" style="font-size:.9rem;color:${oldestPendingDays >= nudgeDays ? '#b91c1c' : '#b45309'}">${pendingCount} pending</div>
+          <div class="sub">oldest: ${oldestPendingDays}d · Step 13j</div>
+        </div>` : ''}
         <div class="stat">
           <div class="lbl">Interval</div>
           <div class="val">${esc(interval)}d</div>

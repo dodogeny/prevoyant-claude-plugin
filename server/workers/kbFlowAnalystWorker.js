@@ -129,7 +129,73 @@ function parseSummary(output) {
     newProposals:   num(/New proposals\s*:\s*(\d+)/),
     corrections:    num(/Corrections\s*:\s*(\d+)/),
     confirmations:  num(/Confirmations\s*:\s*(\d+)/),
+    newPatterns:    num(/New patterns\s*:\s*(\d+)/),
+    newLessons:     num(/New lessons\s*:\s*(\d+)/),
   };
+}
+
+// ── Pending proposal tracker ───────────────────────────────────────────────────
+
+function parsePendingProposals() {
+  let raw;
+  try { raw = fs.readFileSync(PENDING_FILE, 'utf8'); } catch (_) { return { count: 0, oldestDays: 0, oldestId: null }; }
+
+  const blocks  = raw.split(/^---\s*$/m).map(b => b.trim()).filter(Boolean);
+  let count     = 0;
+  let oldestMs  = Date.now();
+  let oldestId  = null;
+
+  for (const block of blocks) {
+    const statusMatch   = block.match(/^Status:\s*(.+?)\s*$/m);
+    if (!statusMatch || !statusMatch[1].toUpperCase().startsWith('PENDING')) continue;
+    count++;
+    const proposedMatch = block.match(/^Proposed:\s*(\d{4}-\d{2}-\d{2})\s*$/m);
+    const idMatch       = block.match(/^##\s+(JP-\d+)/m);
+    if (proposedMatch) {
+      const t = new Date(proposedMatch[1]).getTime();
+      if (t < oldestMs) { oldestMs = t; oldestId = idMatch ? idMatch[1] : null; }
+    }
+  }
+
+  const oldestDays = count > 0 ? Math.floor((Date.now() - oldestMs) / 86400000) : 0;
+  return { count, oldestDays, oldestId };
+}
+
+// Send a reminder if pending proposals are overdue and no nudge was sent recently.
+async function maybeNudge() {
+  const nudgeDays    = parseInt(process.env.PRX_KBFLOW_REVIEW_NUDGE_DAYS || '7', 10);
+  const { count, oldestDays, oldestId } = parsePendingProposals();
+
+  const state = loadState();
+  const lastNudgeAt  = state.lastNudgeAt ? new Date(state.lastNudgeAt).getTime() : 0;
+  const nudgeCoolMs  = nudgeDays * 24 * 60 * 60 * 1000;
+
+  // Save latest pending stats regardless of whether we nudge
+  saveState({ ...loadState(), pendingCount: count, oldestPendingDays: oldestDays });
+
+  if (count === 0) return;
+  if (oldestDays < nudgeDays) return;
+  if (Date.now() - lastNudgeAt < nudgeCoolMs) return;
+
+  const subject = `[Prevoyant KB] Review reminder — ${count} pending proposal${count === 1 ? '' : 's'} (oldest: ${oldestDays} days)`;
+  const body = [
+    `Javed's KB Flow Analyst has proposals awaiting team review at Step 13j.`,
+    ``,
+    `  Pending proposals : ${count}`,
+    `  Oldest pending    : ${oldestDays} days${oldestId ? ` (${oldestId})` : ''}`,
+    `  Review due since  : ${nudgeDays}+ days`,
+    ``,
+    `Open the next dev session and run Step 13j before Step 1 to clear the backlog.`,
+    `Or review directly at: http://127.0.0.1:3000/dashboard/knowledge-builder`,
+    ``,
+    `Proposals that are not reviewed accumulate — the KB does not improve until the`,
+    `panel votes and promotes approved entries to core-mental-map/.`,
+  ].join('\n');
+
+  await sendEmail(subject, body).catch(e => log('error', `Nudge email failed: ${e.message}`));
+  saveState({ ...loadState(), lastNudgeAt: new Date().toISOString() });
+  log('info', `Review nudge sent — ${count} proposals, oldest ${oldestDays}d`);
+  recordActivity('kbflow_review_nudge', { count, oldestDays });
 }
 
 // ── MCP config builder ─────────────────────────────────────────────────────────
@@ -156,114 +222,149 @@ function buildMcpConfig() {
 // ── Prompt builder ─────────────────────────────────────────────────────────────
 
 function buildPrompt(kbDir, repoDir) {
-  const today       = new Date().toISOString().slice(0, 10);
-  const jiraProject = process.env.PRX_JIRA_PROJECT || '';
-  const jiraBase    = (process.env.JIRA_URL || '').replace(/\/$/, '');
-  const projectScope = jiraProject
-    ? `project = ${jiraProject} AND`
-    : 'updated >= -30d AND';
-
-  const persona = loadPersona();
+  const today        = new Date().toISOString().slice(0, 10);
+  const jiraProject  = process.env.PRX_JIRA_PROJECT || '';
+  const jiraBase     = (process.env.JIRA_URL || '').replace(/\/$/, '');
+  const jqlScope     = jiraProject ? `project = ${jiraProject} AND ` : '';
+  const nudgeDays    = parseInt(process.env.PRX_KBFLOW_REVIEW_NUDGE_DAYS || '7', 10);
+  const persona      = loadPersona();
 
   return [
     persona ? `<persona>\n${persona}\n</persona>` : '',
     `You are Javed, a senior software developer and KB Flow Analyst for the Prevoyant team.`,
     ``,
-    `Your job today: identify which business flows in the codebase are generating the most`,
-    `incidents/bugs recently, then scan those flows against the Core Mental Map and propose`,
-    `any missing or incorrect CMM entries. You work autonomously — you decide which flows`,
-    `deserve attention based on real incident data from Jira.`,
+    `Your job: identify which business flows are generating the most incidents, trace them`,
+    `in the codebase, cross-check against the Core Mental Map, and propose updates to both`,
+    `the CMM and the shared knowledge base (patterns + lessons-learned).`,
     ``,
-    `Do NOT write directly to core-mental-map/ files. All proposals go to`,
-    `${PENDING_FILE} as PENDING APPROVAL. The team votes at Step 13j.`,
+    `Do NOT write directly to core-mental-map/, shared/, or lessons-learned/. All proposals`,
+    `go to ${PENDING_FILE} as PENDING APPROVAL. The team votes at Step 13j.`,
     ``,
     `KNOWLEDGE_DIR : ${kbDir}`,
-    `BUILDUP_DIR   : ${BUILDUP_DIR}  (unapproved working files — outside the KB tree)`,
+    `BUILDUP_DIR   : ${BUILDUP_DIR}`,
     `REPO_DIR      : ${repoDir}`,
     `DATE          : ${today}`,
-    `MAX_FLOWS     : ${maxFlows()} (analyse at most this many flows per run)`,
+    `MAX_FLOWS     : ${maxFlows()}`,
     ``,
     `Follow these steps exactly, announcing each one:`,
     ``,
     `### Step J1 — Load Knowledge Base`,
-    `Read these files if they exist (skip missing files silently):`,
+    `Read these files if they exist (skip missing ones silently):`,
     `  ${kbDir}/core-mental-map/architecture.md`,
     `  ${kbDir}/core-mental-map/business-logic.md`,
     `  ${kbDir}/core-mental-map/data-flows.md`,
     `  ${kbDir}/core-mental-map/gotchas.md`,
-    `  ${PENDING_FILE}   ← skip flows already queued to avoid duplicates`,
+    `  ${kbDir}/shared/patterns.md          ← know existing [ESTIMATE-PATTERN] entries`,
+    `  ${PENDING_FILE}                       ← skip flows already queued`,
     ``,
-    `Output: list flows already queued in ${PENDING_FILE} (or "None pending").`,
+    `Also list all files in ${kbDir}/lessons-learned/ and read any that reference`,
+    `flows likely to match today's analysis (skip if directory is empty).`,
+    ``,
+    `Output: (a) flows already queued in ${PENDING_FILE} (or "None pending"),`,
+    `        (b) count of existing [ESTIMATE-PATTERN] entries in shared/patterns.md.`,
     ``,
     `### Step J2 — Query Jira for Recent Incidents`,
-    `Use the Jira MCP to run this JQL query (last ${lookbackDays()} days):`,
+    `Use the Jira MCP. Run this JQL query:`,
     ``,
-    `  ${projectScope} updated >= -${lookbackDays()}d`,
-    `  ORDER BY updated DESC`,
+    `  ${jqlScope}updated >= -${lookbackDays()}d ORDER BY updated DESC`,
     ``,
-    `Fetch up to 50 tickets. For each ticket collect: key, summary, labels, components,`,
-    `issue type (Bug/Story/Task), priority, and resolution status.`,
+    `Fetch up to 50 tickets. For each, collect: key, summary, description (first 300 chars),`,
+    `labels, components, issue type, priority, resolution status.`,
     ``,
-    `If Jira is unavailable or no tickets are returned:`,
+    `If Jira is unavailable or returns 0 tickets:`,
     `  - Log "Jira unavailable — skipping flow discovery"`,
     `  - Skip to Step J6 and write an INFO session record`,
     ``,
+    `### Step J2.5 — Data Quality Assessment`,
+    `Before clustering, assess the ticket metadata quality:`,
+    ``,
+    `  - labelled_pct    = tickets with ≥ 1 label / total tickets × 100`,
+    `  - componented_pct = tickets with ≥ 1 component / total tickets × 100`,
+    `  - described_pct   = tickets with non-trivial description (> 20 chars) / total × 100`,
+    ``,
+    `Output a one-line quality report:`,
+    `  Data quality: {labelled_pct}% labelled · {componented_pct}% with components · {described_pct}% described`,
+    ``,
+    `If (labelled_pct + componented_pct) / 2 < 30:`,
+    `  Log "⚠ Low metadata quality — switching to text-based clustering using summaries and descriptions."`,
+    `  Set CLUSTER_MODE = "text"`,
+    `Else:`,
+    `  Set CLUSTER_MODE = "metadata+text"`,
+    ``,
     `### Step J3 — Identify High-Frequency Business Flows`,
-    `Analyse the tickets from J2. Group them by the business domain or flow they touch.`,
-    `Use labels, components, and key terms in the summaries to cluster them.`,
+    `Cluster tickets into business flows using CLUSTER_MODE:`,
     ``,
-    `Rank each cluster by:`,
-    `  1. Frequency — how many tickets reference it`,
-    `  2. Severity — count of Bugs and Critical/High-priority tickets`,
-    `  3. Recency — clusters with tickets in the last 7 days score higher`,
+    `  text mode         — extract key noun phrases from summaries + descriptions;`,
+    `                      group tickets whose phrases share the same domain concept`,
+    `                      (e.g., "payment", "checkout", "auth token", "report export")`,
+    `  metadata+text mode — same as text mode, but labels and components are weighted`,
+    `                      2× when multiple tickets share them exactly`,
     ``,
-    `Select the top ${maxFlows()} clusters. For each, state:`,
-    `  - Flow name (short, descriptive)`,
-    `  - Ticket count and severity breakdown`,
-    `  - Representative ticket keys (up to 3)`,
-    `  - Why it ranked: what pattern makes this flow high-risk`,
+    `Rank clusters by:`,
+    `  1. Frequency (ticket count)`,
+    `  2. Severity (Bugs + Critical/High-priority tickets)`,
+    `  3. Recency (tickets updated in last 7 days score higher)`,
     ``,
-    `Skip any flow that already has PENDING entries in the pending file (from J1).`,
+    `Select the top ${maxFlows()} clusters. Skip any flow already PENDING in ${PENDING_FILE}.`,
+    `For each selected cluster state: flow name, ticket count, severity breakdown,`,
+    `representative ticket keys (up to 3), why it ranked.`,
     ``,
     `### Step J4 — Trace Each Flow in the Codebase`,
-    `For each flow selected in J3:`,
+    `For each selected flow:`,
     ``,
-    `  a. Search ${repoDir} for the flow's entry point.`,
-    `     Use grep and find on key terms from the flow name and the representative tickets.`,
+    `  a. Find the entry point — grep and find on key terms from the flow name and ticket`,
+    `     summaries. If ast-grep is available, use it for semantic search:`,
+    `       ast-grep --lang <lang> --pattern '<relevant_pattern>' ${repoDir}`,
     `     Identify the key files, classes, and services involved.`,
     ``,
     `  b. Read the key files. Trace the happy path end-to-end:`,
     `     input → transformation(s) → output`,
     `     Note: decision points, guard conditions, state transitions, external calls.`,
     ``,
-    `  c. Note any code patterns that could explain the recurring incidents`,
-    `     (missing guards, complex branching, shared mutable state, etc.).`,
+    `  c. Check recent change velocity for each key file:`,
+    `       git -C ${repoDir} log --oneline -15 -- <file>`,
+    `     High churn (many recent commits) on a flow's key file is a risk amplifier —`,
+    `     note it in your analysis.`,
     ``,
-    `### Step J5 — Cross-Check Against Core Mental Map`,
-    `For each traced flow, compare against what is already in the CMM.`,
+    `  d. Find and read test files that exercise this flow:`,
+    `       grep -rl "<key_class_or_function>" ${repoDir} | grep -i "test\\|spec"`,
+    `     Tests encode expected behaviour — gaps in test coverage flag knowledge risks.`,
     ``,
-    `For each discrepancy or gap, emit a marker:`,
-    `  [CMM+ ARCH NEW]    — architecture fact missing from the CMM`,
-    `  [CMM+ BIZ NEW]     — business rule not captured`,
-    `  [CMM+ DATA NEW]    — data flow / write path not recorded`,
-    `  [CMM+ GOTCHA NEW]  — non-obvious coupling or footgun exposed by incident pattern`,
-    `  [CMM+ * CORRECT]   — existing CMM entry is wrong or outdated`,
-    `  [CMM+ * CONFIRM]   — existing CMM entry is verified as accurate`,
+    `  e. Check for known-issue markers in flow files:`,
+    `       grep -n "TODO\\|FIXME\\|HACK\\|XXX" <key_files>`,
+    `     These often reveal engineering debt directly related to incidents.`,
+    ``,
+    `  f. Note patterns that explain recurring incidents:`,
+    `     missing guards, complex branching, shared mutable state, high churn + no tests.`,
+    ``,
+    `### Step J5 — Cross-Check Against Core Mental Map, Patterns, and Lessons`,
+    `For each traced flow, compare against CMM, shared/patterns.md, and lessons-learned/.`,
+    ``,
+    `Emit markers for each gap or finding:`,
+    `  [CMM+ ARCH NEW]       — architecture fact missing from the CMM`,
+    `  [CMM+ BIZ NEW]        — business rule not captured`,
+    `  [CMM+ DATA NEW]       — data flow / write path not recorded`,
+    `  [CMM+ GOTCHA NEW]     — non-obvious coupling or footgun exposed by incident pattern`,
+    `  [CMM+ * CORRECT]      — existing CMM entry is wrong or outdated`,
+    `  [CMM+ * CONFIRM]      — existing CMM entry is verified as accurate`,
+    `  [PATTERN+ NEW]        — reusable complexity/risk pattern not in shared/patterns.md`,
+    `  [LESSON+ NEW]         — systemic lesson (a recurring footgun or "always do X when`,
+    `                          touching this flow") not in lessons-learned/`,
     ``,
     `Each marker must include a ref: file:line anchor.`,
     ``,
-    `### Step J6 — Write to the pending-proposals file`,
+    `### Step J6 — Write CMM proposals to the pending file`,
     `File: ${PENDING_FILE}`,
     ``,
-    `Read the file to find the highest existing JP-NNN number (start at JP-001 if none).`,
+    `Read to find the highest existing JP-NNN number (start at JP-001 if none).`,
     ``,
-    `For each [CMM+] marker from J5, append an entry in EXACTLY this format:`,
+    `For each [CMM+] marker from J5, append:`,
     ``,
     `---`,
     `## JP-{NNN} — {descriptive title, ≤ 8 words}`,
     `Status: PENDING APPROVAL`,
     `Flow: {flow name from J3}`,
-    `Incidents: {comma-separated ticket keys from J3}`,
+    `Incidents: {comma-separated ticket keys}`,
     `Proposed: ${today}`,
     `Type: {CMM-ARCH | CMM-BIZ | CMM-DATA | CMM-GOTCHA}`,
     `Action: {NEW | CORRECT | CONFIRM}`,
@@ -272,37 +373,59 @@ function buildPrompt(kbDir, repoDir) {
     `ref: {file:line}`,
     `---`,
     ``,
-    `If no flows were identified or Jira was unavailable, append:`,
+    `If no flows identified or Jira unavailable, append an INFO entry instead.`,
     ``,
-    `---`,
-    `## JP-{NNN} — No actionable findings (${today})`,
-    `Status: INFO`,
-    `Proposed: ${today}`,
-    `Reason: {no recurring flows identified | Jira unavailable | all flows already pending}`,
-    `---`,
+    `### Step J6b — Write pattern proposals to shared/patterns.md`,
+    `For each [PATTERN+] marker from J5:`,
+    ``,
+    `  Read ${kbDir}/shared/patterns.md. Append (do NOT overwrite):`,
+    ``,
+    `  [ESTIMATE-PATTERN] {short pattern name}`,
+    `  Source : {ticket keys}`,
+    `  Observed: ${today} (Javed — autonomous)`,
+    `  Pattern: {1–2 sentence description of the complexity or risk pattern}`,
+    `  ref    : {file:line}`,
+    ``,
+    `  If shared/patterns.md does not exist, create it with a # Shared Patterns header first.`,
+    ``,
+    `### Step J6c — Write lessons to lessons-learned/javed.md`,
+    `For each [LESSON+] marker from J5:`,
+    ``,
+    `  Read ${kbDir}/lessons-learned/javed.md (create with header if absent).`,
+    `  Append one entry per lesson:`,
+    ``,
+    `  ## {Flow Name} — {short title}`,
+    `  Date   : ${today}`,
+    `  Author : Javed (autonomous KB scan)`,
+    `  PITFALL: {what goes wrong when this flow is touched without care}`,
+    `  KEY    : {one-line insight — the fact a new engineer must know}`,
+    `  ref    : {file:line}`,
     ``,
     `### Step J7 — Update the sessions log`,
     `File: ${SESSIONS_FILE}`,
     ``,
-    `If the file does not exist, create it with this header:`,
+    `If absent, create with header:`,
     `# KB Flow Analyst — Session Log`,
-    `| Date | Flows Analysed | Proposals | Confirmations | Status |`,
-    `|------|----------------|-----------|---------------|--------|`,
+    `| Date | Flows Analysed | CMM Proposals | Patterns | Lessons | Status |`,
+    `|------|----------------|---------------|----------|---------|--------|`,
     ``,
-    `Append one row for this run:`,
-    `| ${today} | {flow1, flow2, ...} | {N new/corrected} | {N confirmed} | PENDING |`,
+    `Append one row:`,
+    `| ${today} | {flow1, flow2, ...} | {N CMM} | {N patterns} | {N lessons} | PENDING |`,
     ``,
     `### Final Summary`,
     ``,
     `── KB Flow Analyst — Run Complete ──────────────────────────────────`,
     `  Date           : ${today}`,
-    `  Flows analysed : {N} (identified from Jira incident patterns)`,
+    `  Cluster mode   : {text | metadata+text} ({quality assessment result})`,
+    `  Flows analysed : {N}`,
     `  Top flows      : {flow1}, {flow2}, ...`,
     `  New proposals  : {N}`,
     `  Corrections    : {N}`,
     `  Confirmations  : {N}`,
+    `  New patterns   : {N}`,
+    `  New lessons    : {N}`,
     `  Status         : PENDING APPROVAL — team vote at Step 13j`,
-    `${jiraBase ? `  Jira scope     : ${jiraBase}` : ''}`,
+    `${jiraBase ? `  Jira scope     : ${jiraBase}${jiraProject ? ' / project ' + jiraProject : ''}` : ''}`,
     `────────────────────────────────────────────────────────────────────`,
   ].join('\n');
 }
@@ -543,6 +666,8 @@ async function runScan() {
       lastNewProposals:  summary.newProposals,
       lastCorrections:   summary.corrections,
       lastConfirmations: summary.confirmations,
+      lastNewPatterns:   summary.newPatterns,
+      lastNewLessons:    summary.newLessons,
     });
 
     const divider   = '─'.repeat(60);
@@ -565,6 +690,7 @@ async function runScan() {
 
     log('info', `Run #${runNum} complete — results emailed`);
     recordActivity('kbflow_scan_completed', { runNum, nextRunAt });
+    await maybeNudge();
 
   } catch (err) {
     logStream.write(`\n${'─'.repeat(60)}\n=== Run FAILED: ${err.message} ===\n${new Date().toISOString()}\n`);
@@ -598,6 +724,9 @@ let halted = false;
 async function tick() {
   if (halted) return;
   if (!isEnabled()) return;
+
+  // Always check for overdue proposals, even if a scan is not yet due.
+  await maybeNudge();
 
   const state = loadState();
   const now   = Date.now();

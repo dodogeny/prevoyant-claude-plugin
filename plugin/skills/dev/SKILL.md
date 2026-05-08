@@ -1501,6 +1501,27 @@ done
 
 Any `STALE_REF` lines are held in memory for the session. These entries will be auto-healed in Step 13c (shared files) and Step 13g (Core Mental Map) after the session analysis is complete. Do not interrupt Step 0 for this — note `{N} stale file references flagged for auto-heal` and continue.
 
+**Pending KB contributions check (standing agenda item):**
+
+If `PRX_KBFLOW_ENABLED` is `Y`/`YES`/`true`, check for pending Javed contributions now — before the session begins work, not after:
+
+```bash
+grep -c "^Status: PENDING APPROVAL" ~/.prevoyant/knowledge-buildup/kbflow-pending.md 2>/dev/null || echo 0
+```
+
+If the count is **0**: state `✓ No pending Javed contributions.` and continue.
+
+If the count is **> 0**: display prominently:
+
+```
+⚠️  {N} pending KB contributions from Javed await team review (Step 13j).
+    Oldest proposal: {date from the earliest PENDING entry, or "unknown"}.
+    These must be reviewed at Step 13j before this session closes.
+    Do not skip Step 13j — proposals do not enter the KB without a panel vote.
+```
+
+This is a **standing agenda item, not optional**. Surface it at session start so the team commits to reviewing it before closing — not as a surprise at Step 13.
+
 #### 0b. Query (runs after Step 1 — ticket metadata available)
 
 Once Step 1 has returned the ticket's **components** and **labels**, query in two layers:
@@ -3878,11 +3899,15 @@ Display on completion:
 
 **Skip condition:** If `PRX_KBFLOW_ENABLED` is not `Y`/`YES`/`true` (case-insensitive), OR `~/.prevoyant/knowledge-buildup/kbflow-pending.md` does not exist, OR the file contains no entries with `Status: PENDING APPROVAL` — skip entirely. Display: `⏭️  Step 13j skipped — no pending Javed contributions.`
 
-Javed is an optional autonomous analyst who auto-discovers high-incident business flows from recent Jira activity, traces them in the codebase, and proposes Core Mental Map updates. He never writes directly to the KB — proposals live in `~/.prevoyant/knowledge-buildup/` (outside the KB tree, never committed) until the panel promotes them here at Step 13j. This step is the team's approval gate.
+**This step is mandatory when proposals exist.** It was flagged at Step 0. Proposals do not enter the KB automatically — they sit in `~/.prevoyant/knowledge-buildup/kbflow-pending.md` indefinitely until the panel votes here. Each session that skips 13j with pending entries is a session that delays KB growth.
+
+Javed is an optional autonomous analyst who auto-discovers high-incident business flows from recent Jira activity, traces them in the codebase, and proposes Core Mental Map, shared/patterns, and lessons-learned updates. He never writes directly to the KB — proposals live in `~/.prevoyant/knowledge-buildup/` (outside the KB tree, never committed) until the panel promotes them here at Step 13j. This step is the team's approval gate.
 
 **13j-1. Read `~/.prevoyant/knowledge-buildup/kbflow-pending.md`**
 
 Read the file and list all entries with `Status: PENDING APPROVAL`. Display each entry's title, flow, proposed date, type, and action tag.
+
+For each entry whose `Proposed` date is more than 7 days ago, prefix the display with `⏰ OVERDUE —` to make stale proposals visible to the panel.
 
 **13j-2. Panel Vote — Morgan chairs**
 
@@ -3900,10 +3925,13 @@ For each PENDING APPROVAL entry, Morgan presents it to the full panel. Each team
 **13j-3. Apply Approved Contributions**
 
 For each APPROVED entry:
-- Determine the target file: CMM-ARCH → `core-mental-map/architecture.md`, CMM-BIZ → `core-mental-map/business-logic.md`, CMM-DATA → `core-mental-map/data-flows.md`, CMM-GOTCHA → `core-mental-map/gotchas.md`.
-- Write the CMM entry following the standard compressed format (see Core Mental Map section).
-- Update `~/.prevoyant/knowledge-buildup/kbflow-pending.md`: change `Status: PENDING APPROVAL` → `Status: APPROVED | {today's date}`.
-- Update `core-mental-map/INDEX.md` counts for the modified file.
+- **CMM types** (CMM-ARCH / CMM-BIZ / CMM-DATA / CMM-GOTCHA): determine the target file:
+  CMM-ARCH → `core-mental-map/architecture.md`, CMM-BIZ → `core-mental-map/business-logic.md`,
+  CMM-DATA → `core-mental-map/data-flows.md`, CMM-GOTCHA → `core-mental-map/gotchas.md`.
+  Write the entry following the standard compressed format. Update `core-mental-map/INDEX.md` counts.
+- **PATTERN type**: append the `[ESTIMATE-PATTERN]` block to `shared/patterns.md`.
+- **LESSON type**: append the lesson entry to `lessons-learned/javed.md` (create if absent).
+- In all cases: update `~/.prevoyant/knowledge-buildup/kbflow-pending.md`: change `Status: PENDING APPROVAL` → `Status: APPROVED | {today's date}`.
 
 For each REJECTED entry:
 - Update `~/.prevoyant/knowledge-buildup/kbflow-pending.md`: change `Status: PENDING APPROVAL` → `Status: REJECTED | {today's date} | Reason: {one-line reason}`.
