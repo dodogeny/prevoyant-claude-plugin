@@ -68,124 +68,74 @@ Each engineer draws on their **acquired system knowledge** and the shared KB (`c
 
 ## Quick Start
 
-### 1. Install the plugin
+### Step 1 — Clone and run setup (one command)
 
-**macOS / Linux:**
+**macOS / Linux / WSL / Git Bash:**
 ```bash
 git clone https://github.com/dodogeny/prevoyant-claude-plugin.git \
-  ~/.claude/plugins/marketplaces/dodogeny
+  ~/.claude/plugins/marketplaces/dodogeny && \
+  bash ~/.claude/plugins/marketplaces/dodogeny/scripts/setup.sh
 ```
 
 **Windows (PowerShell):**
 ```powershell
-git clone https://github.com/dodogeny/prevoyant-claude-plugin.git "$env:USERPROFILE\.claude\plugins\marketplaces\dodogeny"
+git clone https://github.com/dodogeny/prevoyant-claude-plugin.git `
+  "$env:USERPROFILE\.claude\plugins\marketplaces\dodogeny"
+& "$env:USERPROFILE\.claude\plugins\marketplaces\dodogeny\scripts\setup.ps1"
 ```
 
-Add to `~/.claude/settings.json` (or skip this — the setup script in Step 2 does it automatically):
+The setup script:
+- Installs prerequisites: `uvx` (Jira MCP), Node.js (budget tracking), pandoc (PDF reports)
+- **Prompts for your Jira URL, email, API token, and repo path** — writes them to `.env` directly
+- Registers the plugin marketplace in `~/.claude/settings.json`
+- Installs and enables the `prevoyant@dodogeny` plugin
 
-**macOS / Linux:**
-```json
-{
-  "extraKnownMarketplaces": {
-    "dodogeny": {
-      "source": { "source": "directory", "path": "/Users/<username>/.claude/plugins/marketplaces/dodogeny" }
-    }
-  }
-}
-```
+> **Get your Jira API token:** https://id.atlassian.com/manage-profile/security/api-tokens
 
-**Windows:**
-```json
-{
-  "extraKnownMarketplaces": {
-    "dodogeny": {
-      "source": { "source": "directory", "path": "C:\\Users\\<username>\\.claude\\plugins\\marketplaces\\dodogeny" }
-    }
-  }
-}
-```
+### Step 2 — Run it
 
-**Alternatively**, skip the manual clone and point directly to GitHub:
-```json
-{
-  "extraKnownMarketplaces": {
-    "dodogeny": {
-      "source": { "source": "github", "repo": "dodogeny/prevoyant-claude-plugin" }
-    }
-  }
-}
-```
-
-Then install and enable:
-```bash
-claude plugin marketplace update dodogeny
-claude plugin install prevoyant@dodogeny
-claude plugin enable prevoyant@dodogeny
-claude plugin list   # should show prevoyant@dodogeny with ✔ enabled
-```
-
----
-
-### 2. Install prerequisites
-
-Run the one-shot setup script — it auto-detects your OS and installs `uvx` (Jira MCP), `Node.js` (budget tracking), and `pandoc` (PDF reports), copies `.env.example` → `.env`, and registers the marketplace in `~/.claude/settings.json`. Safe to re-run.
-
-| Environment | Command |
-|-------------|---------|
-| macOS | `bash scripts/setup.sh` |
-| Linux | `bash scripts/setup.sh` |
-| Windows — WSL | `bash scripts/setup.sh` |
-| Windows — Git Bash | `bash scripts/setup.sh` |
-| Windows — PowerShell | `.\scripts\setup.ps1` |
-| Windows — CMD / double-click | `scripts\setup.cmd` |
-
-> **How it works:** `.mcp.json` (committed, no credentials) tells Claude Code to run `uvx mcp-atlassian`. On first use `uvx` downloads the package into an isolated cache — no `pip install`, no virtual environment, no version conflicts. Credentials flow in from `.env` automatically.
-
----
-
-### 3. Fill in `.env`
-
-The setup script copied `.env.example` → `.env` for you. Open `.env` and set the three required values:
-
-```bash
-# Path to your local repository clone
-PRX_REPO_DIR=/absolute/path/to/your/repo
-
-# Jira credentials — get your API token at:
-# https://id.atlassian.com/manage-profile/security/api-tokens
-JIRA_URL=https://yourcompany.atlassian.net
-JIRA_USERNAME=your.name@yourcompany.com
-JIRA_API_TOKEN=your-api-token-here
-```
-
-> **Why no `.mcp.json` editing?** `.mcp.json` is already committed to the repo with no credentials. `mcp-atlassian` reads `JIRA_URL`, `JIRA_USERNAME`, and `JIRA_API_TOKEN` from the environment. Claude Code loads `.env` before starting MCP servers, so the credentials flow through automatically.
-
-**Verify** — open a Claude Code session in the project directory and ask:
-```
-search for Jira issue PROJ-1
-```
-If the MCP is configured correctly, Claude returns the issue details.
-
----
-
-### 4. Run it
-
-**Dev Mode:**
 ```
 /prevoyant:dev PROJ-1234
 ```
 
-**PR Review Mode:**
+That's it. The plugin is ready.
+
+---
+
+**Other modes:**
 ```
-/prevoyant:dev review PROJ-1234
+/prevoyant:dev review PROJ-1234     ← PR code review
+/prevoyant:dev estimate PROJ-1234   ← Planning Poker estimation
 ```
 
-**Estimate Mode:**
-```
-/prevoyant:dev estimate PROJ-1234
+> **Verify Jira is connected** — open a Claude Code session in the project directory and ask `search for Jira issue PROJ-1`. If the MCP is configured correctly, Claude returns the issue details.
+
+> **How credentials work:** `.mcp.json` (committed, no secrets) tells Claude Code to run `uvx mcp-atlassian`. `mcp-atlassian` reads `JIRA_URL`, `JIRA_USERNAME`, and `JIRA_API_TOKEN` directly from `.env` — no editing of any config file needed.
+
+---
+
+### Already cloned? Run setup from inside the directory
+
+```bash
+bash scripts/setup.sh        # macOS / Linux / WSL / Git Bash
+.\scripts\setup.ps1          # Windows PowerShell
+scripts\setup.cmd            # Windows CMD / double-click
 ```
 
-> `/dev` is the shorthand (no namespace prefix). Use `/prevoyant:dev` if another installed plugin also has a `dev` skill.
+Safe to re-run at any time — skips steps that are already complete and backs up your `.env` before touching it.
+
+---
+
+### Manual credential setup (if you skipped the prompts)
+
+Open `.env` and set:
+
+```bash
+PRX_REPO_DIR=/absolute/path/to/your/repo
+JIRA_URL=https://yourcompany.atlassian.net
+JIRA_USERNAME=your.name@yourcompany.com
+JIRA_API_TOKEN=your-api-token-here
+```
 
 ---
 
@@ -808,7 +758,9 @@ claude plugin update prevoyant@dodogeny
 claude plugin list
 ```
 
-> **Your `.env` is safe.** It is gitignored and never touched by `git pull` or `claude plugin update`. If you re-run `scripts/setup.sh` after upgrading, it automatically backs up your `.env` to `.env.bak` before skipping it.
+> **Your data is safe across upgrades.** Upgrades only modify plugin files inside `~/.claude/plugins/marketplaces/dodogeny/`. Everything in `~/.prevoyant/` — your Knowledge Base, reports, session history, server state, and all runtime data — is never touched by `git pull` or `claude plugin update`. Your `.env` is gitignored and also never modified. If you re-run `scripts/setup.sh` after upgrading, it backs up your `.env` to `.env.bak` before skipping it.
+
+> **Recommended before a major version upgrade:** create a backup from the dashboard (Settings → Backup & Export → Download Backup) or run the [tar backup command](#0-back-up-your-knowledge-base-recommended) from the Uninstalling section.
 
 > **Pull fails with "untracked file: .claude/settings.local.json"?**
 > This file is per-machine and is no longer tracked in the repo (gitignored since v1.2.2). Remove it, pull, then let the setup script recreate it:

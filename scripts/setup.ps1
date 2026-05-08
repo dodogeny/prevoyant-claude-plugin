@@ -1,11 +1,16 @@
 # setup.ps1 — Prevoyant one-shot prerequisite installer (Windows)
 #
 # Installs: uvx (Jira MCP), Node.js (budget tracking), pandoc (PDF reports)
-# Also:     copies .env.example → .env, registers marketplace in settings.json
+# Also:     prompts for Jira credentials → writes .env, registers marketplace in settings.json
 #
 # Safe to re-run — skips anything already present.
 # Run from the project root: .\scripts\setup.ps1
 # If blocked by execution policy: Set-ExecutionPolicy -Scope Process -ExecutionPolicy RemoteSigned
+#
+# QUICK INSTALL (single command — clone + setup):
+#   git clone https://github.com/dodogeny/prevoyant-claude-plugin.git `
+#     "$env:USERPROFILE\.claude\plugins\marketplaces\dodogeny"
+#   & "$env:USERPROFILE\.claude\plugins\marketplaces\dodogeny\scripts\setup.ps1"
 
 #Requires -Version 5.1
 
@@ -225,17 +230,56 @@ if (cmd_exists 'uvx') {
 # ── 6. .env ───────────────────────────────────────────────────────────────────
 step "6/9  .env  (environment file)  [required]"
 
-$EnvFile    = Join-Path $PROJECT_ROOT ".env"
-$EnvExample = Join-Path $PROJECT_ROOT ".env.example"
+$EnvFile       = Join-Path $PROJECT_ROOT ".env"
+$EnvExample    = Join-Path $PROJECT_ROOT ".env.example"
+$EnvConfigured = $false
 
 if (Test-Path $EnvFile) {
     Copy-Item $EnvFile "$EnvFile.bak" -Force
     ok ".env already exists — skipping (backed up to .env.bak)"
+    $EnvConfigured = $true
 } else {
     if (Test-Path $EnvExample) {
         Copy-Item $EnvExample $EnvFile
         ok ".env created from .env.example"
-        warn "Edit .env: set PRX_REPO_DIR, JIRA_URL, JIRA_USERNAME, JIRA_API_TOKEN"
+
+        # Interactive credential setup when running in an interactive console
+        if ([Environment]::UserInteractive -and -not [Console]::IsInputRedirected) {
+            Write-Host ""
+            info "Enter your Jira credentials (press Enter to skip any field and edit .env manually later)."
+            info "Get your API token: https://id.atlassian.com/manage-profile/security/api-tokens"
+            Write-Host ""
+
+            Write-Host -NoNewline "       Jira URL  (e.g. https://yourcompany.atlassian.net): "
+            $InputJiraUrl = Read-Host
+
+            Write-Host -NoNewline "       Jira email: "
+            $InputJiraUser = Read-Host
+
+            $secToken      = Read-Host -Prompt "       Jira API token" -AsSecureString
+            $InputJiraToken = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto(
+                              [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($secToken))
+
+            Write-Host -NoNewline "       Path to your code repository: "
+            $InputRepoDir = Read-Host
+
+            $anyInput = $InputJiraUrl -or $InputJiraUser -or $InputJiraToken -or $InputRepoDir
+            if ($anyInput) {
+                $content = Get-Content $EnvFile -Raw
+                if ($InputJiraUrl)   { $content = $content -replace '(?m)^JIRA_URL=.*',     "JIRA_URL=$InputJiraUrl" }
+                if ($InputJiraUser)  { $content = $content -replace '(?m)^JIRA_USERNAME=.*', "JIRA_USERNAME=$InputJiraUser" }
+                if ($InputJiraToken) { $content = $content -replace '(?m)^JIRA_API_TOKEN=.*',"JIRA_API_TOKEN=$InputJiraToken" }
+                if ($InputRepoDir)   { $content = $content -replace '(?m)^PRX_REPO_DIR=.*',  "PRX_REPO_DIR=$InputRepoDir" }
+                [System.IO.File]::WriteAllText($EnvFile, $content, [System.Text.Encoding]::UTF8)
+                ok ".env configured with your credentials"
+                $EnvConfigured = $true
+            } else {
+                warn "No credentials entered — edit .env manually before using the plugin"
+                info "Required: PRX_REPO_DIR, JIRA_URL, JIRA_USERNAME, JIRA_API_TOKEN"
+            }
+        } else {
+            warn "Non-interactive mode — edit .env: set PRX_REPO_DIR, JIRA_URL, JIRA_USERNAME, JIRA_API_TOKEN"
+        }
     } else {
         err ".env.example not found — create .env manually (see README)"
         impact "Plugin cannot load credentials — Jira and email features disabled"
@@ -360,12 +404,21 @@ if ($ERRORS -eq 0) {
 }
 
 Write-Host "`nNext steps:"
-Write-Host "  1. Edit .env — set PRX_REPO_DIR, JIRA_URL, JIRA_USERNAME, JIRA_API_TOKEN"
-Write-Host "     Get your Jira API token: https://id.atlassian.com/manage-profile/security/api-tokens"
-if ($PLUGIN_OK) {
-    Write-Host "  2. Open Claude Code and try: /prevoyant:dev PROJ-1234"
+if (-not $EnvConfigured) {
+    Write-Host "  1. Edit .env — set PRX_REPO_DIR, JIRA_URL, JIRA_USERNAME, JIRA_API_TOKEN"
+    Write-Host "     Get your Jira API token: https://id.atlassian.com/manage-profile/security/api-tokens"
+    if ($PLUGIN_OK) {
+        Write-Host "  2. Open Claude Code and try: /prevoyant:dev PROJ-1234"
+    } else {
+        Write-Host "  2. Run: claude plugin install prevoyant@dodogeny"
+        Write-Host "  3. Open Claude Code and try: /prevoyant:dev PROJ-1234"
+    }
 } else {
-    Write-Host "  2. Run: claude plugin install prevoyant@dodogeny && claude plugin enable prevoyant@dodogeny"
-    Write-Host "  3. Open Claude Code and try: /prevoyant:dev PROJ-1234"
+    if ($PLUGIN_OK) {
+        Write-Host "  Open Claude Code and try: /prevoyant:dev PROJ-1234"
+    } else {
+        Write-Host "  1. Run: claude plugin install prevoyant@dodogeny"
+        Write-Host "  2. Open Claude Code and try: /prevoyant:dev PROJ-1234"
+    }
 }
 Write-Host ""

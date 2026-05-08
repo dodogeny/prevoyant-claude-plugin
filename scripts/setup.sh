@@ -3,12 +3,17 @@
 #
 # Supports: macOS · Linux · Windows (WSL) · Windows (Git Bash / MSYS2)
 # Installs: uvx (Jira MCP), Node.js (budget tracking), pandoc (PDF reports)
-# Also:     copies .env.example → .env, registers marketplace in settings.json
+# Also:     prompts for Jira credentials → writes .env, registers marketplace in settings.json
 #
 # Safe to re-run — skips anything already present.
 # Run from any directory: bash /path/to/scripts/setup.sh
 # Windows (native PowerShell): use scripts\setup.ps1 instead
 # Windows (CMD / double-click): use scripts\setup.cmd
+#
+# QUICK INSTALL (single command — clone + setup):
+#   git clone https://github.com/dodogeny/prevoyant-claude-plugin.git \
+#     ~/.claude/plugins/marketplaces/dodogeny && \
+#     bash ~/.claude/plugins/marketplaces/dodogeny/scripts/setup.sh
 
 set -uo pipefail
 
@@ -407,15 +412,66 @@ step "6/9  .env  (environment file)  [required]"
 
 ENV_FILE="$PROJECT_ROOT/.env"
 ENV_EXAMPLE="$PROJECT_ROOT/.env.example"
+ENV_CONFIGURED=0
 
 if [ -f "$ENV_FILE" ]; then
   cp "$ENV_FILE" "${ENV_FILE}.bak"
   ok ".env already exists — skipping (backed up to .env.bak)"
+  ENV_CONFIGURED=1
 else
   if [ -f "$ENV_EXAMPLE" ]; then
     cp "$ENV_EXAMPLE" "$ENV_FILE"
     ok ".env created from .env.example"
-    warn "Edit .env: set PRX_REPO_DIR, JIRA_URL, JIRA_USERNAME, JIRA_API_TOKEN"
+
+    # Prompt for credentials when stdin is a terminal (skip in CI / piped installs)
+    if [ -t 0 ]; then
+      printf "\n"
+      info "Enter your Jira credentials (press Enter to skip any field and edit .env manually later)."
+      info "Get your API token: https://id.atlassian.com/manage-profile/security/api-tokens"
+      printf "\n"
+
+      printf "       Jira URL  (e.g. https://yourcompany.atlassian.net): "
+      read -r INPUT_JIRA_URL
+
+      printf "       Jira email: "
+      read -r INPUT_JIRA_USER
+
+      printf "       Jira API token: "
+      read -rs INPUT_JIRA_TOKEN
+      printf "\n"
+
+      printf "       Path to your code repository: "
+      read -r INPUT_REPO_DIR
+      INPUT_REPO_DIR="${INPUT_REPO_DIR/#\~/$HOME}"  # expand leading ~
+
+      ANY_INPUT=0
+      [ -n "$INPUT_JIRA_URL" ]   && ANY_INPUT=1
+      [ -n "$INPUT_JIRA_USER" ]  && ANY_INPUT=1
+      [ -n "$INPUT_JIRA_TOKEN" ] && ANY_INPUT=1
+      [ -n "$INPUT_REPO_DIR" ]   && ANY_INPUT=1
+
+      if [ "$ANY_INPUT" -eq 1 ]; then
+        awk \
+          -v jira_url="$INPUT_JIRA_URL" \
+          -v jira_user="$INPUT_JIRA_USER" \
+          -v jira_token="$INPUT_JIRA_TOKEN" \
+          -v repo_dir="$INPUT_REPO_DIR" \
+          '{
+            if      ($0 ~ /^JIRA_URL=/      && jira_url   != "") print "JIRA_URL="      jira_url
+            else if ($0 ~ /^JIRA_USERNAME=/ && jira_user  != "") print "JIRA_USERNAME=" jira_user
+            else if ($0 ~ /^JIRA_API_TOKEN=/&& jira_token != "") print "JIRA_API_TOKEN="jira_token
+            else if ($0 ~ /^PRX_REPO_DIR=/  && repo_dir   != "") print "PRX_REPO_DIR="  repo_dir
+            else print $0
+          }' "$ENV_FILE" > "${ENV_FILE}.tmp" && mv "${ENV_FILE}.tmp" "$ENV_FILE"
+        ok ".env configured with your credentials"
+        ENV_CONFIGURED=1
+      else
+        warn "No credentials entered — edit .env manually before using the plugin"
+        info "Required: PRX_REPO_DIR, JIRA_URL, JIRA_USERNAME, JIRA_API_TOKEN"
+      fi
+    else
+      warn "Non-interactive mode — edit .env: set PRX_REPO_DIR, JIRA_URL, JIRA_USERNAME, JIRA_API_TOKEN"
+    fi
   else
     err ".env.example not found — create .env manually (see README)"
     impact "Plugin cannot load credentials — Jira and email features disabled"
@@ -447,83 +503,57 @@ fi
 
 mkdir -p "$(dirname "$SETTINGS_FILE")"
 
-PYTHON_CMD="$(find_python || true)"
-if [ -z "$PYTHON_CMD" ]; then
-  info "Python 3 not found — attempting to install..."
-  if [ "$IS_WIN_BASH" -eq 1 ]; then
-    if install_python_win; then
-      PYTHON_CMD="$(find_python_win_after_install || true)"
-      [ -n "$PYTHON_CMD" ] \
-        && ok "Python installed ($("$PYTHON_CMD" --version 2>&1))" \
-        || warn "Python installed but not yet in PATH — re-run setup or open a new terminal"
-    else
-      warn "Automatic Python install failed"
-      info "Install manually: winget install Python.Python.3"
-    fi
-  elif [ "$OS_RAW" = "Darwin" ]; then
-    BREW=$(brew_bin 2>/dev/null || echo "")
-    if [ -n "$BREW" ]; then
-      info "→ Homebrew"
-      "$BREW" install python3 2>&1 | tail -5
-    else
-      warn "Homebrew not installed — cannot auto-install Python"
-      info "Install: https://brew.sh  then run: brew install python3"
-    fi
-    PYTHON_CMD="$(find_python || true)"
-  else
-    if command -v apt-get &>/dev/null; then
-      info "→ apt"
-      sudo apt-get install -y python3 2>&1 | tail -3
-    elif command -v dnf &>/dev/null; then
-      info "→ dnf"
-      sudo dnf install -y python3 2>&1 | tail -3
-    elif command -v yum &>/dev/null; then
-      info "→ yum"
-      sudo yum install -y python3 2>&1 | tail -3
-    fi
-    PYTHON_CMD="$(find_python || true)"
+# Use Node.js (installed in step 2) to merge settings.json; fall back to Python.
+update_settings_json() {
+  local repo_path="$1" settings_path="$2"
+  local node_bin
+  node_bin="$(command -v node 2>/dev/null || echo "")"
+  if [ -n "$node_bin" ]; then
+    "$node_bin" - "$repo_path" "$settings_path" <<'NODEOF'
+const fs = require('fs'), path = require('path');
+const [,, repoPath, sp] = process.argv;
+let s = {};
+if (fs.existsSync(sp)) { try { s = JSON.parse(fs.readFileSync(sp, 'utf8')); } catch {} }
+if (!s.extraKnownMarketplaces) s.extraKnownMarketplaces = {};
+const m = s.extraKnownMarketplaces;
+if ((m.dodogeny||{}).source && m.dodogeny.source.path === repoPath) {
+  process.stdout.write('       already registered at correct path\n'); process.exit(0);
+}
+m.dodogeny = { source: { source: 'directory', path: repoPath } };
+fs.mkdirSync(path.dirname(sp), { recursive: true });
+fs.writeFileSync(sp, JSON.stringify(s, null, 2) + '\n');
+process.stdout.write('       registered dodogeny → ' + repoPath + '\n');
+NODEOF
+    return $?
   fi
-fi
-if [ -z "$PYTHON_CMD" ]; then
-  err "Python 3 not found — add the marketplace manually (see README)"
-  impact "Prevoyant plugin will not load in Claude Code until the marketplace is registered"
-  PYTHON_CMD="python3"  # dummy so subsequent heredocs fail gracefully
-fi
-
-"$PYTHON_CMD" - "$REPO_PATH_FOR_JSON" "$SETTINGS_FILE" <<'PYEOF'
+  # Fallback: Python
+  local py_cmd
+  py_cmd="$(find_python || true)"
+  [ -z "$py_cmd" ] && return 1
+  "$py_cmd" - "$repo_path" "$settings_path" <<'PYEOF'
 import json, sys, os
-
-repo_path     = sys.argv[1]
-settings_path = sys.argv[2]
-
+repo_path, settings_path = sys.argv[1], sys.argv[2]
 settings = {}
 if os.path.exists(settings_path):
     try:
-        with open(settings_path) as f:
-            settings = json.load(f)
-    except (json.JSONDecodeError, IOError):
-        pass  # unreadable — start fresh
-
+        with open(settings_path) as f: settings = json.load(f)
+    except: pass
 markets  = settings.setdefault("extraKnownMarketplaces", {})
 existing = (markets.get("dodogeny") or {})
 if (existing.get("source") or {}).get("path") == repo_path:
-    print("       already registered at correct path")
-    sys.exit(0)
-
+    print("       already registered at correct path"); sys.exit(0)
 markets["dodogeny"] = {"source": {"source": "directory", "path": repo_path}}
-
 with open(settings_path, "w") as f:
-    json.dump(settings, f, indent=2)
-    f.write("\n")
-
+    json.dump(settings, f, indent=2); f.write("\n")
 print(f"       registered dodogeny → {repo_path}")
 PYEOF
+}
 
-if [ $? -eq 0 ]; then
+if update_settings_json "$REPO_PATH_FOR_JSON" "$SETTINGS_FILE"; then
   ok "settings.json updated"
 else
-  err "Could not update settings.json — add the marketplace manually (see README)"
-  impact "Prevoyant plugin will not load in Claude Code until the marketplace is registered"
+  err "Could not update settings.json (Node.js and Python both unavailable)"
+  impact "Add the marketplace manually — see README Quick Start"
 fi
 
 # ── 8. .claude/settings.local.json (permissions) ─────────────────────────────
@@ -540,30 +570,43 @@ if [ -f "$LOCAL_SETTINGS" ]; then
   ok "settings.local.json already exists — skipping"
   info "To regenerate, delete it and re-run setup."
 else
-  "$PYTHON_CMD" - "$LOCAL_SETTINGS" <<'PYEOF'
+  WRITE_LOCAL_OK=0
+  NODE_BIN="$(command -v node 2>/dev/null || echo "")"
+  if [ -n "$NODE_BIN" ]; then
+    "$NODE_BIN" - "$LOCAL_SETTINGS" <<'NODEOF' && WRITE_LOCAL_OK=1
+const fs = require('fs'), path = require('path');
+const [,, p] = process.argv;
+const config = { permissions: { allow: [
+  "Bash(npx --yes codeburn@latest *)",
+  "Bash(codeburn *)",
+  "Bash(bash scripts/check-budget.sh)",
+  "Bash(bash .claude/load-env.sh)"
+]}};
+fs.mkdirSync(path.dirname(p), { recursive: true });
+fs.writeFileSync(p, JSON.stringify(config, null, 2) + '\n');
+process.stdout.write('       created ' + p + '\n');
+NODEOF
+  fi
+  if [ "$WRITE_LOCAL_OK" -eq 0 ]; then
+    PY_CMD="$(find_python || true)"
+    if [ -n "$PY_CMD" ]; then
+      "$PY_CMD" - "$LOCAL_SETTINGS" <<'PYEOF' && WRITE_LOCAL_OK=1
 import json, sys
-
-path = sys.argv[1]
-
-config = {
-    "permissions": {
-        "allow": [
-            "Bash(npx --yes codeburn@latest *)",
-            "Bash(codeburn *)",
-            "Bash(bash scripts/check-budget.sh)",
-            "Bash(bash .claude/load-env.sh)"
-        ]
-    }
-}
-
-with open(path, "w") as f:
-    json.dump(config, f, indent=2)
-    f.write("\n")
-
-print(f"       created {path}")
+p = sys.argv[1]
+config = {"permissions": {"allow": [
+    "Bash(npx --yes codeburn@latest *)",
+    "Bash(codeburn *)",
+    "Bash(bash scripts/check-budget.sh)",
+    "Bash(bash .claude/load-env.sh)"
+]}}
+with open(p, "w") as f:
+    json.dump(config, f, indent=2); f.write("\n")
+print(f"       created {p}")
 PYEOF
+    fi
+  fi
 
-  if [ $? -eq 0 ]; then
+  if [ "$WRITE_LOCAL_OK" -eq 1 ]; then
     ok "settings.local.json created (permission allowlist)"
   else
     warn "Could not create settings.local.json — hooks still work via settings.json; you may see extra permission prompts"
@@ -610,11 +653,20 @@ else
 fi
 
 printf "\n${BOLD}Next steps:${NC}\n"
-printf "  1. Edit .env — set PRX_REPO_DIR, JIRA_URL, JIRA_USERNAME, JIRA_API_TOKEN\n"
-printf "     Get your Jira API token: https://id.atlassian.com/manage-profile/security/api-tokens\n"
-if [ "$PLUGIN_OK" -eq 1 ]; then
-  printf "  2. Open Claude Code and try: /prevoyant:dev PROJ-1234\n\n"
+if [ "$ENV_CONFIGURED" -eq 0 ]; then
+  printf "  1. Edit .env — set PRX_REPO_DIR, JIRA_URL, JIRA_USERNAME, JIRA_API_TOKEN\n"
+  printf "     Get your Jira API token: https://id.atlassian.com/manage-profile/security/api-tokens\n"
+  if [ "$PLUGIN_OK" -eq 1 ]; then
+    printf "  2. Open Claude Code and try: /prevoyant:dev PROJ-1234\n\n"
+  else
+    printf "  2. Run: claude plugin install prevoyant@dodogeny && claude plugin enable prevoyant@dodogeny\n"
+    printf "  3. Open Claude Code and try: /prevoyant:dev PROJ-1234\n\n"
+  fi
 else
-  printf "  2. Run: claude plugin install prevoyant@dodogeny && claude plugin enable prevoyant@dodogeny\n"
-  printf "  3. Open Claude Code and try: /prevoyant:dev PROJ-1234\n\n"
+  if [ "$PLUGIN_OK" -eq 1 ]; then
+    printf "  Open Claude Code and try: /prevoyant:dev PROJ-1234\n\n"
+  else
+    printf "  1. Run: claude plugin install prevoyant@dodogeny && claude plugin enable prevoyant@dodogeny\n"
+    printf "  2. Open Claude Code and try: /prevoyant:dev PROJ-1234\n\n"
+  fi
 fi
