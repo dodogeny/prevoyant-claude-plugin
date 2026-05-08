@@ -332,6 +332,86 @@ install_pandoc_win() {
 }
 
 # Install qpdf portably on Windows — no admin rights required.
+# Install pandoc portably on Linux (no sudo required).
+# Downloads the official GitHub release tarball into ~/.local/bin.
+install_pandoc_portable_linux() {
+  command -v curl &>/dev/null || command -v wget &>/dev/null \
+    || { warn "curl/wget not available — cannot download pandoc"; return 1; }
+
+  info "→ Portable tarball (no sudo required)"
+
+  local tag version arch asset url target tmp pandoc_bin
+  tag=$(github_latest_tag "jgm/pandoc") || { warn "Could not resolve latest pandoc release"; return 1; }
+  version="${tag#v}"
+  arch="amd64"
+  case "$(uname -m)" in arm64|aarch64) arch="arm64" ;; esac
+  asset="pandoc-${version}-linux-${arch}.tar.gz"
+  url="https://github.com/jgm/pandoc/releases/download/${tag}/${asset}"
+  info "   Latest release: ${tag}"
+  info "   Downloading ${asset}..."
+
+  target="$HOME/.local"
+  mkdir -p "$target/bin"
+  tmp=$(mktemp -d)
+
+  if command -v curl &>/dev/null; then
+    curl -fL --progress-bar "$url" | tar -xz -C "$tmp" \
+      || { warn "Download/extract failed"; rm -rf "$tmp"; return 1; }
+  else
+    wget -qO- "$url" | tar -xz -C "$tmp" \
+      || { warn "Download/extract failed"; rm -rf "$tmp"; return 1; }
+  fi
+
+  pandoc_bin=$(find "$tmp" -name pandoc -type f | head -1)
+  [ -x "$pandoc_bin" ] || { warn "pandoc binary not found in tarball"; rm -rf "$tmp"; return 1; }
+  cp "$pandoc_bin" "$target/bin/pandoc"
+  chmod +x "$target/bin/pandoc"
+  rm -rf "$tmp"
+
+  export PATH="$target/bin:$PATH"
+  info "   Installed pandoc to $target/bin/pandoc"
+  return 0
+}
+
+# Install pandoc portably on macOS without Homebrew.
+# Downloads the official GitHub release zip into ~/.local/bin.
+install_pandoc_portable_mac() {
+  command -v curl  &>/dev/null || { warn "curl not available";  return 1; }
+  command -v unzip &>/dev/null || { warn "unzip not available"; return 1; }
+
+  info "→ Portable zip (no Homebrew required)"
+
+  local tag version arch asset url target tmp zip pandoc_bin
+  tag=$(github_latest_tag "jgm/pandoc") || { warn "Could not resolve latest pandoc release"; return 1; }
+  version="${tag#v}"
+  arch="x86_64"
+  case "$(uname -m)" in arm64|aarch64) arch="arm64" ;; esac
+  asset="pandoc-${version}-${arch}-macOS.zip"
+  url="https://github.com/jgm/pandoc/releases/download/${tag}/${asset}"
+  info "   Latest release: ${tag}"
+
+  target="$HOME/.local"
+  mkdir -p "$target/bin"
+  tmp=$(mktemp -d)
+  zip="$tmp/$asset"
+
+  info "   Downloading ${asset}..."
+  curl -fL --progress-bar "$url" -o "$zip" \
+    || { warn "Download failed: $url"; rm -rf "$tmp"; return 1; }
+  unzip -q -o "$zip" -d "$tmp" \
+    || { warn "Extract failed"; rm -rf "$tmp"; return 1; }
+
+  pandoc_bin=$(find "$tmp" -name pandoc -type f | head -1)
+  [ -x "$pandoc_bin" ] || { warn "pandoc binary not found in zip"; rm -rf "$tmp"; return 1; }
+  cp "$pandoc_bin" "$target/bin/pandoc"
+  chmod +x "$target/bin/pandoc"
+  rm -rf "$tmp"
+
+  export PATH="$target/bin:$PATH"
+  info "   Installed pandoc to $target/bin/pandoc"
+  return 0
+}
+
 install_qpdf_portable_win() {
   command -v curl  &>/dev/null || { warn "curl not available";  return 1; }
   command -v unzip &>/dev/null || { warn "unzip not available"; return 1; }
@@ -551,13 +631,29 @@ else
     install_pandoc_win && PANDOC_OK=1
   elif [ "$OS_RAW" = "Darwin" ]; then
     BREW=$(brew_bin 2>/dev/null || echo "")
-    [ -n "$BREW" ] && "$BREW" install pandoc 2>&1 | tail -5 && PANDOC_OK=1
-  elif command -v apt-get &>/dev/null; then
-    sudo apt-get install -y pandoc 2>&1 | tail -3 && PANDOC_OK=1
-  elif command -v dnf &>/dev/null; then
-    sudo dnf install -y pandoc 2>&1 | tail -3 && PANDOC_OK=1
-  elif command -v yum &>/dev/null; then
-    sudo yum install -y pandoc 2>&1 | tail -3 && PANDOC_OK=1
+    if [ -n "$BREW" ]; then
+      info "→ Homebrew"
+      "$BREW" install pandoc 2>&1 | tail -5 && PANDOC_OK=1
+    fi
+    if [ "$PANDOC_OK" -eq 0 ]; then
+      install_pandoc_portable_mac && PANDOC_OK=1
+    fi
+  else
+    if command -v apt-get &>/dev/null; then
+      info "→ apt"
+      sudo apt-get install -y pandoc 2>&1 | tail -3 && PANDOC_OK=1
+    fi
+    if [ "$PANDOC_OK" -eq 0 ] && command -v dnf &>/dev/null; then
+      info "→ dnf"
+      sudo dnf install -y pandoc 2>&1 | tail -3 && PANDOC_OK=1
+    fi
+    if [ "$PANDOC_OK" -eq 0 ] && command -v yum &>/dev/null; then
+      info "→ yum"
+      sudo yum install -y pandoc 2>&1 | tail -3 && PANDOC_OK=1
+    fi
+    if [ "$PANDOC_OK" -eq 0 ]; then
+      install_pandoc_portable_linux && PANDOC_OK=1
+    fi
   fi
 
   if command -v pandoc &>/dev/null; then
