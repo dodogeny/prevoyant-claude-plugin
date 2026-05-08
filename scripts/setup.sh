@@ -66,6 +66,35 @@ locate_npx() {
             "$HOME/.volta/bin/npx" "$HOME/.local/share/fnm/aliases/default/bin/npx"; do
     [ -x "$p" ] && { echo "$p"; return 0; }
   done
+
+  # Windows install locations — winget / choco / scoop / portable zip do not
+  # refresh the current shell's PATH, so probe known directories directly and
+  # prepend the discovered bin dir so subsequent steps can use node/npm/npx.
+  if command -v cygpath &>/dev/null; then
+    local win_paths=()
+    [ -n "${LOCALAPPDATA:-}" ] && {
+      local appdata; appdata="$(cygpath -u "$LOCALAPPDATA")"
+      # Portable zip (versioned subfolder)
+      local portable_npx
+      portable_npx="$(find "$appdata/Programs/nodejs" -maxdepth 3 -name npx.cmd 2>/dev/null | sort -V | tail -1)"
+      [ -n "$portable_npx" ] && win_paths+=("$portable_npx")
+      win_paths+=("$appdata/Programs/nodejs/npx.cmd")
+      win_paths+=("$appdata/Microsoft/WinGet/Links/npx.cmd")
+    }
+    [ -n "${PROGRAMFILES:-}" ] && win_paths+=("$(cygpath -u "$PROGRAMFILES")/nodejs/npx.cmd")
+    [ -n "${USERPROFILE:-}" ] && {
+      local userprof; userprof="$(cygpath -u "$USERPROFILE")"
+      win_paths+=("$userprof/scoop/shims/npx.cmd" "$userprof/scoop/apps/nodejs-lts/current/npx.cmd")
+    }
+    for p in "${win_paths[@]}"; do
+      if [ -x "$p" ]; then
+        export PATH="$(dirname "$p"):$PATH"
+        echo "$p"
+        return 0
+      fi
+    done
+  fi
+
   local nvm_dir="${NVM_DIR:-$HOME/.nvm}"
   if [ -f "$nvm_dir/nvm.sh" ]; then
     # shellcheck disable=SC1090
@@ -112,13 +141,119 @@ install_node_nvm() {
   nvm use --lts 2>/dev/null || true
 }
 
-# Install Node.js on Windows (Git Bash) via Windows-native package managers
+# Persist a directory to the user-scope Windows PATH so future cmd, PowerShell,
+# and Git Bash sessions see it.  No admin rights required (writes HKCU\Environment).
+persist_user_path_win() {
+  local bin_dir="$1"
+  command -v setx.exe &>/dev/null || return 0
+  command -v reg.exe  &>/dev/null || return 0
+  local bin_dir_win cur_path new_path
+  bin_dir_win=$(cygpath -w "$bin_dir" 2>/dev/null || echo "$bin_dir")
+  cur_path=$(reg.exe query "HKCU\\Environment" /v Path 2>/dev/null \
+    | grep -i 'REG_' \
+    | sed -E 's/^[^A-Z]*REG_(EXPAND_)?SZ[[:space:]]+//I' \
+    | tr -d '\r')
+  case ";${cur_path};" in
+    *";${bin_dir_win};"*) return 0 ;;  # already persisted
+  esac
+  if [ -n "$cur_path" ]; then
+    new_path="${bin_dir_win};${cur_path}"
+  else
+    new_path="${bin_dir_win}"
+  fi
+  if [ "${#new_path}" -gt 1024 ]; then
+    warn "User PATH would exceed 1024 chars — cannot persist via setx; add manually:"
+    info "   PowerShell: [Environment]::SetEnvironmentVariable('Path','${bin_dir_win};'+\$env:Path,'User')"
+    return 0
+  fi
+  setx.exe Path "$new_path" >/dev/null 2>&1 || true
+}
+
+# Resolve the latest GitHub release tag for owner/repo without an API token,
+# by following the redirect from /releases/latest.  Echoes e.g. "v3.5" or "3.5".
+github_latest_tag() {
+  local repo="$1" url
+  url=$(curl -sLI -o /dev/null -w '%{url_effective}' \
+    "https://github.com/${repo}/releases/latest" 2>/dev/null)
+  [ -n "$url" ] || return 1
+  local tag="${url##*/tag/}"
+  # Strip any trailing slash or query string defensively
+  tag="${tag%%/*}"; tag="${tag%%\?*}"
+  [ -n "$tag" ] && [ "$tag" != "$url" ] || return 1
+  printf '%s\n' "$tag"
+}
+
+# Resolve the user-local Programs directory inside Git Bash
+# (defaults to %LOCALAPPDATA%\Programs).
+user_programs_dir_win() {
+  if command -v cygpath &>/dev/null && [ -n "${LOCALAPPDATA:-}" ]; then
+    echo "$(cygpath -u "$LOCALAPPDATA")/Programs"
+  else
+    echo "$HOME/AppData/Local/Programs"
+  fi
+}
+
+# Install Node.js portably on Windows — no admin rights required.
+# Downloads the latest LTS zip from nodejs.org into %LOCALAPPDATA%\Programs\nodejs.
+install_node_portable_win() {
+  command -v curl  &>/dev/null || { warn "curl not available — cannot download portable Node.js";  return 1; }
+  command -v unzip &>/dev/null || { warn "unzip not available — cannot extract portable Node.js"; return 1; }
+
+  info "→ Portable zip (no admin required)"
+
+  local lts_line lts_version
+  lts_line=$(curl -fsS https://nodejs.org/dist/index.json 2>/dev/null | grep -m1 '"lts":"[A-Z]')
+  [ -n "$lts_line" ] || { warn "Could not query nodejs.org for the latest LTS version"; return 1; }
+  lts_version=$(echo "$lts_line" | sed -E 's/.*"version":"([^"]+)".*/\1/')
+  [ -n "$lts_version" ] || { warn "Could not parse latest LTS version"; return 1; }
+  info "   Latest LTS: $lts_version"
+
+  local target arch
+  target="$(user_programs_dir_win)/nodejs"
+  mkdir -p "$target"
+
+  arch="x64"
+  case "$(uname -m 2>/dev/null)" in
+    arm64|aarch64) arch="arm64" ;;
+  esac
+
+  local pkg url zip
+  pkg="node-${lts_version}-win-${arch}"
+  url="https://nodejs.org/dist/${lts_version}/${pkg}.zip"
+  zip="$target/${pkg}.zip"
+
+  info "   Downloading ${pkg}.zip..."
+  curl -fL --progress-bar "$url" -o "$zip" || { warn "Download failed: $url"; return 1; }
+
+  info "   Extracting..."
+  unzip -q -o "$zip" -d "$target" || { warn "Extract failed"; rm -f "$zip"; return 1; }
+  rm -f "$zip"
+
+  local node_dir="$target/$pkg"
+  [ -x "$node_dir/node.exe" ] || { warn "Extracted node.exe not found at $node_dir"; return 1; }
+
+  export PATH="$node_dir:$PATH"
+  persist_user_path_win "$node_dir"
+  info "   Installed Node.js to $node_dir"
+  return 0
+}
+
+# Install Node.js on Windows (Git Bash) via Windows-native package managers,
+# falling back to a no-admin portable zip if every package manager fails or
+# the user declines the UAC prompt.
 install_node_win() {
   local ok=0
+  local winget_rc=0
   if command -v winget.exe &>/dev/null; then
     info "→ winget"
     winget.exe install --id OpenJS.NodeJS.LTS --silent \
-      --accept-package-agreements --accept-source-agreements 2>&1 | tail -5 && ok=1
+      --accept-package-agreements --accept-source-agreements 2>&1 | tail -5
+    winget_rc=${PIPESTATUS[0]:-1}
+    if [ "$winget_rc" -eq 0 ]; then
+      ok=1
+    elif [ "$winget_rc" -eq 1602 ] || [ "$winget_rc" -eq 740 ] || [ "$winget_rc" -eq 1603 ]; then
+      info "   (admin elevation declined or unavailable — falling back to no-admin install)"
+    fi
   fi
   if [ "$ok" -eq 0 ] && command -v choco.exe &>/dev/null; then
     info "→ Chocolatey"
@@ -128,15 +263,59 @@ install_node_win() {
     info "→ Scoop"
     scoop install nodejs-lts 2>&1 | tail -5 && ok=1
   fi
+  if [ "$ok" -eq 0 ]; then
+    install_node_portable_win && ok=1
+  fi
   [ "$ok" -eq 1 ]
+}
+
+# Install pandoc portably on Windows — no admin rights required.
+# Downloads the latest GitHub release zip and extracts it into the user profile.
+install_pandoc_portable_win() {
+  command -v curl  &>/dev/null || { warn "curl not available";  return 1; }
+  command -v unzip &>/dev/null || { warn "unzip not available"; return 1; }
+
+  info "→ Portable zip (no admin required)"
+
+  local tag version asset url target zip bin_dir
+  tag=$(github_latest_tag "jgm/pandoc") || { warn "Could not resolve latest pandoc release"; return 1; }
+  version="${tag#v}"
+  asset="pandoc-${version}-windows-x86_64.zip"
+  url="https://github.com/jgm/pandoc/releases/download/${tag}/${asset}"
+  info "   Latest release: ${tag}"
+
+  target="$(user_programs_dir_win)/pandoc"
+  mkdir -p "$target"
+  zip="$target/$asset"
+
+  info "   Downloading ${asset}..."
+  curl -fL --progress-bar "$url" -o "$zip" || { warn "Download failed: $url"; return 1; }
+  info "   Extracting..."
+  unzip -q -o "$zip" -d "$target" || { warn "Extract failed"; rm -f "$zip"; return 1; }
+  rm -f "$zip"
+
+  bin_dir="$target/pandoc-${version}"
+  [ -x "$bin_dir/pandoc.exe" ] || { warn "Extracted pandoc.exe not found at $bin_dir"; return 1; }
+
+  export PATH="$bin_dir:$PATH"
+  persist_user_path_win "$bin_dir"
+  info "   Installed pandoc to $bin_dir"
+  return 0
 }
 
 install_pandoc_win() {
   local ok=0
+  local rc=0
   if command -v winget.exe &>/dev/null; then
     info "→ winget"
     winget.exe install --id JohnMacFarlane.Pandoc --silent \
-      --accept-package-agreements --accept-source-agreements 2>&1 | tail -5 && ok=1
+      --accept-package-agreements --accept-source-agreements 2>&1 | tail -5
+    rc=${PIPESTATUS[0]:-1}
+    if [ "$rc" -eq 0 ]; then
+      ok=1
+    elif [ "$rc" -eq 1602 ] || [ "$rc" -eq 740 ] || [ "$rc" -eq 1603 ]; then
+      info "   (admin elevation declined or unavailable — falling back to no-admin install)"
+    fi
   fi
   if [ "$ok" -eq 0 ] && command -v choco.exe &>/dev/null; then
     info "→ Chocolatey"
@@ -145,6 +324,70 @@ install_pandoc_win() {
   if [ "$ok" -eq 0 ] && command -v scoop &>/dev/null; then
     info "→ Scoop"
     scoop install pandoc 2>&1 | tail -5 && ok=1
+  fi
+  if [ "$ok" -eq 0 ]; then
+    install_pandoc_portable_win && ok=1
+  fi
+  [ "$ok" -eq 1 ]
+}
+
+# Install qpdf portably on Windows — no admin rights required.
+install_qpdf_portable_win() {
+  command -v curl  &>/dev/null || { warn "curl not available";  return 1; }
+  command -v unzip &>/dev/null || { warn "unzip not available"; return 1; }
+
+  info "→ Portable zip (no admin required)"
+
+  local tag version asset url target zip bin_dir
+  tag=$(github_latest_tag "qpdf/qpdf") || { warn "Could not resolve latest qpdf release"; return 1; }
+  version="${tag#v}"
+  asset="qpdf-${version}-bin-mingw64.zip"
+  url="https://github.com/qpdf/qpdf/releases/download/${tag}/${asset}"
+  info "   Latest release: ${tag}"
+
+  target="$(user_programs_dir_win)/qpdf"
+  mkdir -p "$target"
+  zip="$target/$asset"
+
+  info "   Downloading ${asset}..."
+  curl -fL --progress-bar "$url" -o "$zip" || { warn "Download failed: $url"; return 1; }
+  info "   Extracting..."
+  unzip -q -o "$zip" -d "$target" || { warn "Extract failed"; rm -f "$zip"; return 1; }
+  rm -f "$zip"
+
+  bin_dir="$target/qpdf-${version}/bin"
+  [ -x "$bin_dir/qpdf.exe" ] || { warn "Extracted qpdf.exe not found at $bin_dir"; return 1; }
+
+  export PATH="$bin_dir:$PATH"
+  persist_user_path_win "$bin_dir"
+  info "   Installed qpdf to $bin_dir"
+  return 0
+}
+
+install_qpdf_win() {
+  local ok=0
+  local rc=0
+  if command -v winget.exe &>/dev/null; then
+    info "→ winget"
+    winget.exe install --id qpdf.qpdf --silent \
+      --accept-package-agreements --accept-source-agreements 2>&1 | tail -5
+    rc=${PIPESTATUS[0]:-1}
+    if [ "$rc" -eq 0 ]; then
+      ok=1
+    elif [ "$rc" -eq 1602 ] || [ "$rc" -eq 740 ] || [ "$rc" -eq 1603 ]; then
+      info "   (admin elevation declined or unavailable — falling back to no-admin install)"
+    fi
+  fi
+  if [ "$ok" -eq 0 ] && command -v choco.exe &>/dev/null; then
+    info "→ Chocolatey"
+    choco.exe install qpdf -y 2>&1 | tail -5 && ok=1
+  fi
+  if [ "$ok" -eq 0 ] && command -v scoop &>/dev/null; then
+    info "→ Scoop"
+    scoop install qpdf 2>&1 | tail -5 && ok=1
+  fi
+  if [ "$ok" -eq 0 ]; then
+    install_qpdf_portable_win && ok=1
   fi
   [ "$ok" -eq 1 ]
 }
@@ -345,19 +588,7 @@ else
   QPDF_OK=0
 
   if [ "$IS_WIN_BASH" -eq 1 ]; then
-    if command -v winget.exe &>/dev/null; then
-      info "→ winget"
-      winget.exe install --id qpdf.qpdf --silent \
-        --accept-package-agreements --accept-source-agreements 2>&1 | tail -5 && QPDF_OK=1
-    fi
-    if [ "$QPDF_OK" -eq 0 ] && command -v choco.exe &>/dev/null; then
-      info "→ Chocolatey"
-      choco.exe install qpdf -y 2>&1 | tail -5 && QPDF_OK=1
-    fi
-    if [ "$QPDF_OK" -eq 0 ] && command -v scoop &>/dev/null; then
-      info "→ Scoop"
-      scoop install qpdf 2>&1 | tail -5 && QPDF_OK=1
-    fi
+    install_qpdf_win && QPDF_OK=1
   elif [ "$OS_RAW" = "Darwin" ]; then
     BREW=$(brew_bin 2>/dev/null || echo "")
     [ -n "$BREW" ] && "$BREW" install qpdf 2>&1 | tail -5 && QPDF_OK=1
