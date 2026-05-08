@@ -5387,7 +5387,8 @@ function parseKbflowPending(filePath) {
 }
 
 // Parse the kbflow-sessions.md buildup file — a markdown table.
-// | Date | Flows Analysed | Proposals | Confirmations | Status |
+// New format (6 cols): | Date | Flows Analysed | CMM Proposals | Patterns | Lessons | Status |
+// Old format (5 cols): | Date | Flows Analysed | Proposals | Confirmations | Status |
 function parseKbflowSessions(filePath) {
   let raw;
   try { raw = fs.readFileSync(filePath, 'utf8'); } catch (_) { return []; }
@@ -5398,15 +5399,17 @@ function parseKbflowSessions(filePath) {
     if (!line.startsWith('|')) continue;
     const cells = line.split('|').slice(1, -1).map(c => c.trim());
     if (cells.length < 5) continue;
-    if (/^[-:\s]+$/.test(cells[0])) continue;       // separator row
-    if (cells[0].toLowerCase() === 'date') continue; // header row
-    rows.push({
-      date:          cells[0],
-      flows:         cells[1],
-      proposals:     cells[2],
-      confirmations: cells[3],
-      status:        cells[4],
-    });
+    if (/^[-:\s]+$/.test(cells[0])) continue;
+    if (cells[0].toLowerCase() === 'date') continue;
+    if (cells.length >= 6) {
+      // New 6-column format
+      rows.push({ date: cells[0], flows: cells[1], proposals: cells[2],
+                  patterns: cells[3], lessons: cells[4], status: cells[5] });
+    } else {
+      // Old 5-column format (confirmations instead of patterns/lessons)
+      rows.push({ date: cells[0], flows: cells[1], proposals: cells[2],
+                  patterns: '—', lessons: '—', status: cells[4] });
+    }
   }
   return rows.reverse(); // newest first
 }
@@ -5429,6 +5432,27 @@ function statusBadge(status) {
   if (s.startsWith('PARTIAL'))  return `<span style="padding:2px 8px;border-radius:8px;font-size:.72rem;font-weight:600;background:#fef3c7;color:#b45309">PARTIAL</span>`;
   if (s === 'INFO')             return `<span style="padding:2px 8px;border-radius:8px;font-size:.72rem;font-weight:600;background:#e0f2fe;color:#0369a1">INFO</span>`;
   return `<span style="padding:2px 8px;border-radius:8px;font-size:.72rem;font-weight:600;background:#f3f4f6;color:#374151">${esc(status || '—')}</span>`;
+}
+
+function typeBadge(type) {
+  const t = (type || '').trim().toUpperCase();
+  const map = {
+    'CMM-ARCH':   ['#ede9fe','#5b21b6'],
+    'CMM-BIZ':    ['#dcfce7','#166534'],
+    'CMM-DATA':   ['#f3e8ff','#7e22ce'],
+    'CMM-GOTCHA': ['#ffedd5','#c2410c'],
+    'PATTERN':    ['#cffafe','#0e7490'],
+    'LESSON':     ['#fce7f3','#9d174d'],
+  };
+  const [bg, fg] = map[t] || ['#f3f4f6','#374151'];
+  return `<span style="padding:2px 7px;border-radius:6px;font-size:.68rem;font-weight:600;background:${bg};color:${fg};white-space:nowrap">${esc(type || '—')}</span>`;
+}
+
+function actionBadge(action) {
+  const a = (action || '').trim().toUpperCase();
+  const map = { 'NEW': ['#dbeafe','#1e40af'], 'CORRECT': ['#fef3c7','#92400e'], 'CONFIRM': ['#dcfce7','#166534'] };
+  const [bg, fg] = map[a] || ['#f3f4f6','#374151'];
+  return `<span style="padding:2px 7px;border-radius:6px;font-size:.68rem;font-weight:600;background:${bg};color:${fg};white-space:nowrap">${esc(action || '—')}</span>`;
 }
 
 function fmtDuration(ms) {
@@ -5485,6 +5509,10 @@ function renderKnowledgeBuilder(flash) {
   const oldestPendingDays = state.oldestPendingDays || 0;
   const nudgeDays    = parseInt(process.env.PRX_KBFLOW_REVIEW_NUDGE_DAYS || '7', 10);
 
+  // Acceptance rate (approved / all reviewed)
+  const reviewed     = counts.approved + counts.rejected;
+  const acceptPct    = reviewed > 0 ? Math.round((counts.approved / reviewed) * 100) : null;
+
   const flashMsg = flash === 'run-queued'   ? `<div style="background:#dcfce7;color:#166534;padding:.6rem 1rem;border-radius:8px;margin-bottom:1rem;font-size:.85rem">✓ Run queued — the KB Flow Analyst will start its scan momentarily.</div>` :
                    flash === 'run-disabled' ? `<div style="background:#fee2e2;color:#991b1b;padding:.6rem 1rem;border-radius:8px;margin-bottom:1rem;font-size:.85rem">✗ Cannot run — the KB Flow Analyst is disabled. Enable it in Settings first.</div>` :
                    '';
@@ -5492,7 +5520,7 @@ function renderKnowledgeBuilder(flash) {
   const runningBanner = isRunning ? `
     <div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:.75rem 1rem;margin-bottom:1rem;font-size:.84rem;color:#1e40af;display:flex;align-items:center;gap:.65rem">
       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;animation:spin 1.4s linear infinite"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>
-      <span><strong>Scan in progress</strong>${state.currentRunNum ? ` — run #${state.currentRunNum}` : ''}${state.currentRunStartedAt ? ` · started ${new Date(state.currentRunStartedAt).toLocaleTimeString()}` : ''} · page refreshes every 30 s</span>
+      <span><strong>Scan in progress</strong>${state.currentRunNum ? ` — run #${state.currentRunNum}` : ''}${state.currentRunStartedAt ? ` · started ${new Date(state.currentRunStartedAt).toLocaleTimeString()}` : ''} · <span id="refresh-countdown">page refreshes in 30s</span></span>
     </div>` : '';
 
   const logFilePath = state.lastLogFile
@@ -5526,25 +5554,40 @@ ${isRunning ? '<meta http-equiv="refresh" content="30">' : ''}
   table { width:100%; border-collapse:collapse; font-size:.84rem; }
   th { text-align:left; padding:.5rem .6rem; background:#f9fafb; color:#6b7280; font-weight:600; font-size:.72rem; text-transform:uppercase; letter-spacing:.04em; border-bottom:1px solid #e5e7eb; }
   td { padding:.55rem .6rem; border-bottom:1px solid #f1f5f9; vertical-align:top; }
-  tr:hover td { background:#fafafa; }
+  .main-row { cursor:pointer; }
+  .main-row:hover td { background:#fafafa; }
+  .detail-row td { background:#f8fafc; padding:0; border-bottom:1px solid #e5e7eb; }
   tr.row-hidden { display:none; }
   .empty { color:#9ca3af; font-size:.85rem; padding:1rem; text-align:center; font-style:italic; }
   .pill { display:inline-block; padding:1px 7px; border-radius:6px; font-size:.7rem; font-weight:600; background:#e5e7eb; color:#374151; }
   .btn { display:inline-flex; align-items:center; gap:.4rem; padding:.45rem .9rem; background:#1e40af; color:#fff; border:0; border-radius:7px; font-size:.82rem; font-weight:500; cursor:pointer; text-decoration:none; }
   .btn:hover { background:#1e3a8a; }
   .btn[disabled] { background:#9ca3af; cursor:not-allowed; }
+  .btn-sm { padding:.25rem .65rem; font-size:.75rem; border-radius:5px; background:#f3f4f6; color:#374151; border:1px solid #d1d5db; cursor:pointer; }
+  .btn-sm:hover { background:#e5e7eb; }
   .row-hdr { display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:.9rem; }
   .row-hdr h2 { margin:0; }
   code { background:#f3f4f6; padding:1px 5px; border-radius:4px; font-size:.78rem; color:#374151; }
-  .body-text { font-size:.78rem; color:#4b5563; max-width:380px; white-space:pre-wrap; line-height:1.4; }
-  .ref-link { font-size:.72rem; color:#6b7280; font-family:ui-monospace,monospace; margin-top:.25rem; display:block; }
+  .ref-link { font-size:.72rem; color:#6b7280; font-family:ui-monospace,monospace; margin-top:.15rem; display:block; }
   .status-on  { color:#166534; font-weight:600; }
   .status-off { color:#9ca3af; font-weight:600; }
-  .filter-tabs { display:flex; gap:.4rem; margin-bottom:.85rem; flex-wrap:wrap; }
+  .filter-row { display:flex; gap:.75rem; align-items:center; margin-bottom:.85rem; flex-wrap:wrap; }
+  .filter-tabs { display:flex; gap:.4rem; flex-wrap:wrap; }
   .ftab { padding:.28rem .7rem; border-radius:6px; font-size:.78rem; font-weight:600; cursor:pointer; border:1px solid #d1d5db; background:#fff; color:#374151; }
   .ftab.active { background:#1e40af; color:#fff; border-color:#1e40af; }
   .ftab:hover:not(.active) { background:#f3f4f6; }
+  .search-box { margin-left:auto; }
+  .search-box input { padding:.28rem .65rem; border:1px solid #d1d5db; border-radius:6px; font-size:.82rem; width:200px; outline:none; }
+  .search-box input:focus { border-color:#1e40af; box-shadow:0 0 0 2px #dbeafe; }
   .error-box { font-size:.78rem; color:#991b1b; background:#fef2f2; border:1px solid #fecaca; border-radius:6px; padding:.5rem .8rem; margin-top:.65rem; word-break:break-all; }
+  .expand-arrow { color:#9ca3af; font-size:.7rem; margin-right:.3rem; }
+  .detail-content { padding:.85rem 1rem .85rem 2.5rem; display:flex; gap:1.5rem; flex-wrap:wrap; }
+  .detail-body { font-size:.82rem; color:#374151; white-space:pre-wrap; line-height:1.6; flex:1; min-width:200px; max-width:700px; }
+  .detail-meta { font-size:.78rem; color:#6b7280; min-width:160px; }
+  .detail-meta p { margin:.15rem 0; }
+  .accept-bar { height:6px; border-radius:3px; background:#e5e7eb; margin-top:.4rem; overflow:hidden; }
+  .accept-fill { height:100%; border-radius:3px; background:#22c55e; }
+  .no-results { display:none; color:#9ca3af; font-size:.85rem; padding:1rem; text-align:center; font-style:italic; }
 </style>
 </head><body>
   <div class="topbar">
@@ -5560,10 +5603,12 @@ ${isRunning ? '<meta http-equiv="refresh" content="30">' : ''}
     ${flashMsg}
     ${runningBanner}
 
+    <!-- Status panel -->
     <div class="panel">
       <div class="row-hdr">
         <h2>KB Flow Analyst — Status</h2>
-        <form method="POST" action="/dashboard/knowledge-builder/run-now" style="margin:0">
+        <form method="POST" action="/dashboard/knowledge-builder/run-now" style="margin:0"
+              onsubmit="return confirm('Start a KB Flow Analyst scan now? Scans typically take 30–120 minutes.')">
           <button type="submit" class="btn" ${enabled && !isRunning ? '' : 'disabled'}
                   title="${!enabled ? 'Enable the worker in Settings first' : isRunning ? 'Scan already in progress' : ''}">
             <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
@@ -5581,7 +5626,7 @@ ${isRunning ? '<meta http-equiv="refresh" content="30">' : ''}
         <div class="stat">
           <div class="lbl">Worker</div>
           <div class="val ${enabled ? 'status-on' : 'status-off'}">${enabled ? '● Enabled' : '○ Disabled'}</div>
-          <div class="sub">PRX_KBFLOW_ENABLED=${enabled ? 'Y' : 'N'}</div>
+          <div class="sub">every ${esc(interval)}d · lookback ${esc(lookback)}d</div>
         </div>
         <div class="stat">
           <div class="lbl">Last run</div>
@@ -5601,35 +5646,29 @@ ${isRunning ? '<meta http-equiv="refresh" content="30">' : ''}
         ${hasSummary ? `
         <div class="stat">
           <div class="lbl">Last output</div>
-          <div class="val" style="font-size:.85rem">${state.lastNewProposals ?? '—'} CMM · ${state.lastNewPatterns ?? '—'} pat · ${state.lastNewLessons ?? '—'} lesson</div>
+          <div class="val" style="font-size:.82rem">${state.lastNewProposals ?? '—'} CMM · ${state.lastNewPatterns ?? '—'} pat · ${state.lastNewLessons ?? '—'} lesson</div>
           <div class="sub">${state.lastCorrections ?? '—'} fix · ${state.lastConfirmations ?? '—'} confirm · ${state.lastFlowsAnalysed ?? '—'} flows</div>
+        </div>` : ''}
+        ${acceptPct !== null ? `
+        <div class="stat">
+          <div class="lbl">Acceptance rate</div>
+          <div class="val" style="font-size:.95rem">${acceptPct}%</div>
+          <div class="accept-bar"><div class="accept-fill" style="width:${acceptPct}%"></div></div>
+          <div class="sub">${counts.approved} approved · ${counts.rejected} rejected</div>
         </div>` : ''}
         <div class="stat">
           <div class="lbl">Jira scope</div>
           <div class="val" style="font-size:.82rem;word-break:break-all">${esc(jiraProject || 'all recent')}</div>
-          <div class="sub">${jiraProject ? 'PRX_JIRA_PROJECT' : 'set PRX_JIRA_PROJECT to narrow scope'}</div>
+          <div class="sub">${jiraProject ? 'PRX_JIRA_PROJECT' : 'set PRX_JIRA_PROJECT to narrow'}</div>
         </div>
         ${pendingCount > 0 ? `
+        <a href="#contributions" style="text-decoration:none">
         <div class="stat" style="${oldestPendingDays >= nudgeDays ? 'border-color:#fca5a5;background:#fef2f2' : 'border-color:#fde68a;background:#fffbeb'}">
           <div class="lbl" style="color:${oldestPendingDays >= nudgeDays ? '#991b1b' : '#92400e'}">${oldestPendingDays >= nudgeDays ? '⚠ Review overdue' : 'Awaiting review'}</div>
           <div class="val" style="font-size:.9rem;color:${oldestPendingDays >= nudgeDays ? '#b91c1c' : '#b45309'}">${pendingCount} pending</div>
-          <div class="sub">oldest: ${oldestPendingDays}d · Step 13j</div>
-        </div>` : ''}
-        <div class="stat">
-          <div class="lbl">Interval</div>
-          <div class="val">${esc(interval)}d</div>
-          <div class="sub">scan every ${esc(interval)} day(s)</div>
+          <div class="sub">oldest: ${oldestPendingDays}d · Step 13j ↓</div>
         </div>
-        <div class="stat">
-          <div class="lbl">Lookback</div>
-          <div class="val">${esc(lookback)}d</div>
-          <div class="sub">Jira incident window</div>
-        </div>
-        <div class="stat">
-          <div class="lbl">Max flows</div>
-          <div class="val">${esc(maxFlowsCfg)}</div>
-          <div class="sub">per run</div>
-        </div>
+        </a>` : ''}
       </div>
       <div class="hint">
         Pending:  <code>${esc(pendingFile)}</code><br>
@@ -5640,7 +5679,8 @@ ${isRunning ? '<meta http-equiv="refresh" content="30">' : ''}
       <div class="error-box">⚠ Last run failed: ${esc(state.lastError)}</div>` : ''}
     </div>
 
-    <div class="panel">
+    <!-- Contributions panel -->
+    <div class="panel" id="contributions">
       <h2>
         Contributions
         <span class="pill">${counts.pending} pending</span>
@@ -5651,19 +5691,24 @@ ${isRunning ? '<meta http-equiv="refresh" content="30">' : ''}
       ${items.length === 0 ? `
         <div class="empty">No contributions yet. The KB Flow Analyst writes proposals to <code>~/.prevoyant/knowledge-buildup/kbflow-pending.md</code> after each run.</div>
       ` : `
-        <div class="filter-tabs">
-          <button class="ftab active" onclick="filterContribs('all',this)">All (${items.length})</button>
-          ${counts.pending  ? `<button class="ftab" onclick="filterContribs('pending',this)">Pending (${counts.pending})</button>`   : ''}
-          ${counts.approved ? `<button class="ftab" onclick="filterContribs('approved',this)">Approved (${counts.approved})</button>` : ''}
-          ${counts.rejected ? `<button class="ftab" onclick="filterContribs('rejected',this)">Rejected (${counts.rejected})</button>` : ''}
-          ${counts.info     ? `<button class="ftab" onclick="filterContribs('info',this)">Info (${counts.info})</button>`             : ''}
+        <div class="filter-row">
+          <div class="filter-tabs">
+            <button class="ftab active" data-filter="all" onclick="filterContribs('all',this)">All (${items.length})</button>
+            ${counts.pending  ? `<button class="ftab" data-filter="pending"  onclick="filterContribs('pending',this)">Pending (${counts.pending})</button>`   : ''}
+            ${counts.approved ? `<button class="ftab" data-filter="approved" onclick="filterContribs('approved',this)">Approved (${counts.approved})</button>` : ''}
+            ${counts.rejected ? `<button class="ftab" data-filter="rejected" onclick="filterContribs('rejected',this)">Rejected (${counts.rejected})</button>` : ''}
+            ${counts.info     ? `<button class="ftab" data-filter="info"     onclick="filterContribs('info',this)">Info (${counts.info})</button>`             : ''}
+          </div>
+          <div class="search-box">
+            <input type="text" id="contrib-search" placeholder="Search…" oninput="applyFilters()" autocomplete="off">
+          </div>
         </div>
         <table id="contrib-table">
           <thead>
             <tr>
-              <th style="width:78px">ID</th>
-              <th>Title / Body</th>
-              <th>Flow</th>
+              <th style="width:24px"></th>
+              <th style="width:74px">ID</th>
+              <th>Title</th>
               <th>Type</th>
               <th>Action</th>
               <th>Proposed</th>
@@ -5678,27 +5723,45 @@ ${isRunning ? '<meta http-equiv="refresh" content="30">' : ''}
                 : sk.startsWith('APPROVED') ? 'approved'
                 : sk.startsWith('REJECTED') ? 'rejected'
                 : sk === 'INFO' ? 'info' : 'other';
+              const safeId = (it.id || '').replace(/[^a-z0-9]/gi, '-').toLowerCase();
+              const copyText = [it.title, it.body, it.ref ? 'ref: ' + it.ref : ''].filter(Boolean).join('\n\n');
               return `
-              <tr data-status="${statusKey}">
-                <td><strong>${esc(it.id)}</strong></td>
-                <td>
-                  <div style="font-weight:600;font-size:.85rem">${esc(it.title)}</div>
-                  ${it.body ? `<div class="body-text">${esc(it.body)}</div>` : ''}
-                  ${it.ref ? `<span class="ref-link">ref: ${esc(it.ref)}</span>` : ''}
-                </td>
-                <td>${esc(it.flow || '—')}</td>
-                <td>${esc(it.type || '—')}</td>
-                <td>${esc(it.action || '—')}</td>
-                <td>${esc(it.proposed || '—')}</td>
+              <tr class="main-row" data-status="${statusKey}" data-id="${safeId}"
+                  onclick="toggleDetail('${safeId}')"
+                  title="Click to expand">
+                <td style="color:#9ca3af;font-size:.7rem;padding-right:0"><span class="expand-arrow" id="arrow-${safeId}">▶</span></td>
+                <td><strong style="font-family:ui-monospace,monospace">${esc(it.id)}</strong></td>
+                <td style="font-weight:600;font-size:.85rem">${esc(it.title)}</td>
+                <td>${typeBadge(it.type)}</td>
+                <td>${actionBadge(it.action)}</td>
+                <td style="font-size:.8rem;white-space:nowrap">${esc(it.proposed || '—')}</td>
                 <td>${linkIncidents(it.incidents, jiraBase)}</td>
                 <td>${statusBadge(it.status)}</td>
+              </tr>
+              <tr class="detail-row row-hidden" id="detail-${safeId}" data-status="${statusKey}">
+                <td colspan="8">
+                  <div class="detail-content">
+                    <div class="detail-body">${it.body ? esc(it.body) : '<span style="color:#9ca3af;font-style:italic">No body text</span>'}</div>
+                    <div class="detail-meta">
+                      ${it.flow ? `<p><strong>Flow:</strong> ${esc(it.flow)}</p>` : ''}
+                      ${it.ref  ? `<p><strong>Ref:</strong> <span class="ref-link" style="margin:0;display:inline">${esc(it.ref)}</span></p>` : ''}
+                      ${it.incidents && it.incidents !== '—' ? `<p><strong>Incidents:</strong><br>${linkIncidents(it.incidents, jiraBase)}</p>` : ''}
+                      <p style="margin-top:.6rem">
+                        <button class="btn-sm" data-copy-id="${safeId}" onclick="copyContent('${safeId}',event)">Copy content</button>
+                      </p>
+                      <textarea id="copy-content-${safeId}" style="display:none" readonly>${copyText.replace(/</g,'&lt;').replace(/>/g,'&gt;')}</textarea>
+                    </div>
+                  </div>
+                </td>
               </tr>`;
             }).join('')}
           </tbody>
         </table>
+        <div class="no-results" id="no-results">No contributions match your search.</div>
       `}
     </div>
 
+    <!-- Run history panel -->
     <div class="panel">
       <h2>Run history (most recent first)</h2>
       ${sessions.length === 0 ? `
@@ -5709,18 +5772,20 @@ ${isRunning ? '<meta http-equiv="refresh" content="30">' : ''}
             <tr>
               <th>Date</th>
               <th>Flows analysed</th>
-              <th>Proposals</th>
-              <th>Confirmations</th>
+              <th>CMM proposals</th>
+              <th>Patterns</th>
+              <th>Lessons</th>
               <th>Status</th>
             </tr>
           </thead>
           <tbody>
             ${sessions.map(s => `
               <tr>
-                <td>${esc(s.date)}</td>
+                <td style="font-size:.8rem;white-space:nowrap">${esc(s.date)}</td>
                 <td>${esc(s.flows)}</td>
                 <td>${esc(s.proposals)}</td>
-                <td>${esc(s.confirmations)}</td>
+                <td>${esc(s.patterns || '—')}</td>
+                <td>${esc(s.lessons  || '—')}</td>
                 <td>${statusBadge(s.status)}</td>
               </tr>
             `).join('')}
@@ -5731,13 +5796,79 @@ ${isRunning ? '<meta http-equiv="refresh" content="30">' : ''}
   </div>
 
   <script>
+  var _activeFilter = 'all';
+
   function filterContribs(filter, btn) {
+    _activeFilter = filter;
     document.querySelectorAll('.ftab').forEach(t => t.classList.remove('active'));
     btn.classList.add('active');
-    document.querySelectorAll('#contrib-table tbody tr').forEach(row => {
-      row.classList.toggle('row-hidden', filter !== 'all' && row.dataset.status !== filter);
-    });
+    applyFilters();
   }
+
+  function applyFilters() {
+    const q = (document.getElementById('contrib-search') || {}).value || '';
+    const search = q.toLowerCase().trim();
+    let visible = 0;
+    document.querySelectorAll('#contrib-table .main-row').forEach(row => {
+      const matchFilter = _activeFilter === 'all' || row.dataset.status === _activeFilter;
+      const matchSearch = !search || row.textContent.toLowerCase().includes(search);
+      const hide = !matchFilter || !matchSearch;
+      row.classList.toggle('row-hidden', hide);
+      const detail = document.getElementById('detail-' + row.dataset.id);
+      if (detail && hide) {
+        detail.classList.add('row-hidden');
+        const arrow = document.getElementById('arrow-' + row.dataset.id);
+        if (arrow) arrow.textContent = '▶';
+      }
+      if (!hide) visible++;
+    });
+    const noRes = document.getElementById('no-results');
+    if (noRes) noRes.style.display = visible === 0 ? 'block' : 'none';
+  }
+
+  function toggleDetail(id) {
+    const mainRow  = document.querySelector('.main-row[data-id="' + id + '"]');
+    const detailRow = document.getElementById('detail-' + id);
+    const arrow     = document.getElementById('arrow-' + id);
+    if (!detailRow || !mainRow || mainRow.classList.contains('row-hidden')) return;
+    const nowHidden = detailRow.classList.toggle('row-hidden');
+    if (arrow) arrow.textContent = nowHidden ? '▶' : '▼';
+  }
+
+  function copyContent(id, evt) {
+    evt.stopPropagation();
+    const el  = document.getElementById('copy-content-' + id);
+    const btn = document.querySelector('[data-copy-id="' + id + '"]');
+    if (!el || !btn) return;
+    const text = el.value;
+    if (navigator.clipboard) {
+      navigator.clipboard.writeText(text).then(() => {
+        btn.textContent = 'Copied!';
+        setTimeout(() => { btn.textContent = 'Copy content'; }, 1600);
+      }).catch(() => fallbackCopy(text, btn));
+    } else { fallbackCopy(text, btn); }
+  }
+
+  function fallbackCopy(text, btn) {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    btn.textContent = 'Copied!';
+    setTimeout(() => { btn.textContent = 'Copy content'; }, 1600);
+  }
+
+  ${isRunning ? `
+  (function() {
+    var secs = 30;
+    var el = document.getElementById('refresh-countdown');
+    if (!el) return;
+    setInterval(function() {
+      secs--;
+      el.textContent = secs > 0 ? 'page refreshes in ' + secs + 's' : 'refreshing…';
+    }, 1000);
+  })();` : ''}
   </script>
 </body></html>`;
 }
