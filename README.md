@@ -428,6 +428,8 @@ team-kb/
 
 In `KB_MODE=distributed` all files on disk are `.md.enc`; the plain `.md` files exist only in a temp working directory during the session.
 
+**KB Flow Analyst working files** live *outside* the KB tree at `~/.prevoyant/knowledge-buildup/` — `kbflow-pending.md` holds Javed's proposed CMM contributions awaiting Step 13j panel vote; `kbflow-sessions.md` is the worker run log. Only entries unanimously approved by the panel are written into `core-mental-map/`. Neither file is ever committed to the KB repo.
+
 `INDEX.md` holds two sections:
 - **Memory Palace** — vivid trigger phrases mapped to system rooms; primary retrieval (≤ 3 reads regardless of KB size)
 - **Master Index** — flat table greppable by ticket key, component, label, and trigger; fallback if Palace has no match
@@ -440,6 +442,7 @@ In `KB_MODE=distributed` all files on disk are `.md.enc`; the plain `.md` files 
 | `core-mental-map/` | Codebase | Architecture, data flows, tech stack, gotchas (compressed facts) |
 | `personas/memory/` | Sessions | Each agent's personal memory — observations, calibration, surprises — one file per session per agent |
 | `lessons-learned/` | Developers | Per-person sprint retrospective entries: pitfalls and hard-won insights |
+| `~/.prevoyant/knowledge-buildup/` *(outside KB tree)* | KB Flow Analyst | Javed's pending CMM proposals and worker run log — never committed to the KB repo |
 
 Every session starts by reading relevant `core-mental-map/` sections, all `lessons-learned/` files, and the last five personal memory files for each agent. Agents emit `[CMM+]` markers for codebase facts and `[LL+]` markers for lessons; both are written back to the KB at the end of every session. Each agent also writes a personal memory file (Step 13i) capturing what they observed, predicted, and got surprised by — so agents get sharper with every session they participate in.
 
@@ -618,11 +621,22 @@ Story points = **Complexity + Risk + Repetition** (not hours). Scale: 1 · 2 · 
 │   │       ├── bryan.md          # Scrum Master: token audit & process retrospective
 │   │       ├── javed.md          # KB Flow Analyst: autonomous Core Mental Map contributor
 │   │       └── _memory-template.md  # Template for session memory files
+│   ├── hooks/
+│   │   ├── hooks.json            # Plugin hook definitions (SessionStart, SessionStop)
+│   │   └── prefetch-basic-memory.sh  # Pre-fetches basic-memory MCP to prime uvx cache on install
 │   └── skills/dev/
 │       └── SKILL.md              # All skill logic lives here
 ├── server/                       # Prevoyant Server — optional ambient agent (see docs/prevoyant-server.md)
 │   ├── index.js                  # Express app entry point
-│   ├── dashboard/                # Dashboard routes, ticket tracker, pipeline stage definitions
+│   ├── serverEvents.js           # Shared event bus for cross-module server events
+│   ├── config/
+│   │   └── env.js                # Centralised environment variable loader
+│   ├── dashboard/                # Dashboard UI, routes, and pipeline definitions
+│   │   ├── routes.js             # All dashboard HTTP routes (UI pages + JSON APIs)
+│   │   ├── tracker.js            # Session state tracker and history
+│   │   ├── activityLog.js        # Activity event recorder and reader
+│   │   ├── stages.json           # Pipeline stage definitions for all modes
+│   │   └── stage-instructions/   # Per-stage Claude prompt overrides (runtime-generated)
 │   ├── kb/                       # KB query, sync, and cache layer
 │   │   ├── kbCache.js            # In-memory KB cache (invalidated on sync)
 │   │   ├── kbQuery.js            # Semantic KB query with indexed memory retrieval
@@ -633,7 +647,8 @@ Story points = **Complexity + Risk + Repetition** (not hours). Scale: 1 · 2 · 
 │   │   └── jsonMemory.js         # JSON backend (PRX_MEMORY_INDEX_ENABLED)
 │   ├── notifications/            # Notification dispatchers
 │   │   ├── email.js              # Email stub (wired via activityLog)
-│   │   └── whatsapp.js           # WaSenderAPI WhatsApp client (zero new deps)
+│   │   ├── whatsapp.js           # WaSenderAPI WhatsApp client (zero new deps)
+│   │   └── sms.js                # SMS notification stub
 │   ├── queue/                    # FIFO job queue (one Claude session at a time)
 │   ├── runner/                   # Claude CLI spawner + poll scheduler
 │   ├── watchers/                 # Ticket watcher coordination
@@ -653,7 +668,8 @@ Story points = **Complexity + Risk + Repetition** (not hours). Scale: 1 · 2 · 
 │       ├── start.ps1             # Start server in background (Windows — PowerShell)
 │       ├── stop.ps1              # Stop server by PID (Windows — PowerShell)
 │       ├── start.cmd             # Start server (Windows — CMD / double-click wrapper)
-│       └── stop.cmd              # Stop server (Windows — CMD / double-click wrapper)
+│       ├── stop.cmd              # Stop server (Windows — CMD / double-click wrapper)
+│       └── ensure-qpdf.js        # Checks and installs qpdf for PDF password protection
 ├── docs/
 │   └── prevoyant-server.md       # Full Prevoyant Server documentation
 ├── scripts/
