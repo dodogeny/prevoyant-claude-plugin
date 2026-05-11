@@ -118,6 +118,68 @@ X-Hermes-Secret: <PRX_HERMES_SECRET>
   "review_url": "/dashboard/hermes-insights" }
 ```
 
+### **YOU are the judge — self-validation requirement for AUTO mode**
+
+Prevoyant deliberately does **not** run its own LLM judge. You (Hermes) already have the LLM smarts and the cross-ticket context — asking a separate Claude call to second-guess you would be redundant. Instead, you self-score every insight before posting and Prevoyant trusts your assessment, **verified by a cheap heuristic sanity check** so a buggy or hallucinating Hermes can't silently poison the KB.
+
+#### Required self-validation rubric
+
+Before posting, score the candidate insight on **five criteria, 0–2 each** (total 0–10):
+
+| Criterion | 0 | 1 | 2 |
+|---|---|---|---|
+| **Specificity** | Generic platitude | Names a system but is vague | Names a concrete pattern with technical detail |
+| **Evidence** | Pure speculation | One ticket cited but loosely | ≥ 3 tickets cited with clear pattern |
+| **Actionability** | Vague philosophy | Suggests direction but no steps | A developer could act on this tomorrow |
+| **Originality** | Restates ticket descriptions | Slightly more than what tickets say | Says something a careful reader of the linked tickets wouldn't already know |
+| **Clarity** | Confused / rambling | Readable but unstructured | Clear, organized, no hallucinated specifics |
+
+**Threshold:** only POST when your total self-score is **≥ 7**. If you can't get to 7, the insight isn't yet worth submitting — keep observing, gather more evidence, or skip it. **Don't lower your bar to push something through.**
+
+#### Include the assessment in the POST payload
+
+Add a `self_assessment` field to every POST:
+
+```json
+{
+  "title":    "Recurring Redis auth failure pattern",
+  "body":     "...",
+  "tickets":  ["PROJ-1234", "PROJ-1456", "PROJ-2003"],
+  "category": "bug-pattern",
+  "tags":     ["redis", "auth"],
+  "confidence": "high",
+  "self_assessment": {
+    "score":    9,
+    "criteria": {
+      "specificity":  2,
+      "evidence":     2,
+      "actionability": 2,
+      "originality":  2,
+      "clarity":      1
+    },
+    "reason": "Cites 5 tickets sharing same WRONGPASS error, links to specific commit, recommends pinning previous tag. Clarity docked 1 for compressed action section."
+  }
+}
+```
+
+The `reason` field is what gets shown to a human reviewer if the heuristic disagrees with you — make it useful.
+
+#### How Prevoyant uses your self-assessment
+
+A cheap heuristic on Prevoyant's side runs in parallel (no extra LLM call). The two scores are compared:
+
+| Your score | Heuristic score | Verdict |
+|:---:|:---:|---|
+| ≥ 7 | ≥ 4 | **approve** — both confident |
+| ≥ 7 | ≤ 3 | **pending** — you say good, heuristic says weak; human breaks tie |
+| 4–6 | any | **pending** — you yourself flagged uncertainty |
+| ≤ 3 | any | **reject** — you shouldn't have posted at all |
+| missing | ≥ 8 | **approve** — heuristic alone is strong (transition path) |
+| missing | ≤ 1 | **reject** — heuristic alone is damning |
+| missing | else | **pending** |
+
+If the heuristic flips your verdict, **frontmatter records both scores plus your reason** so the reviewer can see exactly where you and the heuristic disagreed.
+
 ### Lifecycle — three modes
 
 The response `status` field tells you what happened. The exact behaviour depends on the operator's `PRX_HERMES_KB_WRITEBACK_ENABLED` setting:
@@ -125,16 +187,16 @@ The response `status` field tells you what happened. The exact behaviour depends
 | Mode | What happens on POST | Response `status` |
 |---|---|---|
 | `N` | Endpoint returns 403. Don't retry. | (HTTP 403, `error: "disabled"`) |
-| `AUTO` (default) | Insight is written to `pending/`, then an AI judge (Claude Haiku 4.5 or a heuristic fallback) scores it on specificity, evidence, actionability, originality, clarity. Score ≥ 7 → auto-approved + indexed. Score ≤ 3 → auto-rejected. In between → left in `pending/` for human review. | `"approved"`, `"rejected"`, or `"pending_review"` |
-| `Y` | Insight is written to `pending/` regardless of quality. Only a human can promote it. | `"pending_review"` |
+| `AUTO` (default) | Insight is written to `pending/`, then the verdict matrix above runs. Approves immediately index; rejects move to `rejected/`; pending stays for human review. | `"approved"`, `"rejected"`, or `"pending_review"` |
+| `Y` | Insight is written to `pending/` regardless of your self-score. Only a human can promote it. | `"pending_review"` |
 
-**Approved** insights immediately become retrievable context for future Claude Code dev/review/estimate runs (the memory indexer re-runs right after promotion). Frontmatter records full provenance: `state`, `reviewer`, `auto_approved` / `auto_rejected`, `validator_score`, `validator_reason`.
+**Approved** insights immediately become retrievable context for future Claude Code dev/review/estimate runs (the memory indexer re-runs right after promotion). Frontmatter records full provenance: `state`, `reviewer`, `auto_approved` / `auto_rejected`, `self_score`, `heuristic_score`, `self_reason`.
 
-**Rejected** insights are never indexed. They're kept for 30 days under `rejected/` for audit, then auto-pruned. If your insight comes back rejected with a reason, treat the reason as a signal — don't re-POST the same observation without new evidence.
+**Rejected** insights are never indexed. They're kept for 30 days under `rejected/` for audit, then auto-pruned. If your insight comes back rejected, treat that as a signal — don't re-POST the same observation without new evidence.
 
 **Pending** insights are awaiting human review at `/dashboard/hermes-insights`. Don't re-POST the same insight if it shows `"status": "pending_review"` — it's already on the queue.
 
-Always use this endpoint instead of writing files directly — it gates by env, validates schema, invokes the AI judge, and writes the activity-log entry.
+Always use this endpoint instead of writing files directly — it gates by env, validates schema, runs the verdict matrix, and writes the activity-log entry.
 
 **When to send an insight (suggested heuristics):**
 - You've seen ≥3 tickets in the last 30 days share the same root cause → `bug-pattern`.

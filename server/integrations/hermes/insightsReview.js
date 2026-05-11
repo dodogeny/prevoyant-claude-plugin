@@ -66,15 +66,18 @@ function yamlScalar(s) {
 
 function renderFile(meta, body) {
   const lines = ['---', 'source: hermes', `state: ${meta.state || 'pending'}`];
-  if (meta.recorded_at)   lines.push(`recorded_at: ${meta.recorded_at}`);
-  if (meta.category)      lines.push(`category: ${yamlScalar(meta.category)}`);
-  if (meta.confidence)    lines.push(`confidence: ${meta.confidence}`);
+  if (meta.recorded_at)        lines.push(`recorded_at: ${meta.recorded_at}`);
+  if (meta.category)           lines.push(`category: ${yamlScalar(meta.category)}`);
+  if (meta.confidence)         lines.push(`confidence: ${meta.confidence}`);
   if (Array.isArray(meta.tickets) && meta.tickets.length) lines.push(`tickets: [${meta.tickets.join(', ')}]`);
   if (Array.isArray(meta.tags)    && meta.tags.length)    lines.push(`tags: [${meta.tags.map(yamlScalar).join(', ')}]`);
-  if (meta.reviewed_at)   lines.push(`reviewed_at: ${meta.reviewed_at}`);
-  if (meta.reviewer)      lines.push(`reviewer: ${yamlScalar(meta.reviewer)}`);
-  if (meta.reject_reason) lines.push(`reject_reason: ${yamlScalar(meta.reject_reason)}`);
-  if (meta.edited)        lines.push(`edited: true`);
+  if (meta.reviewed_at)        lines.push(`reviewed_at: ${meta.reviewed_at}`);
+  if (meta.reviewer)           lines.push(`reviewer: ${yamlScalar(meta.reviewer)}`);
+  if (meta.self_score != null)        lines.push(`self_score: ${meta.self_score}`);
+  if (meta.heuristic_score != null)   lines.push(`heuristic_score: ${meta.heuristic_score}`);
+  if (meta.self_reason)        lines.push(`self_reason: ${yamlScalar(meta.self_reason)}`);
+  if (meta.reject_reason)      lines.push(`reject_reason: ${yamlScalar(meta.reject_reason)}`);
+  if (meta.edited)             lines.push(`edited: true`);
   lines.push('---', '', `# ${meta.title || 'Untitled insight'}`, '', body.trim(), '');
   return lines.join('\n');
 }
@@ -214,8 +217,9 @@ function autoApprove(filename, validatorResult) {
     reviewed_at:     new Date().toISOString(),
     reviewer:        validatorResult.validator || 'auto',
     auto_approved:   true,
-    validator_score: validatorResult.score,
-    validator_reason: validatorResult.reason,
+    self_score:      validatorResult.self_score,
+    heuristic_score: validatorResult.heuristic_score,
+    self_reason:     validatorResult.reason,
   };
   const dest = path.join(dirFor('approved'), filename);
   try {
@@ -238,7 +242,8 @@ function autoReject(filename, validatorResult) {
     reviewed_at:      new Date().toISOString(),
     reviewer:         validatorResult.validator || 'auto',
     auto_rejected:    true,
-    validator_score:  validatorResult.score,
+    self_score:       validatorResult.self_score,
+    heuristic_score:  validatorResult.heuristic_score,
     reject_reason:    (validatorResult.reason || 'auto-rejected').slice(0, 500),
   };
   const dest = path.join(dirFor('rejected'), filename);

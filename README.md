@@ -1189,36 +1189,35 @@ Hermes is uniquely positioned to spot cross-ticket patterns ("5 tickets this for
   "title":      "Recurring Redis auth failure pattern",
   "body":       "Markdown body, ≤ 16 KB. Describe the pattern, root cause, recommended action.",
   "tickets":    ["PROJ-1234", "PROJ-1456", "PROJ-2003"],
-  "category":   "bug-pattern",     // bug-pattern | lesson | playbook | warning | insight
+  "category":   "bug-pattern",
   "tags":       ["redis", "auth"],
-  "confidence": "high"             // optional: low | medium | high
+  "confidence": "high",
+
+  "self_assessment": {
+    "score":    9,
+    "criteria": { "specificity": 2, "evidence": 2, "actionability": 2, "originality": 2, "clarity": 1 },
+    "reason":   "Cites 5 tickets sharing same WRONGPASS error; links specific commit; recommends pinning previous tag. Clarity docked 1 for compressed action section."
+  }
 }
 ```
 
-Authentication: `X-Hermes-Secret: <PRX_HERMES_SECRET>` header. Schema validation enforced server-side (title ≤ 200 chars, body ≤ 16 KB, ≤ 50 tickets, ≤ 20 tags).
+Authentication: `X-Hermes-Secret: <PRX_HERMES_SECRET>` header. Schema validation enforced server-side (title ≤ 200 chars, body ≤ 16 KB, ≤ 50 tickets, ≤ 20 tags, `self_assessment.score` ∈ 0–10).
 
 #### Three operating modes — `PRX_HERMES_KB_WRITEBACK_ENABLED`
 
 | Mode | What happens to an insight | When to pick this |
 |---|---|---|
 | **`N`** | Endpoint returns `403 {error: "disabled"}`. | You don't want Hermes touching the KB. |
-| **`AUTO`** *(default)* | Insight is written to `pending/`, then an **AI judge** scores it on five criteria (0–2 each, max 10). **Score ≥ 7** → auto-approved + immediately indexed. **Score ≤ 3** → auto-rejected with reason. **Score 4–6** → left in `pending/` for human review. | Default; trust the AI judge to filter obvious garbage but let you intervene on borderline cases. |
-| **`Y`** | Insight goes straight to `pending/` regardless of quality. Every promotion requires a human click on the review page. | You don't trust the AI judge yet, or you're auditing what Hermes is sending in week 1. |
+| **`AUTO`** *(default)* | Hermes is the judge per the deployed SKILL.md (self-score ≥ 7 → POST; otherwise don't). Prevoyant runs a heuristic alongside as a sanity check. Both confident → auto-approved + indexed. Both reject → auto-rejected. They disagree → kicked to `pending/` for human review. | Default. Trust Hermes's self-judgement, verified by a cheap structural sanity check. |
+| **`Y`** | Insight goes straight to `pending/` regardless of self-score. Every promotion requires a human click on the review page. | You don't trust Hermes's self-judgement yet, or you're auditing what it sends in week 1. |
 
 The endpoint is **only registered when `PRX_HERMES_ENABLED=Y`** — without Hermes enabled, the route doesn't exist at all.
 
-#### How the AUTO-mode AI judge works
+#### How the AUTO-mode verdict works
 
-The validator (`server/integrations/hermes/insightsValidator.js`) does two things in sequence:
+**Hermes is the judge.** It's already an LLM with cross-ticket context; spawning a second LLM call from Prevoyant to second-guess it would be redundant. Instead, the deployed `SKILL.md` (auto-installed to `~/.hermes/skills/prevoyant/SKILL.md` on every server start) encodes the validation rubric and the contract: Hermes must self-score each insight 0–10 across five criteria and only POST when its self-score is ≥ 7.
 
-**1. Heuristic scoring (always runs first).** Pure rule-based scoring on five signals:
-- **Body length** — between 300 and 8 000 chars scores 2; 150–12 000 scores 1; outside that scores 0.
-- **Title quality** — ≥ 15 chars and not generic ("insight", "note", "untitled" etc.) scores 2; short or generic scores 0–1.
-- **Ticket references** — ≥ 3 tickets scores 2; 1–2 scores 1; none scores 0.
-- **Structure** — multi-line body with headers or bullet lists scores 2; flat prose scores 0.
-- **Specificity signals** — code spans, file paths, version numbers, or ticket-key mentions in the body score 2; none scores 0.
-
-**2. Claude judge (overrides heuristic when available).** If `ANTHROPIC_API_KEY` is set in your environment, the same insight is sent to **Claude Haiku 4.5** (`claude-haiku-4-5-20251001`) with a strict editor system prompt scoring on five different criteria (0–2 each):
+**The five self-scoring criteria** (each 0–2):
 
 1. **Specificity** — Does it name a concrete pattern with technical detail? Generic platitudes score 0.
 2. **Evidence** — Does it reference real tickets or observable signals? Pure speculation scores 0.
@@ -1226,30 +1225,37 @@ The validator (`server/integrations/hermes/insightsValidator.js`) does two thing
 4. **Originality** — Does it say something a careful reader of the linked tickets wouldn't already know? Restating ticket descriptions scores 0.
 5. **Clarity** — Is the writing clear, organized, and free of hallucinated specifics? Confused or rambling text scores 0.
 
-Claude returns `{"decision": "approve"|"pending"|"reject", "score": N, "reason": "<≤200 chars>", "criteria": {…}}`. If parsing fails, the request times out (10 s), or the API errors, the validator silently falls back to the heuristic verdict.
+**Prevoyant's heuristic sanity check** (lives in `server/integrations/hermes/insightsValidator.js`) — pure rule-based scoring on five **structural** signals so a buggy / hallucinating Hermes can't silently poison the KB:
 
-**Thresholds (same for both validators):** ≥ 7 → approve, ≤ 3 → reject, 4–6 → pending. Conservative by design — when in doubt, escalate to a human, never silently drop.
+- **Body length** — between 300 and 8 000 chars scores 2; 150–12 000 scores 1; outside that scores 0.
+- **Title quality** — ≥ 15 chars and not generic scores 2; short or generic scores 0–1.
+- **Ticket references** — ≥ 3 tickets scores 2; 1–2 scores 1; none scores 0.
+- **Structure** — multi-line body with headers or bullet lists scores 2; flat prose scores 0.
+- **Specificity signals** — code spans, file paths, version numbers, or ticket-key mentions score 2; none scores 0.
+
+**The verdict matrix** (combining Hermes's self-score and Prevoyant's heuristic):
+
+| Hermes self | Heuristic | Verdict | Why |
+|:---:|:---:|---|---|
+| ≥ 7 | ≥ 4 | **approve** | Both confident — auto-approve and index |
+| ≥ 7 | ≤ 3 | **pending** | Hermes confident but structure looks weak; human breaks tie |
+| 4–6 | any | **pending** | Hermes itself flagged uncertainty; queue for human |
+| ≤ 3 | any | **reject** | Hermes shouldn't have posted at all |
+| missing | ≥ 8 | **approve** | Hermes skipped the contract; heuristic alone is strong |
+| missing | ≤ 1 | **reject** | Heuristic alone is damning |
+| missing | else | **pending** | No self-score, ambiguous structure — human reviews |
+
+This is conservative by design — when in doubt, escalate to a human, never silently drop. No external API call, no `ANTHROPIC_API_KEY` required.
 
 #### Where decisions are recorded
 
 Every state transition is durable and auditable:
 
-- **Files** — frontmatter on the saved markdown records `state`, `reviewed_at`, `reviewer` (`claude-haiku-4-5` or `heuristic` for AUTO; `dashboard` for human reviews), `auto_approved` / `auto_rejected`, `validator_score`, `validator_reason`.
+- **Files** — frontmatter on the saved markdown records `state`, `reviewed_at`, `reviewer` (`hermes-self+heuristic`, `hermes-self`, `heuristic-only`, or `dashboard` for human reviews), `auto_approved` / `auto_rejected`, `self_score`, `heuristic_score`, `self_reason`.
 - **Activity log** — `hermes_kb_insight` (initial POST), `hermes_kb_insight_auto_approved`, `hermes_kb_insight_auto_rejected`, `hermes_kb_insight_approved` (human), `hermes_kb_insight_rejected` (human). Visible on `/dashboard/activity`.
-- **POST response** — Hermes immediately knows the verdict from `status` (`approved` / `rejected` / `pending_review`), so it can adjust its behaviour (e.g. don't re-POST the same observation if rejected).
+- **POST response** — Hermes immediately knows the verdict from `status` (`approved` / `rejected` / `pending_review`), with both `self_score` and `heuristic_score` echoed back so it can self-correct (e.g. don't re-POST the same observation if rejected).
 
 Rejected files are kept for **30 days** in `<KB>/hermes-insights/rejected/` for audit, then auto-pruned. Approved files live permanently in `<KB>/hermes-insights/approved/`.
-
-#### Bring-your-own API key
-
-To enable the Claude judge instead of falling back to the heuristic:
-
-```bash
-# in .env
-ANTHROPIC_API_KEY=sk-ant-api03-…   # your regular API key, not the admin key
-```
-
-No key configured → heuristic only. The dashboard doesn't require this; it's purely a quality upgrade for the AUTO path. Cost is negligible (Haiku 4.5 is ~$0.001 per insight). The validator caps the call at 10 s with `windowsHide` semantics; if Anthropic is down or slow, you fall through to heuristic + pending — no insight is ever lost.
 
 #### Reviewing pending insights
 
@@ -1270,28 +1276,33 @@ echo 'PRX_HERMES_ENABLED=Y'                  >> .env
 echo 'PRX_HERMES_KB_WRITEBACK_ENABLED=AUTO'  >> .env
 echo 'PRX_HERMES_SECRET=test-secret'         >> .env
 
-# 2. POST a deliberately weak insight (should be rejected by heuristic).
+# 2. POST a weak insight WITHOUT self_assessment — heuristic catches it.
 curl -sS -X POST http://localhost:3000/internal/kb/insights \
   -H "Content-Type: application/json" \
   -H "X-Hermes-Secret: test-secret" \
   -d '{"title":"insight","body":"things happened","category":"insight"}'
-# → {"status":"rejected","mode":"AUTO","validator":"heuristic","score":0,"reason":"Heuristic: …"}
+# → {"status":"rejected","mode":"AUTO","validator":"heuristic-only","self_score":null,"heuristic_score":0, …}
 
-# 3. POST a strong insight (should be approved).
+# 3. POST a strong insight WITH self_assessment — both layers agree, auto-approved.
 curl -sS -X POST http://localhost:3000/internal/kb/insights \
   -H "Content-Type: application/json" \
   -H "X-Hermes-Secret: test-secret" \
   -d @- <<'EOF'
 {
   "title": "Recurring Redis auth failure on Upstash after May 8 image bump",
-  "body": "## What we see\n\nFive tickets (PROJ-1234, PROJ-1456, PROJ-2003, PROJ-2200, PROJ-2241) all show `WRONGPASS invalid username-password pair` on the redis-memory worker at startup, beginning 2026-05-08.\n\n## Root cause\n\nUpstash rolled out a new redis image (`redis:7.2.5-r2`) that requires a different auth handshake. Existing `PRX_UPSTASH_REDIS_TOKEN` values still work for new connections but the worker's connection pool caches the old protocol.\n\n## Recommended action\n\nPin to the previous tag in `server/memory/redisMemory.js` connection options until upstream patches.",
+  "body": "## What we see\n\nFive tickets (PROJ-1234, PROJ-1456, PROJ-2003, PROJ-2200, PROJ-2241) all show `WRONGPASS invalid username-password pair` on the redis-memory worker at startup, beginning 2026-05-08.\n\n## Root cause\n\nUpstash rolled out a new redis image (`redis:7.2.5-r2`) that requires a different auth handshake.\n\n## Recommended action\n\nPin to the previous tag in `server/memory/redisMemory.js` until upstream patches.",
   "tickets": ["PROJ-1234", "PROJ-1456", "PROJ-2003", "PROJ-2200", "PROJ-2241"],
   "category": "bug-pattern",
   "tags": ["redis", "auth", "upstash"],
-  "confidence": "high"
+  "confidence": "high",
+  "self_assessment": {
+    "score": 9,
+    "criteria": { "specificity": 2, "evidence": 2, "actionability": 2, "originality": 2, "clarity": 1 },
+    "reason": "5 tickets sharing WRONGPASS error; specific image tag named; clear action."
+  }
 }
 EOF
-# → {"status":"approved","mode":"AUTO","validator":"heuristic","score":10,"reason":"Heuristic: passed all checks"}
+# → {"status":"approved","mode":"AUTO","validator":"hermes-self+heuristic","self_score":9,"heuristic_score":10, …}
 ```
 
 The approved insight is now at `~/.prevoyant/knowledge-base/hermes-insights/approved/<date>-<slug>-<id>.md` and the memory index has been refreshed.

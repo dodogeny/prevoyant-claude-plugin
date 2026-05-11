@@ -93,10 +93,34 @@ function validate(body) {
     ? body.confidence.toLowerCase()
     : null;
 
+  // self_assessment is OPTIONAL but recommended (Hermes provides it per SKILL.md).
+  // When absent, the validator falls back to heuristic-only.
+  let self_assessment = null;
+  if (body.self_assessment && typeof body.self_assessment === 'object') {
+    const sa = body.self_assessment;
+    const score = Number(sa.score);
+    if (Number.isFinite(score) && score >= 0 && score <= 10) {
+      const criteria = {};
+      if (sa.criteria && typeof sa.criteria === 'object') {
+        for (const k of ['specificity','evidence','actionability','originality','clarity']) {
+          const v = Number(sa.criteria[k]);
+          if (Number.isFinite(v) && v >= 0 && v <= 2) criteria[k] = v;
+        }
+      }
+      self_assessment = {
+        score,
+        criteria,
+        reason: typeof sa.reason === 'string' ? sa.reason.slice(0, 500) : '',
+      };
+    } else {
+      errors.push('self_assessment.score must be a number 0–10');
+    }
+  }
+
   if (errors.length) return { ok: false, errors };
   return {
     ok: true,
-    cleaned: { title, body: text, tickets, tags: tags.map(String), category, confidence },
+    cleaned: { title, body: text, tickets, tags: tags.map(String), category, confidence, self_assessment },
   };
 }
 
@@ -188,18 +212,17 @@ router.post('/', express.json({ limit: '256kb' }), async (req, res) => {
     });
   }
 
-  // AUTO mode
+  // AUTO mode — verdict matrix on Hermes's self-score vs cheap heuristic.
   let verdict;
   try {
-    const validator = require('../insightsValidator');
-    verdict = await validator.validate(insight);
+    verdict = require('../insightsValidator').validate(insight);
   } catch (err) {
     console.warn('[hermes/kb-insights] Validator threw — leaving in pending/:', err.message);
     return res.status(201).json({
       status:     'pending_review',
       file:       filename,
       mode:       'AUTO',
-      reason:     'validator unavailable — kicked to human review',
+      reason:     'validator threw — kicked to human review',
       review_url: '/dashboard/hermes-insights',
     });
   }
@@ -212,13 +235,16 @@ router.post('/', express.json({ limit: '256kb' }), async (req, res) => {
       return res.status(500).json({ error: 'auto_approve_failed', reason: r.error });
     }
     activityLog.record('hermes_kb_insight_auto_approved', null, 'system', {
-      file: filename, validator: verdict.validator, score: verdict.score, title: insight.title.slice(0, 80),
+      file: filename, validator: verdict.validator,
+      self_score: verdict.self_score, heuristic_score: verdict.heuristic_score,
+      title: insight.title.slice(0, 80),
     });
     setImmediate(() => { try { require('../../../memory/memoryAdapter').indexAllNew(); } catch {} });
-    console.log(`[hermes/kb-insights] AUTO-approved (${verdict.validator}, score ${verdict.score}) → ${filename}`);
+    console.log(`[hermes/kb-insights] AUTO-approved (self=${verdict.self_score}, heur=${verdict.heuristic_score}) → ${filename}`);
     return res.status(201).json({
       status: 'approved', mode: 'AUTO', file: filename,
-      validator: verdict.validator, score: verdict.score, reason: verdict.reason,
+      validator: verdict.validator, self_score: verdict.self_score, heuristic_score: verdict.heuristic_score,
+      reason: verdict.reason,
     });
   }
 
@@ -226,25 +252,28 @@ router.post('/', express.json({ limit: '256kb' }), async (req, res) => {
     const r = review.autoReject(filename, verdict);
     if (!r.ok) return res.status(500).json({ error: 'auto_reject_failed', reason: r.error });
     activityLog.record('hermes_kb_insight_auto_rejected', null, 'system', {
-      file: filename, validator: verdict.validator, score: verdict.score, reason: verdict.reason,
+      file: filename, validator: verdict.validator,
+      self_score: verdict.self_score, heuristic_score: verdict.heuristic_score, reason: verdict.reason,
     });
-    console.log(`[hermes/kb-insights] AUTO-rejected (${verdict.validator}, score ${verdict.score}) → ${filename}: ${verdict.reason}`);
+    console.log(`[hermes/kb-insights] AUTO-rejected (self=${verdict.self_score}, heur=${verdict.heuristic_score}) → ${filename}: ${verdict.reason}`);
     return res.status(201).json({
       status: 'rejected', mode: 'AUTO', file: filename,
-      validator: verdict.validator, score: verdict.score, reason: verdict.reason,
+      validator: verdict.validator, self_score: verdict.self_score, heuristic_score: verdict.heuristic_score,
+      reason: verdict.reason,
     });
   }
 
-  // verdict.decision === 'pending' — uncertain, leave for human.
-  console.log(`[hermes/kb-insights] AUTO uncertain (${verdict.validator}, score ${verdict.score}) → ${filename}`);
+  // verdict.decision === 'pending' — uncertain or disagreement, leave for human.
+  console.log(`[hermes/kb-insights] AUTO pending (self=${verdict.self_score}, heur=${verdict.heuristic_score}) → ${filename}`);
   return res.status(201).json({
-    status:     'pending_review',
-    file:       filename,
-    mode:       'AUTO',
-    validator:  verdict.validator,
-    score:      verdict.score,
-    reason:     verdict.reason,
-    review_url: '/dashboard/hermes-insights',
+    status:          'pending_review',
+    file:            filename,
+    mode:            'AUTO',
+    validator:       verdict.validator,
+    self_score:      verdict.self_score,
+    heuristic_score: verdict.heuristic_score,
+    reason:          verdict.reason,
+    review_url:      '/dashboard/hermes-insights',
   });
 });
 
