@@ -158,7 +158,82 @@ function indexSession(ticketKey, { components = [], labels = [] } = {}) {
   return added;
 }
 
-function indexAllNew() { return indexSession(null); }
+// Walk <KB>/hermes-insights/approved/ and index each approved insight as a
+// 'learning' entry. Frontmatter is parsed inline to avoid pulling the heavier
+// reviewer module into the memory layer. Skipped when KB is in distributed mode
+// without a key (mirrors indexSession's guard).
+function indexHermesInsights() {
+  if (!isEnabled()) return 0;
+  if ((process.env.PRX_KB_MODE || 'local') === 'distributed' && process.env.PRX_KB_KEY) return 0;
+
+  const dir = path.join(kbBaseDir(), 'hermes-insights', 'approved');
+  let files;
+  try { files = fs.readdirSync(dir); } catch { return 0; }
+
+  const data = loadIndex();
+  let added = 0;
+
+  for (const file of files) {
+    if (!file.endsWith('.md')) continue;
+    const idKey = `hermes-insight__${file.slice(0, -3)}`;
+    if (data.indexed[idKey]) continue;
+
+    let text;
+    try { text = fs.readFileSync(path.join(dir, file), 'utf8'); }
+    catch { continue; }
+
+    // Minimal frontmatter parse — same shape as insightsReview.js writes.
+    const fmMatch = text.match(/^---\n([\s\S]*?)\n---\n?/);
+    if (!fmMatch) continue;
+    const fm = {};
+    for (const line of fmMatch[1].split('\n')) {
+      const i = line.indexOf(':');
+      if (i < 0) continue;
+      const key = line.slice(0, i).trim();
+      let val = line.slice(i + 1).trim();
+      if (val.startsWith('[') && val.endsWith(']')) {
+        val = val.slice(1, -1).split(',').map(s => s.trim().replace(/^["']|["']$/g, '')).filter(Boolean);
+      } else if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
+        val = val.slice(1, -1);
+      }
+      fm[key] = val;
+    }
+    const body = text.slice(fmMatch[0].length).trim();
+    const titleMatch = body.match(/^#\s+(.+)\n+/);
+    const title = titleMatch ? titleMatch[1].trim() : 'Untitled';
+    const content = (titleMatch ? body.slice(titleMatch[0].length) : body).trim();
+    const tickets = Array.isArray(fm.tickets) ? fm.tickets : (fm.tickets ? [fm.tickets] : []);
+    const tags    = Array.isArray(fm.tags)    ? fm.tags    : (fm.tags    ? [fm.tags]    : []);
+    const date    = (file.match(/^(\d{4})-(\d{2})-(\d{2})/) || []).slice(1).join('') || '';
+
+    data.learnings.push({
+      id:         idKey,
+      agent:      'hermes',
+      ticketKey:  tickets[0] || 'cross-ticket',
+      date,
+      content:    `**${title}**\n\n${content}`.slice(0, 4000),
+      category:   (fm.category || 'insight').toUpperCase(),
+      confidence: (fm.confidence || 'Medium').replace(/^./, c => c.toUpperCase()),
+      outcome:    '',
+      type:       'learning',
+      components: [],
+      labels:     tags.map(String).map(t => t.toLowerCase()),
+      tickets,
+    });
+
+    data.indexed[idKey] = true;
+    added++;
+  }
+
+  if (added > 0) { _dirty = true; saveIndex(); }
+  return added;
+}
+
+function indexAllNew() {
+  let n = indexSession(null);
+  try { n += indexHermesInsights(); } catch (err) { console.warn('[jsonMemory] indexHermesInsights failed:', err.message); }
+  return n;
+}
 
 // ── Query ──────────────────────────────────────────────────────────────────────
 
@@ -254,4 +329,4 @@ function ensureKbEntry() {
   } catch (_) {}
 }
 
-module.exports = { isEnabled, indexSession, indexAllNew, query, stats, ensureKbEntry };
+module.exports = { isEnabled, indexSession, indexAllNew, indexHermesInsights, query, stats, ensureKbEntry };

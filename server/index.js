@@ -44,6 +44,7 @@ if (!config.hermesEnabled) {
 } else {
   app.use('/internal/enqueue',             require('./integrations/hermes/routes/enqueue'));
   app.use('/internal/jobs/recent-results', require('./integrations/hermes/routes/results'));
+  app.use('/internal/kb/insights',         require('./integrations/hermes/routes/kbInsights'));
 }
 
 // ── Health-monitor watchdog (worker thread) ───────────────────────────────────

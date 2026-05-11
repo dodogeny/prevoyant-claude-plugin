@@ -11,6 +11,12 @@ module.exports = {
   hermesSecret: process.env.PRX_HERMES_SECRET || '',
   hermesGatewayUrl: process.env.PRX_HERMES_GATEWAY_URL || 'http://localhost:8080',
   hermesJiraWriteback: process.env.PRX_HERMES_JIRA_WRITEBACK === 'Y',
+  // Tri-state: 'N' | 'AUTO' (default) | 'Y'. Anything unset → AUTO.
+  hermesKbWriteback: (process.env.PRX_HERMES_KB_WRITEBACK_ENABLED || 'AUTO').toUpperCase() === 'N'
+    ? 'N'
+    : (process.env.PRX_HERMES_KB_WRITEBACK_ENABLED || 'AUTO').toUpperCase() === 'Y'
+      ? 'Y'
+      : 'AUTO',
   telegramEnabled: process.env.PRX_TELEGRAM_ENABLED === 'Y',
   telegramBotToken: process.env.PRX_TELEGRAM_BOT_TOKEN || '',
   telegramChatId: process.env.PRX_TELEGRAM_CHAT_ID || '',

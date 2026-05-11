@@ -1174,6 +1174,166 @@ This is the difference Hermes makes: **Prevoyant runs the analysis, Hermes orche
 
 You can also run both **with separate bots** — one Telegram bot for `PRX_TELEGRAM_*` (Prevoyant's deterministic surface, e.g. for CI scripts that POST exact commands), and a different bot Hermes owns for the human-facing channel. They never collide because they have different tokens, so `getUpdates` on each is independent.
 
+---
+
+### Hermes can contribute to the KB (`POST /internal/kb/insights`)
+
+Hermes is uniquely positioned to spot cross-ticket patterns ("5 tickets this fortnight share the same Redis auth failure"). This endpoint lets Hermes propose those observations back to Prevoyant's knowledge base — with a validation gate so bad contributions don't pollute the KB.
+
+#### What the endpoint does
+
+`POST /internal/kb/insights` (registered only when `PRX_HERMES_ENABLED=Y`) accepts a JSON insight from Hermes:
+
+```json
+{
+  "title":      "Recurring Redis auth failure pattern",
+  "body":       "Markdown body, ≤ 16 KB. Describe the pattern, root cause, recommended action.",
+  "tickets":    ["PROJ-1234", "PROJ-1456", "PROJ-2003"],
+  "category":   "bug-pattern",     // bug-pattern | lesson | playbook | warning | insight
+  "tags":       ["redis", "auth"],
+  "confidence": "high"             // optional: low | medium | high
+}
+```
+
+Authentication: `X-Hermes-Secret: <PRX_HERMES_SECRET>` header. Schema validation enforced server-side (title ≤ 200 chars, body ≤ 16 KB, ≤ 50 tickets, ≤ 20 tags).
+
+#### Three operating modes — `PRX_HERMES_KB_WRITEBACK_ENABLED`
+
+| Mode | What happens to an insight | When to pick this |
+|---|---|---|
+| **`N`** | Endpoint returns `403 {error: "disabled"}`. | You don't want Hermes touching the KB. |
+| **`AUTO`** *(default)* | Insight is written to `pending/`, then an **AI judge** scores it on five criteria (0–2 each, max 10). **Score ≥ 7** → auto-approved + immediately indexed. **Score ≤ 3** → auto-rejected with reason. **Score 4–6** → left in `pending/` for human review. | Default; trust the AI judge to filter obvious garbage but let you intervene on borderline cases. |
+| **`Y`** | Insight goes straight to `pending/` regardless of quality. Every promotion requires a human click on the review page. | You don't trust the AI judge yet, or you're auditing what Hermes is sending in week 1. |
+
+The endpoint is **only registered when `PRX_HERMES_ENABLED=Y`** — without Hermes enabled, the route doesn't exist at all.
+
+#### How the AUTO-mode AI judge works
+
+The validator (`server/integrations/hermes/insightsValidator.js`) does two things in sequence:
+
+**1. Heuristic scoring (always runs first).** Pure rule-based scoring on five signals:
+- **Body length** — between 300 and 8 000 chars scores 2; 150–12 000 scores 1; outside that scores 0.
+- **Title quality** — ≥ 15 chars and not generic ("insight", "note", "untitled" etc.) scores 2; short or generic scores 0–1.
+- **Ticket references** — ≥ 3 tickets scores 2; 1–2 scores 1; none scores 0.
+- **Structure** — multi-line body with headers or bullet lists scores 2; flat prose scores 0.
+- **Specificity signals** — code spans, file paths, version numbers, or ticket-key mentions in the body score 2; none scores 0.
+
+**2. Claude judge (overrides heuristic when available).** If `ANTHROPIC_API_KEY` is set in your environment, the same insight is sent to **Claude Haiku 4.5** (`claude-haiku-4-5-20251001`) with a strict editor system prompt scoring on five different criteria (0–2 each):
+
+1. **Specificity** — Does it name a concrete pattern with technical detail? Generic platitudes score 0.
+2. **Evidence** — Does it reference real tickets or observable signals? Pure speculation scores 0.
+3. **Actionability** — Could a developer act on this tomorrow? Vague philosophy scores 0.
+4. **Originality** — Does it say something a careful reader of the linked tickets wouldn't already know? Restating ticket descriptions scores 0.
+5. **Clarity** — Is the writing clear, organized, and free of hallucinated specifics? Confused or rambling text scores 0.
+
+Claude returns `{"decision": "approve"|"pending"|"reject", "score": N, "reason": "<≤200 chars>", "criteria": {…}}`. If parsing fails, the request times out (10 s), or the API errors, the validator silently falls back to the heuristic verdict.
+
+**Thresholds (same for both validators):** ≥ 7 → approve, ≤ 3 → reject, 4–6 → pending. Conservative by design — when in doubt, escalate to a human, never silently drop.
+
+#### Where decisions are recorded
+
+Every state transition is durable and auditable:
+
+- **Files** — frontmatter on the saved markdown records `state`, `reviewed_at`, `reviewer` (`claude-haiku-4-5` or `heuristic` for AUTO; `dashboard` for human reviews), `auto_approved` / `auto_rejected`, `validator_score`, `validator_reason`.
+- **Activity log** — `hermes_kb_insight` (initial POST), `hermes_kb_insight_auto_approved`, `hermes_kb_insight_auto_rejected`, `hermes_kb_insight_approved` (human), `hermes_kb_insight_rejected` (human). Visible on `/dashboard/activity`.
+- **POST response** — Hermes immediately knows the verdict from `status` (`approved` / `rejected` / `pending_review`), so it can adjust its behaviour (e.g. don't re-POST the same observation if rejected).
+
+Rejected files are kept for **30 days** in `<KB>/hermes-insights/rejected/` for audit, then auto-pruned. Approved files live permanently in `<KB>/hermes-insights/approved/`.
+
+#### Bring-your-own API key
+
+To enable the Claude judge instead of falling back to the heuristic:
+
+```bash
+# in .env
+ANTHROPIC_API_KEY=sk-ant-api03-…   # your regular API key, not the admin key
+```
+
+No key configured → heuristic only. The dashboard doesn't require this; it's purely a quality upgrade for the AUTO path. Cost is negligible (Haiku 4.5 is ~$0.001 per insight). The validator caps the call at 10 s with `windowsHide` semantics; if Anthropic is down or slow, you fall through to heuristic + pending — no insight is ever lost.
+
+#### Reviewing pending insights
+
+Click the **✎ Review N** badge in the dashboard topbar (only visible when `N` > 0), or navigate to `/dashboard/hermes-insights` directly. Each pending insight shows:
+
+- Title, category, confidence, recorded date
+- Tickets referenced + tags (as code chips)
+- Full body
+- Buttons: **✓ Approve as-is** · **✎ Edit & approve** (inline editor for title / body / category) · **✗ Reject** (with optional ≤ 500-char reason)
+
+Approving triggers an immediate memory-index refresh so the insight starts influencing future Claude Code runs within seconds. Rejecting just moves the file; nothing else changes.
+
+#### Quick smoke test
+
+```bash
+# 1. Enable Hermes mode + writeback, restart server.
+echo 'PRX_HERMES_ENABLED=Y'                  >> .env
+echo 'PRX_HERMES_KB_WRITEBACK_ENABLED=AUTO'  >> .env
+echo 'PRX_HERMES_SECRET=test-secret'         >> .env
+
+# 2. POST a deliberately weak insight (should be rejected by heuristic).
+curl -sS -X POST http://localhost:3000/internal/kb/insights \
+  -H "Content-Type: application/json" \
+  -H "X-Hermes-Secret: test-secret" \
+  -d '{"title":"insight","body":"things happened","category":"insight"}'
+# → {"status":"rejected","mode":"AUTO","validator":"heuristic","score":0,"reason":"Heuristic: …"}
+
+# 3. POST a strong insight (should be approved).
+curl -sS -X POST http://localhost:3000/internal/kb/insights \
+  -H "Content-Type: application/json" \
+  -H "X-Hermes-Secret: test-secret" \
+  -d @- <<'EOF'
+{
+  "title": "Recurring Redis auth failure on Upstash after May 8 image bump",
+  "body": "## What we see\n\nFive tickets (PROJ-1234, PROJ-1456, PROJ-2003, PROJ-2200, PROJ-2241) all show `WRONGPASS invalid username-password pair` on the redis-memory worker at startup, beginning 2026-05-08.\n\n## Root cause\n\nUpstash rolled out a new redis image (`redis:7.2.5-r2`) that requires a different auth handshake. Existing `PRX_UPSTASH_REDIS_TOKEN` values still work for new connections but the worker's connection pool caches the old protocol.\n\n## Recommended action\n\nPin to the previous tag in `server/memory/redisMemory.js` connection options until upstream patches.",
+  "tickets": ["PROJ-1234", "PROJ-1456", "PROJ-2003", "PROJ-2200", "PROJ-2241"],
+  "category": "bug-pattern",
+  "tags": ["redis", "auth", "upstash"],
+  "confidence": "high"
+}
+EOF
+# → {"status":"approved","mode":"AUTO","validator":"heuristic","score":10,"reason":"Heuristic: passed all checks"}
+```
+
+The approved insight is now at `~/.prevoyant/knowledge-base/hermes-insights/approved/<date>-<slug>-<id>.md` and the memory index has been refreshed.
+
+---
+
+### Platform support
+
+| Feature                                          | macOS | Linux | Windows |
+| ------------------------------------------------ | :---: | :---: | :-----: |
+| **Prevoyant server** (Node.js + dashboard)       |   ✅   |   ✅   |    ✅    |
+| **Telegram outbound + inbound** (built-in)       |   ✅   |   ✅   |    ✅    |
+| **Hermes gateway — start / stop / log tail**     |   ✅   |   ✅   |    ✅ once Hermes itself is installed |
+| **Hermes gateway — detect installed / running**  |   ✅   |   ✅   |    ✅ (uses `where` instead of `which`, looks in Windows install dirs, reads `~\.hermes\gateway.pid`) |
+| **Hermes — automatic install**                   |   ✅   |   ✅   |    ❌ — upstream installer is bash. Windows users must install Hermes manually (see below) |
+
+The dashboard now detects the running platform and shows the right install guidance automatically. On Windows you'll see a blue "manual install required" banner instead of the macOS/Linux auto-install banner.
+
+**Windows manual install (three options):**
+
+1. **WSL2 (recommended).** Open Ubuntu/Debian inside WSL and run the standard installer:
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash
+   ```
+
+   Then either run Prevoyant from inside the same WSL distro, or symlink/copy the resulting `hermes` binary into a Windows-visible path.
+
+2. **Git Bash.** Run the same curl command from Git Bash. Requires Python 3.11+ on Windows PATH and `pip` available — Hermes's installer expects these.
+
+3. **Native build.** Clone `NousResearch/hermes-agent`, follow its Windows-specific instructions, and produce `hermes.exe`.
+
+After installing, drop the binary into any of these locations (or anywhere on `PATH`):
+
+- `%LOCALAPPDATA%\Programs\hermes\bin\hermes.exe`
+- `%USERPROFILE%\.hermes\bin\hermes.exe`
+- `%ProgramFiles%\hermes\bin\hermes.exe`
+
+Then click **Recheck** in the Hermes Config page — Prevoyant will pick it up immediately. From that point on the start/stop, log tail, and gateway-status dashboard work identically to macOS/Linux.
+
+> **What you give up on Windows:** the one-click auto-install. Everything else — runtime gateway management, Telegram inbound/outbound, activity log, the `/internal/enqueue` event handoff — works the same.
+
 ### Reverting to standalone
 
 ```bash
@@ -1344,6 +1504,10 @@ rm -rf ~/.prevoyant/reports   # or the path set in CLAUDE_REPORT_DIR
 - **Bi-directional Telegram (slash commands):** Toggle `PRX_TELEGRAM_INBOUND_ENABLED=Y` to make Prevoyant accept commands sent to the bot. Available commands: `/dev <KEY>` queues a dev-mode analysis, `/review <KEY>` queues review mode, `/estimate <KEY>` queues estimate mode, `/status <KEY>` shows the live state of a ticket, `/queue` lists all active+queued tickets, `/help` shows the menu. The listener long-polls Telegram (`getUpdates`, ~25 s wait) and persists its update offset in `~/.prevoyant/telegram-state.json` across restarts. **Auto-disabled when `PRX_HERMES_ENABLED=Y`** — Hermes already owns the chat surface and only one consumer can poll a bot at a time. Only messages from `PRX_TELEGRAM_CHAT_ID` are accepted; others are dropped with a debug log. Inbound listener status (running / stopped / off-due-to-Hermes) is shown live in the Hermes Config page.
 
 - **Hermes gateway lifecycle dashboard:** New dedicated page at `/dashboard/hermes-config` (linked from the topbar's Hermes badge when enabled). Live status pills with coloured pulse dots (CLI installed · Gateway running · Skill deployed), Start/Stop gateway buttons, post-Start verification poll (12 s) that surfaces crashes via toast, and a rolling gateway log panel that tails `~/.hermes/gateway.log` and auto-refreshes every 5 s. Gateway liveness now reads `~/.hermes/gateway.pid` directly instead of relying on `pgrep` (the daemon runs as `python -m hermes_cli.main gateway run`, which the old `pgrep "hermes gateway"` heuristic missed). Stop uses `hermes gateway stop` with a SIGTERM fallback to the recorded PID.
+
+- **Hermes can contribute to the KB — with human review (opt-in):** New endpoint `POST /internal/kb/insights` lets Hermes post cross-ticket observations back to Prevoyant's knowledge base. Gated by `PRX_HERMES_KB_WRITEBACK_ENABLED=Y` (default `N`, endpoint returns `403` until flipped). Validates payload schema: title ≤ 200 chars, markdown body ≤ 16 KB, ≤ 50 referenced tickets, ≤ 20 tags; categories `bug-pattern`, `lesson`, `playbook`, `warning`, `insight`. **Pending → Approved review pipeline:** insights land at `<KB>/hermes-insights/pending/<date>-<slug>.md` and are surfaced on a new dashboard page at `/dashboard/hermes-insights` with **Approve as-is / Edit & approve / Reject** buttons. Approved files move to `<KB>/hermes-insights/approved/` and are immediately re-indexed by the memory layer so future Claude Code dev/review/estimate runs see them as context. Rejected files (optional ≤ 500-char reason) move to `<KB>/hermes-insights/rejected/` for audit and auto-prune after 30 days. The main dashboard topbar gains a yellow "✎ Review N" badge when pending insights exist (polls every 30 s). Toggle from **Dashboard → Hermes Config → Behavior → KB Write-back**.
+
+- **Cross-platform Hermes support:** Hermes lifecycle code now detects platform and uses `where` instead of `which` on Windows, looks for `hermes.exe / .cmd / .bat` in `%LOCALAPPDATA%\Programs\hermes\bin`, `%ProgramFiles%\hermes\bin`, and `%USERPROFILE%\.hermes\bin`, and spawns the gateway with `windowsHide: true` to suppress the console flash. Auto-install is bash-only and now bails cleanly on Windows with a blue install banner pointing to WSL2, Git Bash, or native-build paths. The pid-file-based liveness check, start/stop, log tail, and dashboard work identically across macOS, Linux, and Windows.
 
 ### v1.2.10 — Memory Efficiency, Animated Sun Logo, Backup & Export, Per-agent Personal Memory, KB Flow Analyst
 

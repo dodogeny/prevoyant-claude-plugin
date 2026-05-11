@@ -1063,6 +1063,11 @@ function renderDashboard(stats, budget) {
       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
       <span>Hermes</span>
       <span id="dash-hermes-state" style="opacity:.8;font-weight:500;font-size:.72rem;margin-left:.15rem">· starting…</span>
+    </a>
+    <a id="dash-insights-badge" href="/dashboard/hermes-insights" class="settings-link" title="Hermes KB insights — pending review" style="display:none;background:#fef3c7;border:1px solid #fde68a;color:#92400e;border-radius:8px;padding:3px 9px;font-size:.78rem;font-weight:600;text-decoration:none;align-items:center;gap:.3rem">
+      <span style="font-size:.85rem">✎</span>
+      <span>Review</span>
+      <span id="dash-insights-count" style="background:#fff;border-radius:9px;padding:0 7px;font-size:.7rem">0</span>
     </a>` : ''}
     <div class="refresh-note">
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
@@ -1153,8 +1158,25 @@ function renderDashboard(stats, budget) {
         }).catch(() => {});
       }
 
+      function refreshInsightsCount() {
+        const badge = document.getElementById('dash-insights-badge');
+        if (!badge) return;
+        fetch('/dashboard/api/hermes-insights/counts').then(r => r.json()).then(d => {
+          if (!d.ok) return;
+          const n = (d.counts && d.counts.pending) || 0;
+          if (n > 0) {
+            badge.style.display = 'inline-flex';
+            document.getElementById('dash-insights-count').textContent = n;
+          } else {
+            badge.style.display = 'none';
+          }
+        }).catch(() => {});
+      }
+
       refreshHermesStatus();
+      refreshInsightsCount();
       setInterval(refreshHermesStatus, 10000);
+      setInterval(refreshInsightsCount, 30000);
     })();
   </script>` : ''}
 
@@ -4081,12 +4103,23 @@ function renderSettings(vals, flash) {
 
           <!-- Install guide — shown only when not installed and not installing -->
           <div class="s-field span2" id="hermes-install-guide" style="display:none">
-            <div style="background:#fffbeb;border:1px solid #fbbf24;border-radius:6px;padding:10px 12px;font-size:11px;line-height:1.7;color:#78350f">
+            <div id="hermes-install-unix" style="background:#fffbeb;border:1px solid #fbbf24;border-radius:6px;padding:10px 12px;font-size:11px;line-height:1.7;color:#78350f">
               <strong>Hermes CLI not found.</strong> Enable Hermes and save — Prevoyant will install it automatically.<br>
               Or install manually:<br>
               <code style="display:block;margin:6px 0;padding:5px 8px;background:#fef3c7;border-radius:4px;font-size:11px;word-break:break-all">curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash</code>
               After manual install, run <code>source ~/.bashrc</code> (or <code>~/.zshrc</code>), then click <em>Recheck</em>.
               Full docs: <a href="https://github.com/nousresearch/hermes-agent" target="_blank" style="color:#92400e">github.com/nousresearch/hermes-agent</a>
+            </div>
+            <div id="hermes-install-windows" style="display:none;background:#eff6ff;border:1px solid #93c5fd;border-radius:6px;padding:10px 12px;font-size:11px;line-height:1.7;color:#1e3a8a">
+              <strong>Hermes CLI not found — Windows manual install required.</strong><br>
+              The upstream Hermes installer is a bash script, so auto-install is disabled on Windows.<br>
+              Three supported paths:<br>
+              &nbsp;&nbsp;1. <strong>WSL2</strong> (recommended) — open Ubuntu/Debian and run:
+              <code style="display:block;margin:4px 0;padding:5px 8px;background:#dbeafe;border-radius:4px;font-size:11px;word-break:break-all">curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash</code>
+              &nbsp;&nbsp;2. <strong>Git Bash</strong> — same command, but pip/python must already be on the Windows PATH.<br>
+              &nbsp;&nbsp;3. <strong>Native build</strong> — clone the repo and follow Windows-specific instructions.<br>
+              Then drop the resulting <code>hermes.exe</code> into one of: <code>%LOCALAPPDATA%\\Programs\\hermes\\bin</code>, <code>%USERPROFILE%\\.hermes\\bin</code>, or anywhere on <code>PATH</code>, and click <em>Recheck</em>.<br>
+              Full docs: <a href="https://github.com/nousresearch/hermes-agent" target="_blank" style="color:#1d4ed8">github.com/nousresearch/hermes-agent</a>
             </div>
           </div>
 
@@ -4160,6 +4193,10 @@ function renderSettings(vals, flash) {
           // Show correct banner
           document.getElementById('hermes-installing-guide').style.display = s.installing ? '' : 'none';
           document.getElementById('hermes-install-guide').style.display    = (!s.installed && !s.installing) ? '' : 'none';
+          // Pick Unix vs Windows variant based on the platform reported by the manager.
+          const onWin = s.platform === 'win32';
+          document.getElementById('hermes-install-unix').style.display    = onWin ? 'none' : '';
+          document.getElementById('hermes-install-windows').style.display = onWin ? '' : 'none';
 
           // Summary badge in <summary>
           const sb = document.getElementById('hermes-summary-badge');
@@ -5297,6 +5334,57 @@ router.get('/settings', (_req, res) => {
   res.send(renderSettings(readEnvValues(), _req.query.saved === '1' ? 'saved' : null));
 });
 
+// ── Hermes KB-insight review (Option A pipeline) ─────────────────────────────
+
+router.get('/api/hermes-insights/pending', (_req, res) => {
+  try {
+    const r = require('../integrations/hermes/insightsReview');
+    res.json({ ok: true, pending: r.listPending(), counts: r.counts() });
+  } catch (err) { res.json({ ok: false, reason: err.message }); }
+});
+
+router.get('/api/hermes-insights/counts', (_req, res) => {
+  try {
+    const r = require('../integrations/hermes/insightsReview');
+    res.json({ ok: true, counts: r.counts() });
+  } catch (err) { res.json({ ok: false, reason: err.message }); }
+});
+
+router.post('/api/hermes-insights/approve', express.json({ limit: '64kb' }), (req, res) => {
+  try {
+    const r = require('../integrations/hermes/insightsReview');
+    const { file, edits } = req.body || {};
+    if (!file) return res.status(400).json({ ok: false, reason: 'file required' });
+    const result = r.approve(file, { reviewer: 'dashboard', edits });
+    if (!result.ok) return res.status(404).json({ ok: false, reason: result.error });
+    activityLog.record('hermes_kb_insight_approved', null, 'user', { file, edited: !!result.edited, title: result.title });
+
+    // Re-index so the approved file is queryable on the next agent run.
+    setImmediate(() => {
+      try { require('../memory/memoryAdapter').indexAllNew(); } catch {}
+    });
+
+    res.json({ ok: true, file: result.file, edited: result.edited });
+  } catch (err) { res.status(500).json({ ok: false, reason: err.message }); }
+});
+
+router.post('/api/hermes-insights/reject', express.json({ limit: '16kb' }), (req, res) => {
+  try {
+    const r = require('../integrations/hermes/insightsReview');
+    const { file, reason } = req.body || {};
+    if (!file) return res.status(400).json({ ok: false, reason: 'file required' });
+    const result = r.reject(file, { reviewer: 'dashboard', reason });
+    if (!result.ok) return res.status(404).json({ ok: false, reason: result.error });
+    activityLog.record('hermes_kb_insight_rejected', null, 'user', { file, reason: result.reason });
+    res.json({ ok: true, file: result.file });
+  } catch (err) { res.status(500).json({ ok: false, reason: err.message }); }
+});
+
+router.get('/hermes-insights', (_req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(renderHermesInsightsReview());
+});
+
 // Hermes status API — polled by the settings page to show live install/gateway badges.
 router.get('/api/hermes-status', (_req, res) => {
   try {
@@ -5377,6 +5465,7 @@ router.get('/hermes-config', (_req, res) => {
 router.post('/hermes-config', express.urlencoded({ extended: false }), (req, res) => {
   const FIELDS = [
     'PRX_HERMES_ENABLED', 'PRX_HERMES_GATEWAY_URL', 'PRX_HERMES_SECRET', 'PRX_HERMES_JIRA_WRITEBACK',
+    'PRX_HERMES_KB_WRITEBACK_ENABLED',
     'PRX_TELEGRAM_ENABLED', 'PRX_TELEGRAM_BOT_TOKEN', 'PRX_TELEGRAM_CHAT_ID', 'PRX_TELEGRAM_EVENTS',
     'PRX_TELEGRAM_INBOUND_ENABLED',
   ];
@@ -5877,6 +5966,202 @@ function fmtDuration(ms) {
 
 // ── Hermes Config page ────────────────────────────────────────────────────────
 
+function renderHermesInsightsReview() {
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hermes Insights — Review</title>
+<style>
+  ${BASE_CSS}
+  .breadcrumb { font-size:0.8rem; color:#a0a8c0; }
+  .breadcrumb a { color:#a0a8c0; text-decoration:none; }
+  .breadcrumb a:hover { color:#fff; }
+  .ir-wrap { max-width:1000px; margin:1.5rem auto 4rem; padding:0 1.2rem; }
+  .ir-summary { display:flex; gap:.75rem; flex-wrap:wrap; margin-bottom:1rem; font-size:.82rem; }
+  .ir-chip { background:#fff; border:1px solid #e5e7eb; border-radius:8px; padding:.45rem .85rem; }
+  .ir-chip .lbl { color:#6b7280; font-size:.7rem; text-transform:uppercase; letter-spacing:.05em; }
+  .ir-chip .val { font-weight:700; font-size:1.05rem; color:#1e293b; }
+  .ir-chip.pending  .val { color:#92400e; }
+  .ir-chip.approved .val { color:#166534; }
+  .ir-chip.rejected .val { color:#991b1b; }
+  .ir-empty { background:#fff; border:1px dashed #cbd5e1; border-radius:10px; padding:2.5rem 1rem; text-align:center; color:#94a3b8; font-size:.9rem; }
+  .ir-card { background:#fff; border:1px solid #e5e7eb; border-radius:10px; margin-bottom:.9rem; overflow:hidden; }
+  .ir-card-head { display:flex; align-items:center; gap:.6rem; padding:.7rem 1rem; border-bottom:1px solid #f1f5f9; flex-wrap:wrap; }
+  .ir-card-title { font-size:.95rem; font-weight:600; color:#1e293b; flex:1; min-width:200px; }
+  .ir-tag { font-size:.7rem; padding:1px 8px; border-radius:9px; font-weight:600; }
+  .ir-tag-cat   { background:#ede9fe; color:#5b21b6; border:1px solid #ddd6fe; }
+  .ir-tag-conf  { background:#fef3c7; color:#92400e; border:1px solid #fde68a; }
+  .ir-tag-conf-high   { background:#dcfce7; color:#166534; border-color:#86efac; }
+  .ir-tag-conf-low    { background:#f3f4f6; color:#6b7280; border-color:#d1d5db; }
+  .ir-meta { padding:.45rem 1rem; font-size:.74rem; color:#6b7280; display:flex; flex-wrap:wrap; gap:.4rem .9rem; background:#f8fafc; border-bottom:1px solid #f1f5f9; }
+  .ir-meta code { font-family:ui-monospace,monospace; background:#fff; border:1px solid #e5e7eb; border-radius:4px; padding:1px 5px; font-size:.72rem; color:#475569; }
+  .ir-body { padding:.85rem 1rem; font-size:.84rem; color:#1f2937; line-height:1.55; max-height:340px; overflow:auto; white-space:pre-wrap; word-wrap:break-word; }
+  .ir-body.editing { display:none; }
+  .ir-edit { padding:.85rem 1rem; display:none; }
+  .ir-edit.show { display:block; }
+  .ir-edit input, .ir-edit textarea { width:100%; box-sizing:border-box; padding:.4rem .6rem; border:1px solid #e2e8f0; border-radius:6px; font-size:.83rem; color:#1e293b; font-family:inherit; }
+  .ir-edit textarea { min-height:160px; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:.78rem; line-height:1.5; }
+  .ir-edit label { display:block; font-size:.72rem; font-weight:600; color:#475569; margin:.4rem 0 .2rem; text-transform:uppercase; letter-spacing:.04em; }
+  .ir-actions { display:flex; gap:.5rem; padding:.65rem 1rem; border-top:1px solid #f1f5f9; flex-wrap:wrap; }
+  .ir-btn { font-size:.8rem; padding:.4rem .95rem; border-radius:7px; border:1px solid; cursor:pointer; font-weight:600; font-family:inherit; }
+  .ir-btn-approve { background:#dcfce7; color:#166534; border-color:#86efac; }
+  .ir-btn-approve:hover { background:#bbf7d0; }
+  .ir-btn-edit    { background:#fff;    color:#1e40af; border-color:#93c5fd; }
+  .ir-btn-edit:hover { background:#eff6ff; }
+  .ir-btn-reject  { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
+  .ir-btn-reject:hover { background:#fecaca; }
+  .ir-btn-cancel  { background:#fff;    color:#6b7280; border-color:#d1d5db; }
+  .ir-toast { position:fixed; right:1.5rem; bottom:1.5rem; padding:.65rem 1rem; border-radius:8px; font-size:.82rem; font-weight:600; box-shadow:0 8px 24px rgba(0,0,0,.15); z-index:1000; }
+  .ir-toast-ok  { background:#dcfce7; color:#166534; border:1px solid #86efac; }
+  .ir-toast-err { background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; }
+</style>
+</head>
+<body>
+  <header>
+    <h1><span class="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg></span>Prevoyant Server</h1>
+    <span class="version-badge">v${pluginVersion}</span>
+    <div class="meta">
+      <span class="breadcrumb"><a href="/dashboard">Dashboard</a> › <a href="/dashboard/hermes-config">Hermes Config</a> › Insights Review</span>
+    </div>
+  </header>
+
+  <div class="ir-wrap">
+    <div class="ir-summary" id="ir-summary">
+      <div class="ir-chip pending"><div class="lbl">Pending</div><div class="val" id="cnt-pending">—</div></div>
+      <div class="ir-chip approved"><div class="lbl">Approved</div><div class="val" id="cnt-approved">—</div></div>
+      <div class="ir-chip rejected"><div class="lbl">Rejected (last 30 d)</div><div class="val" id="cnt-rejected">—</div></div>
+      <div style="margin-left:auto;display:flex;align-items:center"><button class="ir-btn ir-btn-cancel" onclick="loadPending()">↻ Refresh</button></div>
+    </div>
+
+    <div id="ir-list"></div>
+    <div id="ir-empty" class="ir-empty" style="display:none">
+      <strong>No pending insights.</strong><br>
+      Hermes-contributed insights land here when <code>PRX_HERMES_KB_WRITEBACK_ENABLED=Y</code> and Hermes calls <code>POST /internal/kb/insights</code>.
+    </div>
+  </div>
+
+  <script>
+    function esc(s) { return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+    function asArr(v) { return Array.isArray(v) ? v : (v ? [v] : []); }
+    function fmtDate(s) { try { return new Date(s).toLocaleString('en-GB', { dateStyle:'short', timeStyle:'short' }); } catch { return s; } }
+    function toast(msg, kind) {
+      const t = document.createElement('div');
+      t.className = 'ir-toast ir-toast-' + (kind === 'err' ? 'err' : 'ok');
+      t.textContent = msg;
+      document.body.appendChild(t);
+      setTimeout(() => { t.style.transition = 'opacity .35s'; t.style.opacity = '0'; }, 2800);
+      setTimeout(() => t.remove(), 3200);
+    }
+
+    function renderCard(item) {
+      const m = item.meta || {};
+      const cat = (m.category || 'insight').toString();
+      const conf = (m.confidence || '').toString().toLowerCase();
+      const confClass = conf === 'high' ? 'ir-tag-conf-high' : conf === 'low' ? 'ir-tag-conf-low' : '';
+      const tickets = asArr(m.tickets);
+      const tags    = asArr(m.tags);
+
+      return \`
+        <div class="ir-card" data-file="\${esc(item.file)}">
+          <div class="ir-card-head">
+            <div class="ir-card-title">\${esc(m.title || '(no title)')}</div>
+            <span class="ir-tag ir-tag-cat">\${esc(cat)}</span>
+            \${conf ? '<span class="ir-tag ir-tag-conf ' + confClass + '">' + esc(conf) + ' confidence</span>' : ''}
+          </div>
+          <div class="ir-meta">
+            <span>📁 <code>\${esc(item.file)}</code></span>
+            \${m.recorded_at ? '<span>🕐 ' + esc(fmtDate(m.recorded_at)) + '</span>' : ''}
+            \${tickets.length ? '<span>🎫 ' + tickets.map(t => '<code>' + esc(t) + '</code>').join(' ') + '</span>' : ''}
+            \${tags.length    ? '<span>🏷 ' + tags.map(t => '<code>' + esc(t) + '</code>').join(' ') + '</span>'    : ''}
+          </div>
+          <div class="ir-body">\${esc(item.body)}</div>
+          <div class="ir-edit">
+            <label>Title</label>
+            <input type="text" class="ed-title" value="\${esc(m.title || '')}" maxlength="200">
+            <label>Body (markdown, ≤ 16 KB)</label>
+            <textarea class="ed-body">\${esc(item.body)}</textarea>
+            <label>Category</label>
+            <input type="text" class="ed-cat" value="\${esc(cat)}" placeholder="bug-pattern | lesson | playbook | warning | insight">
+          </div>
+          <div class="ir-actions">
+            <button class="ir-btn ir-btn-approve" onclick="doApprove('\${esc(item.file)}', false)">✓ Approve as-is</button>
+            <button class="ir-btn ir-btn-edit"    onclick="toggleEdit('\${esc(item.file)}')">✎ Edit & approve</button>
+            <button class="ir-btn ir-btn-reject"  onclick="doReject('\${esc(item.file)}')">✗ Reject</button>
+          </div>
+        </div>\`;
+    }
+
+    function loadPending() {
+      fetch('/dashboard/api/hermes-insights/pending').then(r => r.json()).then(d => {
+        if (!d.ok) { toast('Load failed: ' + (d.reason || 'unknown'), 'err'); return; }
+        document.getElementById('cnt-pending').textContent  = d.counts.pending;
+        document.getElementById('cnt-approved').textContent = d.counts.approved;
+        document.getElementById('cnt-rejected').textContent = d.counts.rejected;
+        const list = document.getElementById('ir-list');
+        const empty = document.getElementById('ir-empty');
+        if (d.pending.length === 0) { list.innerHTML = ''; empty.style.display = ''; }
+        else { empty.style.display = 'none'; list.innerHTML = d.pending.map(renderCard).join(''); }
+      }).catch(err => toast('Network error: ' + err.message, 'err'));
+    }
+
+    function findCard(file) { return document.querySelector('.ir-card[data-file="' + CSS.escape(file) + '"]'); }
+
+    function toggleEdit(file) {
+      const card = findCard(file); if (!card) return;
+      const body = card.querySelector('.ir-body');
+      const edit = card.querySelector('.ir-edit');
+      const approve = card.querySelector('.ir-btn-approve');
+      const editBtn = card.querySelector('.ir-btn-edit');
+      const editing = edit.classList.toggle('show');
+      body.style.display = editing ? 'none' : '';
+      approve.textContent = editing ? '✓ Save & approve' : '✓ Approve as-is';
+      approve.onclick = () => doApprove(file, editing);
+      editBtn.textContent = editing ? 'Cancel edit' : '✎ Edit & approve';
+    }
+
+    function doApprove(file, withEdits) {
+      const card = findCard(file);
+      const payload = { file };
+      if (withEdits && card) {
+        payload.edits = {
+          title:    card.querySelector('.ed-title').value.trim(),
+          body:     card.querySelector('.ed-body').value,
+          category: card.querySelector('.ed-cat').value.trim(),
+        };
+      }
+      fetch('/dashboard/api/hermes-insights/approve', {
+        method: 'POST', headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify(payload),
+      }).then(r => r.json()).then(d => {
+        if (!d.ok) return toast('Approve failed: ' + (d.reason || 'unknown'), 'err');
+        toast(\`✓ \${file} approved\${d.edited ? ' (edited)' : ''}\`, 'ok');
+        if (card) card.remove();
+        loadPending();
+      }).catch(err => toast('Network error: ' + err.message, 'err'));
+    }
+
+    function doReject(file) {
+      const reason = prompt('Reason for rejecting this insight? (optional, ≤ 500 chars)');
+      if (reason === null) return; // cancelled
+      fetch('/dashboard/api/hermes-insights/reject', {
+        method: 'POST', headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ file, reason }),
+      }).then(r => r.json()).then(d => {
+        if (!d.ok) return toast('Reject failed: ' + (d.reason || 'unknown'), 'err');
+        toast(\`✗ \${file} rejected\`, 'ok');
+        const card = findCard(file); if (card) card.remove();
+        loadPending();
+      }).catch(err => toast('Network error: ' + err.message, 'err'));
+    }
+
+    loadPending();
+    setInterval(loadPending, 30000);
+  </script>
+</body></html>`;
+}
+
 function renderHermesConfig(vals, flash) {
   const v = k => vals[k] || '';
 
@@ -6104,6 +6389,29 @@ function renderHermesConfig(vals, flash) {
               <option value="Y"${v('PRX_HERMES_JIRA_WRITEBACK') === 'Y' ? ' selected' : ''}>Y — post Jira comment when analysis completes</option>
             </select>
             <span class="s-hint">When enabled, Prevoyant posts a summary comment on the Jira ticket after each analysis.</span>
+          </div>
+          <div class="s-field span2">
+            <label class="s-label">KB Write-back <code class="s-key">PRX_HERMES_KB_WRITEBACK_ENABLED</code></label>
+            ${(() => {
+              const cur = (v('PRX_HERMES_KB_WRITEBACK_ENABLED') || 'AUTO').toUpperCase();
+              const sel = m => cur === m ? ' selected' : '';
+              return `<select name="PRX_HERMES_KB_WRITEBACK_ENABLED" class="s-input" style="max-width:480px">
+                <option value="N"${sel('N')}>N — disabled (endpoint returns 403)</option>
+                <option value="AUTO"${cur !== 'N' && cur !== 'Y' ? ' selected' : ''}>AUTO — AI judge decides (default)</option>
+                <option value="Y"${sel('Y')}>Y — every insight requires manual human approval</option>
+              </select>`;
+            })()}
+            <span class="s-hint">
+              Exposes <code>POST /internal/kb/insights</code>. Hermes calls it when it spots cross-ticket patterns (e.g. "5 tickets reference the same Redis bug").
+              <br><br>
+              <strong>AUTO mode (default):</strong> insight is written to <code>&lt;KB&gt;/hermes-insights/pending/</code>, then an AI validator (Claude Haiku 4.5 via <code>ANTHROPIC_API_KEY</code>, or a heuristic fallback if no key is set) scores it on specificity / evidence / actionability / originality / clarity (0–2 each). Score ≥ 7 → <strong>approved</strong> automatically (re-indexed, surfaces in future agent runs). Score ≤ 3 → <strong>rejected</strong> automatically (kept 30 d for audit). Anything in between → <strong>left for human review</strong> at <a href="/dashboard/hermes-insights" style="color:#1e40af">/dashboard/hermes-insights</a>. Validator failures (network, timeout) silently fall back to "pending" — no insight is ever silently dropped.
+              <br><br>
+              <strong>Y mode:</strong> bypasses the AI judge — every insight requires a human approve / reject click. Use this when you don't trust the AI judge yet.
+              <br><br>
+              <strong>N mode:</strong> endpoint is fully disabled (returns 403).
+              <br><br>
+              Auth uses the same <code>X-Hermes-Secret</code> as the enqueue endpoint.
+            </span>
           </div>
         </div>
       </details>
