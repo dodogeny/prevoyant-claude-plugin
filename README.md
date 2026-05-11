@@ -776,6 +776,21 @@ claude plugin update prevoyant@dodogeny
 
 [Hermes](https://github.com/nousresearch/hermes-agent) is an open-source autonomous agent by Nous Research that acts as the nervous system for Prevoyant — handling multi-platform notifications, persistent cross-session memory, unified webhook routing, and proactive scheduling, while Prevoyant remains the domain intelligence layer for Jira ticket analysis.
 
+### Why Hermes?
+
+Enabling `PRX_HERMES_ENABLED=Y` upgrades Prevoyant from a scheduled analysis tool to a **full-time autonomous agent**:
+
+| Capability | Without Hermes | With Hermes |
+|---|---|---|
+| **Trigger speed** | Cron poll every N days | Instant — Hermes fires on every Jira/GitHub event |
+| **Notifications** | Email / WhatsApp only | Telegram, Slack, Discord, WhatsApp, and more |
+| **Memory** | Session-scoped only | Cross-session persistent memory in `~/.hermes/prevoyant-memory.jsonl` |
+| **Scheduling** | Prevoyant's own cron | Hermes owns the schedule — smarter, event-driven |
+| **Jira write-back** | Manual only | Auto-comment on ticket when analysis completes (`PRX_HERMES_JIRA_WRITEBACK=Y`) |
+| **Installation** | Manual CLI install | Auto-installs Hermes CLI when `PRX_HERMES_ENABLED=Y` |
+| **Activity log** | Ticket events only | Full Hermes lifecycle events (install, gateway, results) visible in dashboard |
+| **Revert** | — | Toggle off with `PRX_HERMES_ENABLED=N` — no uninstall needed |
+
 ### Architecture
 
 ```
@@ -856,6 +871,27 @@ Hermes calls `POST /internal/enqueue` (authenticated by `X-Hermes-Secret`):
 | `jira.issue_created` | dev |
 | `jira.pr.opened` | review |
 | `jira.ticket.stale` | estimate |
+
+### Telegram notifications
+
+Prevoyant ships with a built-in Telegram channel (alongside Email and WhatsApp) — no Hermes required. When Hermes is enabled, Telegram alerts can additionally flow through Hermes's own routing layer, but the built-in channel is the simplest path.
+
+**To enable built-in Telegram alerts:**
+
+1. [Create a Telegram bot](https://t.me/BotFather) and copy the bot token.
+2. Get your chat ID (send a message to your bot, then call `https://api.telegram.org/bot<TOKEN>/getUpdates`).
+3. Open **Dashboard → Hermes Config → Telegram Notifications** and fill in:
+
+   - `PRX_TELEGRAM_ENABLED=Y`
+   - `PRX_TELEGRAM_BOT_TOKEN=<your bot token>`
+   - `PRX_TELEGRAM_CHAT_ID=<your chat or channel ID>`
+   - `PRX_TELEGRAM_EVENTS=ticket_completed,ticket_failed,...` (comma-separated; blank = all events)
+
+4. Click **Send test message** to verify delivery, then **Save**.
+
+Telegram messages are dispatched from `server/dashboard/activityLog.js` alongside the existing webhook/WhatsApp fan-out — they're independent of the Hermes gateway and continue to work even when `PRX_HERMES_ENABLED=N`.
+
+**Slack / Discord** routing currently lives on the Hermes side. With `PRX_HERMES_ENABLED=Y` the job result JSON is POSTed to the Hermes gateway, and Hermes fans it out to whichever platforms are configured in `~/.hermes/config.toml`.
 
 ### Reverting to standalone
 

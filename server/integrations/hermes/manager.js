@@ -9,9 +9,15 @@ const fs   = require('fs');
 const path = require('path');
 const { execSync, spawn } = require('child_process');
 
-const SKILL_DIR = path.join(os.homedir(), '.hermes', 'skills', 'prevoyant');
-const SKILL_SRC = path.join(__dirname, 'hermes-skill.md');
-const INSTALL_CMD = 'curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash';
+const activityLog = require('../../dashboard/activityLog');
+
+const HERMES_DIR     = path.join(os.homedir(), '.hermes');
+const SKILL_DIR      = path.join(HERMES_DIR, 'skills', 'prevoyant');
+const SKILL_SRC      = path.join(__dirname, 'hermes-skill.md');
+const GATEWAY_LOG    = path.join(HERMES_DIR, 'gateway.log');
+const GATEWAY_PID_F  = path.join(HERMES_DIR, 'gateway.pid');
+const GATEWAY_STATE  = path.join(HERMES_DIR, 'gateway_state.json');
+const INSTALL_CMD    = 'curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash';
 
 // Common install locations the shell script may put the binary.
 const INSTALL_DIRS = [
@@ -53,36 +59,125 @@ function installSkill() {
   console.log(`[hermes/manager] Skill deployed → ${SKILL_DIR}/SKILL.md`);
 }
 
-function isGatewayRunning() {
+// Read Hermes's own pid file (~/.hermes/gateway.pid). The actual daemon runs as
+// `python -m hermes_cli.main gateway run`, which does NOT match `pgrep "hermes gateway"`,
+// so this is the only reliable source of truth.
+function readGatewayPidFile() {
   try {
-    const out = execSync('pgrep -f "hermes gateway"', { stdio: 'pipe' }).toString().trim();
+    return JSON.parse(fs.readFileSync(GATEWAY_PID_F, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function isPidAlive(pid) {
+  if (!pid || typeof pid !== 'number') return false;
+  try {
+    process.kill(pid, 0); // signal 0 = liveness probe (no signal delivered)
+    return true;
+  } catch (err) {
+    // EPERM means the process exists but we can't signal it → still "alive" for our purposes.
+    return err.code === 'EPERM';
+  }
+}
+
+function isGatewayRunning() {
+  const meta = readGatewayPidFile();
+  if (meta && isPidAlive(meta.pid)) return true;
+  // Fallback for older Hermes versions that didn't write a pid file: match any
+  // process whose argv mentions hermes_cli + gateway.
+  try {
+    const out = execSync('pgrep -f "hermes_cli.*gateway run"', { stdio: 'pipe' }).toString().trim();
     return out.length > 0;
   } catch {
     return false;
   }
 }
 
+function appendLog(line) {
+  try {
+    fs.mkdirSync(path.dirname(GATEWAY_LOG), { recursive: true });
+    fs.appendFileSync(GATEWAY_LOG, `[${new Date().toISOString()}] ${line}\n`);
+  } catch (err) {
+    console.warn(`[hermes/manager] gateway-log write failed: ${err.message}`);
+  }
+}
+
 function startGateway() {
+  fs.mkdirSync(path.dirname(GATEWAY_LOG), { recursive: true });
+  appendLog('=== hermes gateway start ===');
+
+  const out = fs.openSync(GATEWAY_LOG, 'a');
+  const err = fs.openSync(GATEWAY_LOG, 'a');
   const child = spawn('hermes', ['gateway', 'start'], {
     detached: true,
-    stdio:    'ignore',
+    stdio:    ['ignore', out, err],
     env:      process.env,
   });
   child.unref();
+  // The parent doesn't need its own copy of the fds — the child inherits them.
+  try { fs.closeSync(out); fs.closeSync(err); } catch {}
+
   console.log('[hermes/manager] Gateway spawned (detached) — hermes gateway start');
+  activityLog.record('hermes_gateway_started', null, 'system', {});
 }
 
-// Stops the gateway process without uninstalling Hermes.
+// Stops the gateway process without uninstalling Hermes. Prefer the canonical
+// `hermes gateway stop` CLI; fall back to SIGTERM-ing the PID from gateway.pid.
 function stopGateway() {
   if (!isGatewayRunning()) {
     console.log('[hermes/manager] Gateway not running — nothing to stop');
+    appendLog('stop requested — gateway was not running');
     return;
   }
+  // Preferred path: the CLI itself.
   try {
-    execSync('pkill -f "hermes gateway"', { stdio: 'pipe' });
-    console.log('[hermes/manager] Gateway stopped');
+    execSync('hermes gateway stop', { stdio: 'pipe', env: process.env, timeout: 8000 });
+    console.log('[hermes/manager] Gateway stopped (via `hermes gateway stop`)');
+    appendLog('=== hermes gateway stopped ===');
+    activityLog.record('hermes_gateway_stopped', null, 'system', {});
+    return;
   } catch (err) {
-    console.warn(`[hermes/manager] Could not stop gateway: ${err.message}`);
+    appendLog(`'hermes gateway stop' failed: ${err.message} — falling back to SIGTERM`);
+  }
+  // Fallback: signal the daemon directly using its own pid file.
+  const meta = readGatewayPidFile();
+  if (meta && meta.pid) {
+    try {
+      process.kill(meta.pid, 'SIGTERM');
+      console.log(`[hermes/manager] Gateway stopped (SIGTERM → PID ${meta.pid})`);
+      appendLog(`=== hermes gateway stopped (SIGTERM → PID ${meta.pid}) ===`);
+      activityLog.record('hermes_gateway_stopped', null, 'system', {});
+      return;
+    } catch (err) {
+      console.warn(`[hermes/manager] SIGTERM to PID ${meta.pid} failed: ${err.message}`);
+      appendLog(`SIGTERM to PID ${meta.pid} failed: ${err.message}`);
+    }
+  }
+  console.warn('[hermes/manager] Could not stop gateway — neither CLI nor pid-file fallback worked');
+}
+
+// Returns the tail of the gateway log file (last maxBytes, capped to maxLines).
+function readGatewayLog(maxBytes = 200_000, maxLines = 400) {
+  try {
+    const stats = fs.statSync(GATEWAY_LOG);
+    const start = Math.max(0, stats.size - maxBytes);
+    const buf   = Buffer.alloc(stats.size - start);
+    const fd    = fs.openSync(GATEWAY_LOG, 'r');
+    fs.readSync(fd, buf, 0, buf.length, start);
+    fs.closeSync(fd);
+
+    let text = buf.toString('utf8');
+    if (start > 0) {
+      const nl = text.indexOf('\n');
+      if (nl >= 0) text = text.slice(nl + 1); // drop partial first line
+    }
+    const lines = text.split('\n');
+    if (lines.length > maxLines) text = lines.slice(-maxLines).join('\n');
+    return { exists: true, text, size: stats.size, mtime: stats.mtimeMs };
+  } catch (err) {
+    if (err.code === 'ENOENT') return { exists: false, text: '', size: 0, mtime: 0 };
+    return { exists: false, text: `(read error: ${err.message})`, size: 0, mtime: 0 };
   }
 }
 
@@ -96,6 +191,7 @@ function autoInstall() {
   installing = true;
   console.log('[hermes/manager] Hermes CLI not found — auto-installing in background …');
   console.log(`[hermes/manager] Running: ${INSTALL_CMD}`);
+  activityLog.record('hermes_installing', null, 'system', {});
 
   const child = spawn('bash', ['-c', INSTALL_CMD], {
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -111,13 +207,17 @@ function autoInstall() {
       patchPath(); // pick up any new dirs the installer added
       console.log('[hermes/manager] Hermes CLI installed successfully');
       if (isInstalled()) {
+        activityLog.record('hermes_installed', null, 'system', {});
         installSkill();
+        activityLog.record('hermes_skill_deployed', null, 'system', {});
         if (!isGatewayRunning()) startGateway();
       } else {
         console.warn('[hermes/manager] Install script exited 0 but binary not found — PATH may need reload');
+        activityLog.record('hermes_install_failed', null, 'system', { reason: 'binary not found after install' });
       }
     } else {
       console.error(`[hermes/manager] Auto-install failed (exit ${code}). Install manually: ${INSTALL_CMD}`);
+      activityLog.record('hermes_install_failed', null, 'system', { reason: `exit code ${code}` });
     }
   });
 
@@ -170,5 +270,7 @@ module.exports = {
   autoInstall,
   startup,
   status,
+  readGatewayLog,
   INSTALL_CMD,
+  GATEWAY_LOG,
 };

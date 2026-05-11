@@ -12,6 +12,8 @@ const fs    = require('fs');
 const os    = require('os');
 const path  = require('path');
 
+const activityLog = require('../../dashboard/activityLog');
+
 const MEMORY_FILE = path.join(os.homedir(), '.hermes', 'prevoyant-memory.jsonl');
 
 // ── 1. Push to Hermes gateway ─────────────────────────────────────────────────
@@ -115,9 +117,11 @@ function start(gatewayUrl) {
     const payload = { ticket_key: ticketKey, status, mode, cost_usd: costUsd, completed_at: new Date().toISOString() };
 
     postToHermes(gatewayUrl, payload);
+    activityLog.record('hermes_result_sent', ticketKey, 'hermes', { status, mode });
 
     if (jiraWriteback) {
       postJiraComment(ticketKey, buildJiraComment(ticketKey, status, mode, costUsd));
+      activityLog.record('hermes_jira_comment', ticketKey, 'hermes', { status, mode });
     }
 
     appendToHermesMemory({ ...payload, type: 'prevoyant_result', recorded_at: new Date().toISOString() });
@@ -127,6 +131,7 @@ function start(gatewayUrl) {
     const payload = { ticket_key: ticketKey, status: 'interrupted', reason, mode, completed_at: new Date().toISOString() };
 
     postToHermes(gatewayUrl, payload);
+    activityLog.record('hermes_result_sent', ticketKey, 'hermes', { status: 'interrupted', mode, reason });
 
     appendToHermesMemory({ ...payload, type: 'prevoyant_result', recorded_at: new Date().toISOString() });
   });

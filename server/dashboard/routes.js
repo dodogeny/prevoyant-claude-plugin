@@ -1058,7 +1058,7 @@ function renderDashboard(stats, budget) {
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       Settings
     </a>
-    ${process.env.PRX_HERMES_ENABLED === 'Y' ? `<a href="/dashboard/settings#hermes" class="hermes-agent-badge" title="Hermes agent active — click to manage">
+    ${process.env.PRX_HERMES_ENABLED === 'Y' ? `<a href="/dashboard/hermes-config" class="hermes-agent-badge" title="Hermes agent active — click to manage">
       <span class="hermes-pulse-dot"></span>
       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
       Hermes
@@ -1607,6 +1607,15 @@ const EVENT_DISPLAY = {
   kbflow_scan_completed: { label: 'KB Flow Scan Done',      bg: '#dcfce7', color: '#166534' },
   kbflow_scan_failed:    { label: 'KB Flow Scan Failed',    bg: '#fee2e2', color: '#991b1b' },
   kbflow_review_nudge:   { label: 'KB Review Nudge Sent',   bg: '#fef3c7', color: '#92400e' },
+  hermes_enqueue:        { label: 'Hermes Enqueued',        bg: '#ede9fe', color: '#5b21b6' },
+  hermes_installing:     { label: 'Hermes Installing',      bg: '#eff6ff', color: '#1d4ed8' },
+  hermes_installed:      { label: 'Hermes Installed',       bg: '#dcfce7', color: '#166534' },
+  hermes_install_failed: { label: 'Hermes Install Failed',  bg: '#fee2e2', color: '#991b1b' },
+  hermes_skill_deployed: { label: 'Hermes Skill Deployed',  bg: '#ede9fe', color: '#5b21b6' },
+  hermes_gateway_started:{ label: 'Gateway Started',        bg: '#dcfce7', color: '#166534' },
+  hermes_gateway_stopped:{ label: 'Gateway Stopped',        bg: '#f3f4f6', color: '#6b7280' },
+  hermes_result_sent:    { label: 'Hermes Result Sent',     bg: '#ede9fe', color: '#5b21b6' },
+  hermes_jira_comment:   { label: 'Hermes Jira Comment',    bg: '#fef3c7', color: '#92400e' },
 };
 
 const ACTOR_STYLE = {
@@ -1615,6 +1624,7 @@ const ACTOR_STYLE = {
   jira:    { bg: '#fef3c7', color: '#92400e' },
   webhook: { bg: '#fef3c7', color: '#92400e' },
   manual:  { bg: '#dcfce7', color: '#166534' },
+  hermes:  { bg: '#ede9fe', color: '#5b21b6' },
 };
 
 function renderActivity(results, chartData, allTypes, allActors, actStats, filters) {
@@ -3974,6 +3984,8 @@ function renderSettings(vals, flash) {
               <span id="hs-installed"  style="font-size:10px;padding:2px 9px;border-radius:10px;border:1px solid #d1d5db;background:#f3f4f6;color:#374151">Checking…</span>
               <span id="hs-gateway"    style="font-size:10px;padding:2px 9px;border-radius:10px;border:1px solid #d1d5db;background:#f3f4f6;color:#374151">Gateway…</span>
               <span id="hs-skill"      style="font-size:10px;padding:2px 9px;border-radius:10px;border:1px solid #d1d5db;background:#f3f4f6;color:#374151">Skill…</span>
+              <button type="button" id="hs-gw-start" onclick="hermesGatewayStart()" style="display:none;font-size:10px;padding:2px 10px;border:1px solid #86efac;border-radius:6px;background:#dcfce7;color:#166534;cursor:pointer">▶ Start Gateway</button>
+              <button type="button" id="hs-gw-stop"  onclick="hermesGatewayStop()"  style="display:none;font-size:10px;padding:2px 10px;border:1px solid #fca5a5;border-radius:6px;background:#fee2e2;color:#991b1b;cursor:pointer">■ Stop Gateway</button>
               <button type="button" onclick="hermesCheckStatus()" style="font-size:10px;padding:2px 10px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer;margin-left:auto">Recheck</button>
             </div>
           </div>
@@ -4053,6 +4065,17 @@ function renderSettings(vals, flash) {
           badge('hs-gateway',   s.gatewayRunning, 'Gateway running',   'Gateway stopped', 'Pending…');
           badge('hs-skill',     s.skillInstalled, 'Skill deployed',    'Skill not deployed', 'Pending…');
 
+          // Show Start/Stop gateway buttons based on state
+          const startBtn = document.getElementById('hs-gw-start');
+          const stopBtn  = document.getElementById('hs-gw-stop');
+          if (s.installed && !s.installing) {
+            startBtn.style.display = s.gatewayRunning ? 'none' : '';
+            stopBtn.style.display  = s.gatewayRunning ? '' : 'none';
+          } else {
+            startBtn.style.display = 'none';
+            stopBtn.style.display  = 'none';
+          }
+
           // Show correct banner
           document.getElementById('hermes-installing-guide').style.display = s.installing ? '' : 'none';
           document.getElementById('hermes-install-guide').style.display    = (!s.installed && !s.installing) ? '' : 'none';
@@ -4089,6 +4112,26 @@ function renderSettings(vals, flash) {
     // Auto-check if section is already open on page load
     if (document.getElementById('hermes') && document.getElementById('hermes').open) {
       hermesCheckStatus();
+    }
+
+    function hermesGatewayStart() {
+      const btn = document.getElementById('hs-gw-start');
+      btn.disabled = true; btn.textContent = 'Starting…';
+      fetch('/dashboard/api/hermes-gateway/start', { method: 'POST' })
+        .then(r => r.json())
+        .then(() => hermesCheckStatus())
+        .catch(() => hermesCheckStatus())
+        .finally(() => { btn.disabled = false; });
+    }
+
+    function hermesGatewayStop() {
+      const btn = document.getElementById('hs-gw-stop');
+      btn.disabled = true; btn.textContent = 'Stopping…';
+      fetch('/dashboard/api/hermes-gateway/stop', { method: 'POST' })
+        .then(r => r.json())
+        .then(() => hermesCheckStatus())
+        .catch(() => hermesCheckStatus())
+        .finally(() => { btn.disabled = false; });
     }
 
     // ── Notifications ─────────────────────────────────────────────────────────
@@ -5183,6 +5226,91 @@ router.get('/api/hermes-status', (_req, res) => {
   }
 });
 
+router.post('/api/hermes-gateway/start', (_req, res) => {
+  try {
+    const manager = require('../integrations/hermes/manager');
+    if (!manager.isInstalled()) return res.json({ ok: false, reason: 'not_installed' });
+    if (manager.isGatewayRunning()) return res.json({ ok: true, reason: 'already_running' });
+    manager.startGateway();
+    res.json({ ok: true });
+  } catch (err) {
+    res.json({ ok: false, reason: err.message });
+  }
+});
+
+router.post('/api/hermes-gateway/stop', (_req, res) => {
+  try {
+    const manager = require('../integrations/hermes/manager');
+    manager.stopGateway();
+    res.json({ ok: true });
+  } catch (err) {
+    res.json({ ok: false, reason: err.message });
+  }
+});
+
+// Rolling gateway log — tailed by the Hermes Config page every 5s.
+router.get('/api/hermes-gateway/log', (_req, res) => {
+  try {
+    const manager = require('../integrations/hermes/manager');
+    const snap = manager.readGatewayLog();
+    res.json({
+      ok: true,
+      exists: snap.exists,
+      text:   snap.text,
+      size:   snap.size,
+      mtime:  snap.mtime,
+      path:   manager.GATEWAY_LOG,
+      running: manager.isGatewayRunning(),
+    });
+  } catch (err) {
+    res.json({ ok: false, reason: err.message });
+  }
+});
+
+// Telegram test message API
+router.post('/api/hermes-telegram-test', (_req, res) => {
+  const tg = require('../notifications/telegram');
+  if (!tg.isEnabled()) return res.json({ ok: false, reason: 'Telegram not enabled or missing token/chat ID' });
+  tg.sendText('🔔 <b>Prevoyant test message</b>\nTelegram notifications are working correctly.')
+    .then(() => res.json({ ok: true }))
+    .catch(err => res.json({ ok: false, reason: err.message }));
+});
+
+// Hermes Config page
+router.get('/hermes-config', (_req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  const saved = _req.query.saved === '1' ? 'saved' : null;
+  res.send(renderHermesConfig(readEnvValues(), saved));
+});
+
+router.post('/hermes-config', express.urlencoded({ extended: false }), (req, res) => {
+  const FIELDS = [
+    'PRX_HERMES_ENABLED', 'PRX_HERMES_GATEWAY_URL', 'PRX_HERMES_SECRET', 'PRX_HERMES_JIRA_WRITEBACK',
+    'PRX_TELEGRAM_ENABLED', 'PRX_TELEGRAM_BOT_TOKEN', 'PRX_TELEGRAM_CHAT_ID', 'PRX_TELEGRAM_EVENTS',
+  ];
+  try {
+    const updates = {};
+    for (const key of FIELDS) {
+      if (key in req.body) updates[key] = String(req.body[key] || '').trim();
+    }
+    writeEnvValues(updates);
+    activityLog.record('settings_saved', null, 'user', { fields: Object.keys(updates).filter(k => updates[k] !== '').join(',') });
+    serverEvents.emit('settings-saved', updates);
+
+    if (updates.PRX_HERMES_ENABLED === 'Y') {
+      setImmediate(() => {
+        try { require('../integrations/hermes/manager').startup(); } catch (err) {
+          console.warn('[hermes] startup after hermes-config save failed:', err.message);
+        }
+      });
+    }
+  } catch (_err) {
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    return res.send(renderHermesConfig(readEnvValues(), 'error'));
+  }
+  res.redirect(303, '/dashboard/hermes-config?saved=1');
+});
+
 // Memory status API — polled by the settings page JS to show live badge + connection test
 router.get('/api/memory-status', async (_req, res) => {
   try {
@@ -5653,6 +5781,527 @@ function fmtDuration(ms) {
   if (m < 60)   return `${m}m ${s % 60}s`;
   const h = Math.floor(m / 60);
   return `${h}h ${m % 60}m`;
+}
+
+// ── Hermes Config page ────────────────────────────────────────────────────────
+
+function renderHermesConfig(vals, flash) {
+  const v = k => vals[k] || '';
+
+  const flashHtml = flash === 'saved'
+    ? `<div class="s-flash s-flash-ok">Settings saved.</div>`
+    : flash === 'error'
+    ? `<div class="s-flash s-flash-err">Save failed — check server logs.</div>`
+    : '';
+
+  const tgEvents  = v('PRX_TELEGRAM_EVENTS') || NOTIFY_EVENTS.map(e => e.key).join(',');
+  const tgChecked = new Set(tgEvents.split(',').map(s => s.trim()).filter(Boolean));
+
+  const eventGroups = {};
+  for (const e of NOTIFY_EVENTS) {
+    if (!eventGroups[e.group]) eventGroups[e.group] = [];
+    eventGroups[e.group].push(e);
+  }
+
+  const tgEventCheckboxes = Object.entries(eventGroups).map(([groupName, evts]) => {
+    const boxes = evts.map(e =>
+      `<label class="n-evt-lbl">
+        <input type="checkbox" class="tg-evt-cb" value="${esc(e.key)}" ${tgChecked.has(e.key) ? 'checked' : ''} onchange="syncTgEvents()">
+        ${esc(e.label)}
+      </label>`
+    ).join('');
+    return `<div class="n-group"><div class="n-group-lbl">${esc(groupName)}</div><div class="n-events-grid">${boxes}</div></div>`;
+  }).join('');
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Hermes Config — Prevoyant</title>
+<style>
+  ${BASE_CSS}
+  .breadcrumb { font-size:0.8rem; color:#a0a8c0; }
+  .breadcrumb a { color:#a0a8c0; text-decoration:none; }
+  .breadcrumb a:hover { color:#fff; }
+  .s-section { background:#fff; border:1px solid #e5e7eb; border-radius:10px; margin-bottom:1rem; overflow:hidden; }
+  .s-section summary { padding:.85rem 1.1rem; cursor:pointer; user-select:none; display:flex; align-items:center; gap:.6rem; font-weight:600; font-size:.9rem; color:#1e293b; list-style:none; }
+  .s-section summary:hover { background:#f8fafc; }
+  .s-section summary::-webkit-details-marker { display:none; }
+  .s-section summary .s-chevron { margin-left:auto; color:#94a3b8; transition:transform .2s; }
+  .s-section[open] summary .s-chevron { transform:rotate(90deg); }
+  .s-section summary .s-opt { font-size:.68rem; font-weight:500; color:#6b7280; background:#f3f4f6; padding:1px 7px; border-radius:8px; }
+  .s-body { display:grid; grid-template-columns:1fr 1fr; gap:.85rem 1.2rem; padding:1rem 1.1rem 1.2rem; border-top:1px solid #f1f5f9; }
+  .s-body.full-width > * { grid-column:span 2; }
+  .s-field { display:flex; flex-direction:column; gap:.3rem; }
+  .s-field.span2 { grid-column:span 2; }
+  .s-label { font-size:.77rem; font-weight:600; color:#475569; display:flex; flex-wrap:wrap; align-items:center; gap:.4rem; }
+  .s-key { font-size:.7rem; font-weight:400; color:#94a3b8; background:#f8fafc; padding:1px 5px; border-radius:4px; font-family:ui-monospace,monospace; }
+  .s-input { padding:.42rem .65rem; border:1px solid #e2e8f0; border-radius:6px; font-size:.83rem; color:#1e293b; width:100%; box-sizing:border-box; background:#fff; }
+  .s-input:focus { outline:none; border-color:#6366f1; box-shadow:0 0 0 3px rgba(99,102,241,.1); }
+  .s-hint { font-size:.72rem; color:#94a3b8; line-height:1.55; }
+  .s-flash { padding:.55rem 1rem; border-radius:7px; font-size:.83rem; font-weight:600; margin-bottom:1rem; }
+  .s-flash-ok  { background:#dcfce7; color:#166534; border:1px solid #86efac; }
+  .s-flash-err { background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; }
+  .status-row { display:flex; gap:.5rem; align-items:center; flex-wrap:wrap; padding:.75rem 1.1rem; background:#f8fafc; border-bottom:1px solid #e5e7eb; }
+  .n-events-grid { display:flex; flex-wrap:wrap; gap:.4rem .8rem; }
+  .n-evt-lbl { font-size:.78rem; display:flex; align-items:center; gap:.3rem; cursor:pointer; }
+  .n-group { margin-bottom:.6rem; }
+  .n-group-lbl { font-size:.7rem; font-weight:700; color:#6b7280; text-transform:uppercase; letter-spacing:.05em; margin-bottom:.35rem; }
+  .btn-save { background:var(--accent); color:#fff; border:none; border-radius:7px; padding:.55rem 1.4rem; font-size:.87rem; font-weight:600; cursor:pointer; }
+  .btn-save:hover { background:#4f46e5; }
+  .pw-wrap { position:relative; }
+  .pw-wrap .s-input { padding-right:2.4rem; }
+  .pw-eye { position:absolute; right:.55rem; top:50%; transform:translateY(-50%); background:none; border:none; cursor:pointer; color:#94a3b8; padding:0; }
+  .hermes-badge-pill {
+    display:inline-flex; align-items:center; gap:.4rem;
+    padding:4px 11px; border-radius:14px; font-size:.76rem; font-weight:600;
+    transition: background .25s, border-color .25s, color .25s, box-shadow .25s;
+  }
+  .badge-green { background:#dcfce7; color:#166534; border:1px solid #86efac; box-shadow:0 0 0 0 rgba(34,197,94,0); }
+  .badge-green.alive { box-shadow:0 0 0 4px rgba(34,197,94,.12); }
+  .badge-red   { background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; }
+  .badge-red.crash { box-shadow:0 0 0 4px rgba(239,68,68,.18); animation: hc-shake .6s ease-out 1; }
+  .badge-blue  { background:#eff6ff; color:#1d4ed8; border:1px solid #93c5fd; }
+  .badge-grey  { background:#f3f4f6; color:#6b7280; border:1px solid #d1d5db; }
+  @keyframes hc-shake {
+    0%,100% { transform: translateX(0); }
+    25% { transform: translateX(-2px); }
+    75% { transform: translateX(2px); }
+  }
+
+  /* status dots — coloured pulse inside each badge */
+  .hc-dot {
+    width:7px; height:7px; border-radius:50%;
+    flex-shrink:0; position:relative; display:inline-block;
+  }
+  .hc-dot-green  { background:#16a34a; }
+  .hc-dot-red    { background:#dc2626; }
+  .hc-dot-blue   { background:#2563eb; }
+  .hc-dot-grey   { background:#9ca3af; }
+  .hc-dot.pulse::after {
+    content:''; position:absolute; inset:-3px; border-radius:50%;
+    border:2px solid currentColor; opacity:0;
+    animation: hc-ripple 1.6s ease-out infinite;
+  }
+  .hc-dot-green.pulse::after { border-color:#22c55e; }
+  .hc-dot-red.pulse::after   { border-color:#ef4444; }
+  .hc-dot-blue.pulse::after  { border-color:#3b82f6; }
+  @keyframes hc-ripple {
+    0%   { opacity:.7; transform: scale(1); }
+    100% { opacity:0;  transform: scale(2.4); }
+  }
+
+  /* toast for state transitions */
+  .hc-toast {
+    position:fixed; right:1.5rem; bottom:1.5rem; z-index:1000;
+    padding:.7rem 1rem; border-radius:8px; font-size:.82rem; font-weight:600;
+    box-shadow:0 8px 24px rgba(0,0,0,.15); display:flex; align-items:center; gap:.6rem;
+    animation: hc-toast-in .25s ease-out;
+    max-width:380px;
+  }
+  .hc-toast-ok   { background:#dcfce7; color:#166534; border:1px solid #86efac; }
+  .hc-toast-err  { background:#fee2e2; color:#991b1b; border:1px solid #fca5a5; }
+  .hc-toast-info { background:#eff6ff; color:#1e40af; border:1px solid #93c5fd; }
+  @keyframes hc-toast-in {
+    from { opacity:0; transform: translateY(8px); }
+    to   { opacity:1; transform: translateY(0); }
+  }
+
+  /* the gateway-status row gets a thin top accent that reflects overall health */
+  #hc-status-row { transition: border-top-color .3s, background .3s; border-top: 3px solid transparent; }
+  #hc-status-row.healthy { border-top-color: #22c55e; }
+  #hc-status-row.warn    { border-top-color: #f59e0b; }
+  #hc-status-row.failed  { border-top-color: #ef4444; }
+</style>
+</head>
+<body>
+  <header>
+    <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg></span>Prevoyant Server</h1>
+    <span class="version-badge">v${pluginVersion}</span>
+    <div class="meta">
+      <span class="breadcrumb"><a href="/dashboard">Dashboard</a> › Hermes Config</span>
+    </div>
+  </header>
+
+  <div style="max-width:860px;margin:1.5rem auto;padding:0 1.2rem">
+    ${flashHtml}
+
+    <!-- ── Live Status ───────────────────────────────────────────────────────── -->
+    <div class="s-section" style="margin-bottom:1rem">
+      <div style="padding:.75rem 1.1rem;font-weight:600;font-size:.88rem;color:#1e293b;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:.5rem">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+        Gateway Status
+      </div>
+      <div class="status-row" id="hc-status-row">
+        <span id="hc-installed" class="hermes-badge-pill badge-grey"><span class="hc-dot hc-dot-grey"></span>Checking…</span>
+        <span id="hc-gateway"   class="hermes-badge-pill badge-grey"><span class="hc-dot hc-dot-grey"></span>Gateway…</span>
+        <span id="hc-skill"     class="hermes-badge-pill badge-grey"><span class="hc-dot hc-dot-grey"></span>Skill…</span>
+        <button type="button" id="hc-gw-start" onclick="hcGatewayStart()" style="display:none;font-size:.78rem;padding:4px 12px;border:1px solid #86efac;border-radius:7px;background:#dcfce7;color:#166534;cursor:pointer;font-weight:600">▶ Start Gateway</button>
+        <button type="button" id="hc-gw-stop"  onclick="hcGatewayStop()"  style="display:none;font-size:.78rem;padding:4px 12px;border:1px solid #fca5a5;border-radius:7px;background:#fee2e2;color:#991b1b;cursor:pointer;font-weight:600">■ Stop Gateway</button>
+        <button type="button" onclick="hcCheckStatus()" style="font-size:.78rem;padding:4px 12px;border:1px solid #d1d5db;border-radius:7px;background:#fff;cursor:pointer;margin-left:auto">↻ Recheck</button>
+      </div>
+      <div id="hc-installing-banner" style="display:none;padding:.6rem 1.1rem;background:#eff6ff;border-top:1px solid #dbeafe;font-size:.8rem;color:#1e40af">
+        ⏳ Installing Hermes CLI in the background… This may take a minute. Status will update automatically.
+      </div>
+    </div>
+
+    <!-- ── Gateway Log (rolling, auto-refresh every 5s) ─────────────────────── -->
+    <div class="s-section" style="margin-bottom:1rem">
+      <div style="padding:.6rem 1.1rem;font-weight:600;font-size:.85rem;color:#1e293b;border-bottom:1px solid #f1f5f9;display:flex;align-items:center;gap:.5rem;flex-wrap:wrap">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="4 17 10 11 4 5"/><line x1="12" y1="19" x2="20" y2="19"/></svg>
+        Gateway Log
+        <span id="hc-log-meta" style="font-size:.7rem;color:#94a3b8;font-weight:400"></span>
+        <label style="margin-left:auto;font-size:.72rem;color:#6b7280;display:flex;align-items:center;gap:.3rem;font-weight:500;cursor:pointer;user-select:none">
+          <input type="checkbox" id="hc-log-auto" checked onchange="hcToggleLogAuto()" style="margin:0">
+          Auto-refresh (5s)
+        </label>
+        <button type="button" onclick="hcLoadLog()" style="font-size:.72rem;padding:3px 9px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer">↻ Refresh</button>
+      </div>
+      <pre id="hc-log" style="margin:0;padding:.75rem 1.1rem;background:#0f172a;color:#e2e8f0;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:.72rem;line-height:1.5;max-height:340px;overflow:auto;white-space:pre-wrap;word-break:break-word">Loading…</pre>
+      <div id="hc-log-path" style="padding:.4rem 1.1rem;font-size:.68rem;color:#94a3b8;border-top:1px solid #f1f5f9;font-family:ui-monospace,monospace"></div>
+    </div>
+
+    <form method="POST" action="/dashboard/hermes-config">
+
+      <!-- ── Hermes Connection ───────────────────────────────────────────────── -->
+      <details class="s-section" open>
+        <summary>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+          Hermes Connection
+          <span class="s-chevron">›</span>
+        </summary>
+        <div class="s-body">
+          <div class="s-field">
+            <label class="s-label">Enable Hermes <code class="s-key">PRX_HERMES_ENABLED</code></label>
+            <select name="PRX_HERMES_ENABLED" class="s-input">
+              <option value="N"${v('PRX_HERMES_ENABLED') !== 'Y' ? ' selected' : ''}>N — standalone (default)</option>
+              <option value="Y"${v('PRX_HERMES_ENABLED') === 'Y' ? ' selected' : ''}>Y — Hermes mode active</option>
+            </select>
+            <span class="s-hint">When enabled, Hermes becomes the front door for Jira events and delivers notifications to Telegram/Slack/Discord.</span>
+          </div>
+          <div class="s-field">
+            <label class="s-label">Gateway URL <code class="s-key">PRX_HERMES_GATEWAY_URL</code></label>
+            <input type="text" name="PRX_HERMES_GATEWAY_URL" value="${esc(v('PRX_HERMES_GATEWAY_URL') || 'http://localhost:8080')}" class="s-input" placeholder="http://localhost:8080">
+            <span class="s-hint">Base URL of the Hermes gateway process.</span>
+          </div>
+          <div class="s-field span2 pw-wrap">
+            <label class="s-label">Shared Secret <code class="s-key">PRX_HERMES_SECRET</code></label>
+            <input type="password" id="hc-secret" name="PRX_HERMES_SECRET" value="${esc(v('PRX_HERMES_SECRET'))}" class="s-input" placeholder="leave blank to skip validation" autocomplete="off">
+            <button type="button" class="pw-eye" onclick="togglePw('hc-secret',this)">
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+            <span class="s-hint">Hermes must send this in <code>X-Hermes-Secret</code> when calling <code>/internal/enqueue</code>. Leave blank to skip validation.</span>
+          </div>
+        </div>
+      </details>
+
+      <!-- ── Behavior ───────────────────────────────────────────────────────── -->
+      <details class="s-section">
+        <summary>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>
+          Behavior
+          <span class="s-opt">Optional</span>
+          <span class="s-chevron">›</span>
+        </summary>
+        <div class="s-body">
+          <div class="s-field span2">
+            <label class="s-label">Jira Write-back <code class="s-key">PRX_HERMES_JIRA_WRITEBACK</code></label>
+            <select name="PRX_HERMES_JIRA_WRITEBACK" class="s-input" style="max-width:320px">
+              <option value="N"${v('PRX_HERMES_JIRA_WRITEBACK') !== 'Y' ? ' selected' : ''}>N — disabled</option>
+              <option value="Y"${v('PRX_HERMES_JIRA_WRITEBACK') === 'Y' ? ' selected' : ''}>Y — post Jira comment when analysis completes</option>
+            </select>
+            <span class="s-hint">When enabled, Prevoyant posts a summary comment on the Jira ticket after each analysis.</span>
+          </div>
+        </div>
+      </details>
+
+      <!-- ── Telegram Notifications ─────────────────────────────────────────── -->
+      <details class="s-section"${v('PRX_TELEGRAM_ENABLED') === 'Y' || v('PRX_TELEGRAM_BOT_TOKEN') ? ' open' : ''}>
+        <summary>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+          Telegram Notifications
+          <span class="s-opt">Optional</span>
+          <span class="s-chevron">›</span>
+        </summary>
+        <div class="s-body">
+          <div class="s-field span2" style="background:#eff6ff;border:1px solid #dbeafe;border-radius:7px;padding:.65rem .85rem;gap:.3rem">
+            <span style="font-size:.78rem;color:#1e40af;font-weight:600">How to set up</span>
+            <span style="font-size:.75rem;color:#1e40af">1. Create a bot via <a href="https://t.me/BotFather" target="_blank" style="color:#1d4ed8">@BotFather</a> and copy the token.<br>2. Send a message to your bot, then call <code>https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code> to find your Chat ID.<br>3. Paste both below and save.</span>
+          </div>
+          <div class="s-field">
+            <label class="s-label">Enable Telegram <code class="s-key">PRX_TELEGRAM_ENABLED</code></label>
+            <select name="PRX_TELEGRAM_ENABLED" class="s-input">
+              <option value="N"${v('PRX_TELEGRAM_ENABLED') !== 'Y' ? ' selected' : ''}>N — disabled</option>
+              <option value="Y"${v('PRX_TELEGRAM_ENABLED') === 'Y' ? ' selected' : ''}>Y — send Telegram messages</option>
+            </select>
+          </div>
+          <div class="s-field">
+            <label class="s-label">Chat ID <code class="s-key">PRX_TELEGRAM_CHAT_ID</code></label>
+            <input type="text" name="PRX_TELEGRAM_CHAT_ID" value="${esc(v('PRX_TELEGRAM_CHAT_ID'))}" class="s-input" placeholder="-100123456789 or personal user ID">
+            <span class="s-hint">Group/channel IDs start with <code>-100</code>. Personal IDs are plain numbers.</span>
+          </div>
+          <div class="s-field span2 pw-wrap">
+            <label class="s-label">Bot Token <code class="s-key">PRX_TELEGRAM_BOT_TOKEN</code></label>
+            <input type="password" id="hc-tg-token" name="PRX_TELEGRAM_BOT_TOKEN" value="${esc(v('PRX_TELEGRAM_BOT_TOKEN'))}" class="s-input" placeholder="123456:ABC-DEF..." autocomplete="off">
+            <button type="button" class="pw-eye" onclick="togglePw('hc-tg-token',this)">
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+          </div>
+          <input type="hidden" name="PRX_TELEGRAM_EVENTS" id="tg-events-hidden" value="${esc(tgEvents)}">
+          <div class="s-field span2">
+            <label class="s-label" style="margin-bottom:.4rem">Notify on events</label>
+            ${tgEventCheckboxes}
+          </div>
+          <div class="s-field span2">
+            <button type="button" onclick="testTelegramMsg()" style="width:fit-content;font-size:.8rem;padding:.35rem .9rem;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer">Send test message</button>
+            <span id="tg-test-result" style="font-size:.78rem;color:#6b7280"></span>
+          </div>
+        </div>
+      </details>
+
+      <div style="display:flex;gap:.75rem;align-items:center;margin-top:1.2rem">
+        <button type="submit" class="btn-save">Save</button>
+        <a href="/dashboard/settings" style="font-size:.82rem;color:#6b7280;text-decoration:none">← Back to Settings</a>
+      </div>
+    </form>
+  </div>
+
+  <script>
+    function togglePw(id, btn) {
+      const inp = document.getElementById(id);
+      inp.type = inp.type === 'password' ? 'text' : 'password';
+    }
+
+    // ── Gateway status ────────────────────────────────────────────────────────
+    // Tracks state across polls so we can detect a "was running → now stopped" transition.
+    let hcLastGatewayRunning = null;   // null = unknown, true/false thereafter
+    let hcCrashFlagged       = false;  // sticky: once we've shown "exited unexpectedly"
+    let hcVerifyTimer        = null;   // active post-Start verifier
+    let hcLastUserAction     = null;   // 'start' | 'stop' | null — what user just did
+
+    function hcSetBadge(id, dotClass, badgeClass, label, extraClass) {
+      const el = document.getElementById(id);
+      el.className = 'hermes-badge-pill ' + badgeClass + (extraClass ? (' ' + extraClass) : '');
+      el.innerHTML = '<span class="hc-dot ' + dotClass + '"></span>' + label;
+    }
+
+    function hcRenderStatus(s) {
+      // CLI install badge
+      if (s.installing && !s.installed) {
+        hcSetBadge('hc-installed', 'hc-dot-blue pulse', 'badge-blue', 'Installing CLI…');
+      } else if (s.installed) {
+        hcSetBadge('hc-installed', 'hc-dot-green', 'badge-green', 'CLI installed');
+      } else {
+        hcSetBadge('hc-installed', 'hc-dot-red', 'badge-red', 'CLI not installed');
+      }
+
+      // Gateway badge — has an extra "exited unexpectedly" state
+      if (!s.installed) {
+        hcSetBadge('hc-gateway', 'hc-dot-grey', 'badge-grey', 'Gateway —');
+      } else if (s.gatewayRunning) {
+        hcSetBadge('hc-gateway', 'hc-dot-green pulse', 'badge-green', 'Gateway running', 'alive');
+        hcCrashFlagged = false;
+      } else if (hcCrashFlagged) {
+        hcSetBadge('hc-gateway', 'hc-dot-red pulse', 'badge-red', 'Gateway exited — check log', 'crash');
+      } else {
+        hcSetBadge('hc-gateway', 'hc-dot-red', 'badge-red', 'Gateway stopped');
+      }
+
+      // Skill badge
+      if (s.skillInstalled) {
+        hcSetBadge('hc-skill', 'hc-dot-green', 'badge-green', 'Skill deployed');
+      } else if (s.installed) {
+        hcSetBadge('hc-skill', 'hc-dot-red', 'badge-red', 'Skill not deployed');
+      } else {
+        hcSetBadge('hc-skill', 'hc-dot-grey', 'badge-grey', 'Skill —');
+      }
+
+      // Overall health accent on the row
+      const row = document.getElementById('hc-status-row');
+      row.classList.remove('healthy','warn','failed');
+      if (hcCrashFlagged && !s.gatewayRunning) row.classList.add('failed');
+      else if (s.installed && s.gatewayRunning && s.skillInstalled) row.classList.add('healthy');
+      else if (s.installed) row.classList.add('warn');
+
+      // Buttons
+      const start = document.getElementById('hc-gw-start');
+      const stop  = document.getElementById('hc-gw-stop');
+      if (s.installed && !s.installing) {
+        start.style.display = s.gatewayRunning ? 'none' : '';
+        stop.style.display  = s.gatewayRunning ? '' : 'none';
+      } else {
+        start.style.display = stop.style.display = 'none';
+      }
+
+      document.getElementById('hc-installing-banner').style.display = s.installing ? '' : 'none';
+    }
+
+    function hcCheckStatus() {
+      return fetch('/dashboard/api/hermes-status').then(r => r.json()).then(s => {
+        // Crash detection: was running last poll, no longer running, and user didn't click Stop.
+        if (hcLastGatewayRunning === true && !s.gatewayRunning && hcLastUserAction !== 'stop') {
+          hcCrashFlagged = true;
+          hcToast('Gateway exited unexpectedly — see the log below.', 'err');
+          hcLoadLog();
+        }
+        if (s.gatewayRunning) hcCrashFlagged = false;
+        hcLastGatewayRunning = s.gatewayRunning;
+
+        hcRenderStatus(s);
+
+        if (s.installing) setTimeout(hcCheckStatus, 4000);
+        return s;
+      }).catch(() => {});
+    }
+
+    // After Start: poll every 1.5s for ~12s. If gateway never comes up, or comes up
+    // then dies, surface a clear failure state instead of leaving the user guessing.
+    function hcVerifyStart() {
+      if (hcVerifyTimer) clearInterval(hcVerifyTimer);
+      let elapsed = 0;
+      let everUp  = false;
+      hcVerifyTimer = setInterval(() => {
+        elapsed += 1500;
+        fetch('/dashboard/api/hermes-status').then(r => r.json()).then(s => {
+          if (s.gatewayRunning) everUp = true;
+          else if (everUp) {
+            // came up then died — crash
+            hcCrashFlagged = true;
+            hcToast('Gateway started then exited — check the log.', 'err');
+            clearInterval(hcVerifyTimer); hcVerifyTimer = null;
+            hcLoadLog();
+          }
+          hcLastGatewayRunning = s.gatewayRunning;
+          hcRenderStatus(s);
+          if (elapsed >= 12000) {
+            clearInterval(hcVerifyTimer); hcVerifyTimer = null;
+            if (!everUp && !s.gatewayRunning) {
+              hcToast('Gateway did not come up within 12s — check the log.', 'err');
+              hcCrashFlagged = true; hcRenderStatus(s);
+            } else if (everUp && s.gatewayRunning) {
+              hcToast('Gateway running ✓', 'ok');
+            }
+          }
+          hcLoadLog();
+        }).catch(() => {});
+      }, 1500);
+    }
+
+    function hcGatewayStart() {
+      const btn = document.getElementById('hc-gw-start');
+      btn.disabled = true; btn.textContent = 'Starting…';
+      hcLastUserAction = 'start';
+      hcCrashFlagged = false;
+      fetch('/dashboard/api/hermes-gateway/start', { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+          if (!d.ok) {
+            hcToast('Start failed: ' + (d.reason || 'unknown'), 'err');
+          } else if (d.reason === 'already_running') {
+            hcToast('Gateway was already running.', 'info');
+          }
+          hcCheckStatus();
+          hcLoadLog();
+          hcVerifyStart();
+        })
+        .catch(() => hcCheckStatus())
+        .finally(() => { btn.disabled = false; btn.textContent = '▶ Start Gateway'; });
+    }
+
+    function hcGatewayStop() {
+      const btn = document.getElementById('hc-gw-stop');
+      btn.disabled = true; btn.textContent = 'Stopping…';
+      hcLastUserAction = 'stop';
+      if (hcVerifyTimer) { clearInterval(hcVerifyTimer); hcVerifyTimer = null; }
+      fetch('/dashboard/api/hermes-gateway/stop', { method: 'POST' })
+        .then(() => { hcCheckStatus(); hcLoadLog(); setTimeout(() => { hcLoadLog(); hcCheckStatus(); }, 1500); })
+        .catch(() => hcCheckStatus())
+        .finally(() => { btn.disabled = false; btn.textContent = '■ Stop Gateway'; });
+    }
+
+    // Transient bottom-right toast
+    function hcToast(msg, kind) {
+      const t = document.createElement('div');
+      t.className = 'hc-toast hc-toast-' + (kind === 'err' ? 'err' : kind === 'info' ? 'info' : 'ok');
+      t.textContent = msg;
+      document.body.appendChild(t);
+      setTimeout(() => { t.style.transition = 'opacity .35s'; t.style.opacity = '0'; }, 3500);
+      setTimeout(() => { t.remove(); }, 4000);
+    }
+
+    // Background heartbeat — every 10s, refresh status so crashes after navigation are caught.
+    setInterval(() => { if (!hcVerifyTimer) hcCheckStatus(); }, 10000);
+
+    // ── Gateway log (rolling, auto-refresh) ───────────────────────────────────
+    let hcLogAuto       = true;
+    let hcLogPollTimer  = null;
+    let hcLogLastSize   = -1;
+    let hcLogPathShown  = false;
+
+    function hcLoadLog() {
+      fetch('/dashboard/api/hermes-gateway/log').then(r => r.json()).then(d => {
+        const el   = document.getElementById('hc-log');
+        const meta = document.getElementById('hc-log-meta');
+        const pathEl = document.getElementById('hc-log-path');
+        if (!d.ok) {
+          el.textContent = '(error loading log: ' + (d.reason || 'unknown') + ')';
+          meta.textContent = '';
+          return;
+        }
+        if (!hcLogPathShown && d.path) {
+          pathEl.textContent = 'Log file: ' + d.path;
+          hcLogPathShown = true;
+        }
+        if (!d.exists) {
+          el.textContent = '(no log file yet — click Start Gateway to populate)';
+          meta.textContent = '';
+          hcLogLastSize = 0;
+          return;
+        }
+        const wasAtBottom = (el.scrollHeight - el.scrollTop - el.clientHeight) < 30;
+        el.textContent = d.text || '(empty)';
+        const kb = Math.round((d.size || 0) / 1024 * 10) / 10;
+        const grew = (d.size > hcLogLastSize && hcLogLastSize >= 0) ? ' · new output' : '';
+        meta.textContent = '· ' + kb + ' KB' + grew;
+        hcLogLastSize = d.size;
+        if (wasAtBottom) el.scrollTop = el.scrollHeight;
+      }).catch(() => {});
+    }
+
+    function hcStartLogPolling() {
+      if (hcLogPollTimer) return;
+      hcLogPollTimer = setInterval(() => { if (hcLogAuto) hcLoadLog(); }, 5000);
+    }
+
+    function hcToggleLogAuto() {
+      hcLogAuto = document.getElementById('hc-log-auto').checked;
+    }
+
+    hcCheckStatus();
+    hcLoadLog();
+    hcStartLogPolling();
+
+    // ── Telegram event checkboxes ─────────────────────────────────────────────
+    function syncTgEvents() {
+      const vals = [...document.querySelectorAll('.tg-evt-cb:checked')].map(c => c.value);
+      document.getElementById('tg-events-hidden').value = vals.join(',');
+    }
+
+    // ── Test message ──────────────────────────────────────────────────────────
+    function testTelegramMsg() {
+      const result = document.getElementById('tg-test-result');
+      result.textContent = 'Sending…'; result.style.color = '#6b7280';
+      fetch('/dashboard/api/hermes-telegram-test', { method: 'POST' })
+        .then(r => r.json())
+        .then(d => {
+          result.textContent = d.ok ? '✓ Message sent' : '✗ ' + (d.reason || 'failed');
+          result.style.color = d.ok ? '#166534' : '#991b1b';
+        })
+        .catch(() => { result.textContent = '✗ Request failed'; result.style.color = '#991b1b'; });
+    }
+  </script>
+</body></html>`;
 }
 
 function renderKnowledgeBuilder(flash) {

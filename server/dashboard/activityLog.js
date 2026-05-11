@@ -7,6 +7,7 @@ const http           = require('http');
 const https          = require('https');
 const { spawn }      = require('child_process');
 const wa             = require('../notifications/whatsapp');
+const tg             = require('../notifications/telegram');
 
 const MAX_EVENTS = 5000;
 let events  = [];
@@ -169,6 +170,12 @@ function uploadToTmpFiles(filePath) {
   });
 }
 
+function fireTelegram(event) {
+  if (!tg.shouldSend(event.type)) return;
+  const text = tg.eventText(event.type, event.ticketKey, event.details);
+  if (text) tg.sendText(text).catch(() => {});
+}
+
 async function fireWhatsApp(event) {
   if (!wa.shouldSend(event.type)) return;
 
@@ -243,6 +250,7 @@ function record(type, ticketKey = null, actor = 'system', details = {}) {
   }
   fireWebhook(event);
   fireWhatsApp(event);
+  fireTelegram(event);
   return event;
 }
 
