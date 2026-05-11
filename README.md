@@ -872,26 +872,307 @@ Hermes calls `POST /internal/enqueue` (authenticated by `X-Hermes-Secret`):
 | `jira.pr.opened` | review |
 | `jira.ticket.stale` | estimate |
 
-### Telegram notifications
+### Telegram — full setup guide
 
-Prevoyant ships with a built-in Telegram channel (alongside Email and WhatsApp) — no Hermes required. When Hermes is enabled, Telegram alerts can additionally flow through Hermes's own routing layer, but the built-in channel is the simplest path.
+Prevoyant ships with a built-in Telegram channel — no Hermes required. It works in two directions, controlled by two independent flags:
 
-**To enable built-in Telegram alerts:**
+| Direction | Flag | What it does |
+|---|---|---|
+| **Outbound** (Prevoyant → you) | `PRX_TELEGRAM_ENABLED=Y` | Sends alerts: `🟢 Hermes gateway started`, `❌ PROJ-123 failed`, etc. |
+| **Inbound** (you → Prevoyant) | `PRX_TELEGRAM_INBOUND_ENABLED=Y` | Accepts slash commands: `/dev PROJ-123`, `/queue`, `/status PROJ-123` |
 
-1. [Create a Telegram bot](https://t.me/BotFather) and copy the bot token.
-2. Get your chat ID (send a message to your bot, then call `https://api.telegram.org/bot<TOKEN>/getUpdates`).
-3. Open **Dashboard → Hermes Config → Telegram Notifications** and fill in:
+You can run **outbound alone**, or **both directions** with the same bot token. Inbound requires outbound (replies need the `sendMessage` path).
 
-   - `PRX_TELEGRAM_ENABLED=Y`
-   - `PRX_TELEGRAM_BOT_TOKEN=<your bot token>`
-   - `PRX_TELEGRAM_CHAT_ID=<your chat or channel ID>`
-   - `PRX_TELEGRAM_EVENTS=ticket_completed,ticket_failed,...` (comma-separated; blank = all events)
+> **Heads-up:** the inbound listener **auto-disables when `PRX_HERMES_ENABLED=Y`**. Telegram delivers each message to exactly one consumer of `getUpdates`, so Hermes and Prevoyant can't both poll the same bot. If you want commands while running Hermes, either use a separate bot for Prevoyant, or let Hermes handle the chat.
 
-4. Click **Send test message** to verify delivery, then **Save**.
+---
 
-Telegram messages are dispatched from `server/dashboard/activityLog.js` alongside the existing webhook/WhatsApp fan-out — they're independent of the Hermes gateway and continue to work even when `PRX_HERMES_ENABLED=N`.
+#### Step 1 — Create a Telegram bot
 
-**Slack / Discord** routing currently lives on the Hermes side. With `PRX_HERMES_ENABLED=Y` the job result JSON is POSTed to the Hermes gateway, and Hermes fans it out to whichever platforms are configured in `~/.hermes/config.toml`.
+1. In Telegram, open a chat with [**@BotFather**](https://t.me/BotFather).
+2. Send `/newbot`.
+3. Pick a **display name** (e.g. `Prevoyant Bot`) and a **username** ending in `bot` (e.g. `prevoyant_alerts_bot`).
+4. BotFather replies with your **bot token** — it looks like `123456789:ABCdefGHIjklMNOpqrSTUvwxYZ1234567890`. **Copy this**; it's the secret used in `PRX_TELEGRAM_BOT_TOKEN`.
+5. *(Optional, recommended for groups)* If you'll add the bot to a group and want it to read all messages — not just commands — also send `/setprivacy` to BotFather, choose your bot, and select **Disable**. For the default Prevoyant flow, you can leave this alone: we only act on slash commands, and BotFather's default privacy mode already passes `/commands` through.
+
+---
+
+#### Step 2 — Find your chat ID
+
+The chat ID is the **only chat from which inbound commands are accepted** (allowlist of one). Pick whichever flavour fits how you'll talk to the bot:
+
+**Option A — Personal (DM to the bot, recommended for solo use)**
+
+1. In Telegram, search for your bot's username and open a chat. Send any message (e.g. `hello`).
+2. In a browser, visit:
+
+   ```
+   https://api.telegram.org/bot<YOUR-TOKEN>/getUpdates
+   ```
+
+3. Find the first `"chat":{"id":<NUMBER>,...}` in the JSON response. That number (positive integer, e.g. `123456789`) is your `PRX_TELEGRAM_CHAT_ID`.
+
+**Option B — Quick lookup via a helper bot**
+
+Chat with [**@userinfobot**](https://t.me/userinfobot) — it replies instantly with your numeric Telegram user ID, which is the same as your personal DM chat ID. Faster than fishing through `getUpdates` JSON.
+
+**Option C — Group chat (you + teammates can issue commands)**
+
+1. Create a Telegram group, add your bot as a member.
+2. In the group, send `/start@<your-bot-username>` (or any message starting with `/`).
+3. Visit `https://api.telegram.org/bot<TOKEN>/getUpdates` and look for `"chat":{"id":<NEGATIVE-NUMBER>,"type":"group",...}`. Group IDs are **negative**, e.g. `-1001234567890`. Use that as `PRX_TELEGRAM_CHAT_ID`.
+
+> **Tip:** if `getUpdates` returns `{"ok":true,"result":[]}`, you haven't sent a message *after* the bot was added. Send a fresh `/start` and refresh the URL.
+
+---
+
+#### Step 3 — Configure Prevoyant
+
+Open **Dashboard → Hermes Config** (the Hermes badge in the topbar links there when Hermes is on; otherwise visit `/dashboard/hermes-config` directly), scroll to **Telegram Notifications**, and fill in:
+
+| Field | Value |
+|---|---|
+| Enable Telegram | `Y` |
+| Bot Token | the token from BotFather |
+| Chat ID | your chat ID from Step 2 |
+| Notify on events | tick the events you want — leave all ticked for the full firehose, or untick e.g. `poll_ran` to quiet it down |
+| Bi-directional commands | `Y` to accept slash commands; `N` for alerts-only |
+
+Click **Save**. Settings take effect immediately — no restart.
+
+---
+
+#### Step 4 — Verify outbound
+
+Hit **Send test message** in the Telegram Notifications panel. You should see:
+
+> 🔔 **Prevoyant test message**
+> Telegram notifications are working correctly.
+
+land in your Telegram chat within ~1 second. If you don't:
+
+- **`Telegram not enabled or missing token/chat ID`** — re-check the three fields above.
+- **No message and no UI error** — most often a wrong chat ID (we posted to a chat the bot isn't in, so Telegram silently `403`s). Re-derive the chat ID via Step 2.
+
+---
+
+#### Step 5 — Verify inbound
+
+If you turned on **Bi-directional commands**:
+
+1. Watch the **Listener** badge under the Bi-directional commands row. Within ~1 second it should turn green: `Listener: running · offset <N>`.
+   - If it shows **`Listener: off (Hermes mode)`** — that's the auto-disable kicking in. Either flip `PRX_HERMES_ENABLED` to `N`, or use a separate bot.
+   - If it shows **`Listener: off — Bot token missing` / `Chat ID missing`** — save the fields and refresh.
+2. In your Telegram chat with the bot, type `/help`. The slash-command menu should also be populated automatically (tap `/` in the message field to see it). Within ~1–25 seconds (long-poll latency), you'll get a reply listing the commands.
+3. Try the real thing: `/dev PROJ-123` (replace with a real ticket key). You should see:
+
+   > ✅ **PROJ-123** queued for **dev** mode
+
+   …and the ticket will appear in the dashboard activity log with `source: telegram` and actor `telegram`.
+
+---
+
+#### Available commands
+
+| Command | What it does | Example |
+|---|---|---|
+| `/dev <KEY>` | Queues a dev-mode analysis (root-cause + fix proposal) | `/dev PROJ-123` |
+| `/review <KEY>` | Queues a PR review | `/review PROJ-456` |
+| `/estimate <KEY>` | Queues a Planning Poker estimate | `/estimate PROJ-789` |
+| `/status <KEY>` | Shows the current state of a ticket (queued / running / completed, mode, timestamps) | `/status PROJ-123` |
+| `/queue` | Lists all active + queued tickets (max 15) | `/queue` |
+| `/help` | Shows the menu | `/help` |
+
+Commands work with the bot suffix too: `/dev@prevoyant_alerts_bot PROJ-123` — handy in groups where multiple bots are present.
+
+Messages from any chat other than `PRX_TELEGRAM_CHAT_ID` are silently dropped (and a debug line is written to `server/prevoyant-server.log` so you can see drops in real time).
+
+---
+
+#### Co-existence with Hermes
+
+| Mode | Outbound (alerts) | Inbound (commands) |
+|---|---|---|
+| `PRX_HERMES_ENABLED=N` (default) | ✅ Prevoyant → Telegram directly | ✅ Prevoyant listener handles slash commands |
+| `PRX_HERMES_ENABLED=Y` | ✅ Prevoyant → Telegram directly (still works) | 🚫 Prevoyant listener auto-disabled — Hermes owns the chat surface (and can do NL on top of it) |
+| `PRX_HERMES_ENABLED=Y` + separate bot for Prevoyant | ✅ Two bots, no conflict | ✅ Two bots, no conflict |
+
+The "two bots" pattern is the right one if you want both Hermes's natural-language understanding **and** Prevoyant's deterministic slash commands.
+
+---
+
+#### Troubleshooting
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `401 Unauthorized` on `getUpdates` or `sendMessage` | Bot token is wrong / typo / extra whitespace | Re-paste the token from BotFather. The token format is `<numeric-id>:<35-char-string>`. |
+| `Conflict: terminated by other getUpdates request` in `prevoyant-server.log` | Another process (often Hermes, or a forgotten dev script) is also polling the same bot | Stop the other consumer, or use a different bot for Prevoyant. |
+| `Forbidden: bot was blocked by the user` | You blocked the bot in Telegram | Open the chat in Telegram → top-right menu → Unblock. |
+| Test message succeeds but `/dev` produces no reply | Listener isn't running (check the badge) | Toggle `PRX_TELEGRAM_INBOUND_ENABLED=Y`, save, watch the badge turn green. |
+| Listener badge stays grey: `Listener: off — Chat ID missing` | Saved without a chat ID, or chat ID has stray whitespace | Re-enter the chat ID. Personal IDs are plain positive integers, group IDs start with `-100`. |
+| Listener badge: `Listener: off (Hermes mode)` and you want both | `PRX_HERMES_ENABLED=Y` blocks the listener | Either use Hermes for inbound (it speaks Telegram natively), or set up a second bot whose token only Prevoyant knows. |
+| `/dev FOO-123` says "Invalid ticket key" | Key format must match `^[A-Z][A-Z0-9_]*-\d+$` | Make sure the prefix is uppercase letters and there's a dash + number (e.g., `PROJ-1`, `ABC123_KEY-42`). |
+| `/queue` always says "Queue is empty" even though jobs are running | The tracker hasn't recorded the ticket yet (jobs queued via legacy webhook before this feature shipped won't show their `source`) | New jobs will appear normally. Old jobs still complete, just don't list under `/queue`. |
+| Replies take 1–25 seconds | That's the long-poll window | Normal. The next `getUpdates` call after your message replies almost instantly; if no traffic the cycle waits up to 25 s. |
+| Server restart loses state | None — `~/.prevoyant/telegram-state.json` persists the last update ID | Restart freely; the listener resumes where it left off. |
+
+**Where to look when something is wrong:** `server/prevoyant-server.log` filtered by `[telegram/listener]` shows every poll cycle, message receipt, ignored chat, dispatch result, and error.
+
+---
+
+#### Slack and Discord
+
+These remain Hermes-side. With `PRX_HERMES_ENABLED=Y`, the job result JSON is POSTed to the Hermes gateway, and Hermes fans it out to whichever platforms are configured in `~/.hermes/config.toml` — including Slack, Discord, Matrix, and email. Prevoyant doesn't ship built-in channels for those.
+
+---
+
+### Telegram + Hermes — worked examples
+
+When `PRX_HERMES_ENABLED=Y`, the chat surface shifts from Prevoyant's built-in slash-command listener to Hermes itself. Hermes is an LLM-driven agent, so it understands natural language and can interpret loose phrasing into the precise `POST /internal/enqueue` call Prevoyant expects. Here's how that looks in practice.
+
+> **The flow at a glance:**
+> ```
+> Telegram → Hermes (interprets + routes) → POST /internal/enqueue → Prevoyant (queues, runs Claude Code)
+>     ↑                                                                    │
+>     └────── Hermes reply ←── poll /internal/jobs/recent-results ←────────┘
+> ```
+
+---
+
+#### Example 1 — Loose natural-language analyse request
+
+```
+You (Telegram, 14:02):
+  Hey, can you take a look at PROJ-1234? I'm seeing a 500 in prod.
+
+Hermes (14:02):
+  On it. Queuing dev-mode analysis for PROJ-1234 — I'll ping you when done.
+
+  [Behind the scenes Hermes POSTs to Prevoyant:
+   POST http://localhost:3000/internal/enqueue
+   X-Hermes-Secret: <PRX_HERMES_SECRET>
+   { "ticket_key": "PROJ-1234", "event_type": "jira.status.in_progress",
+     "mode": "dev", "priority": "normal", "meta": { "source": "telegram",
+     "user": "@you", "intent": "investigate 500" } }]
+
+  ── 4 minutes pass; Hermes polls /internal/jobs/recent-results ──
+
+Hermes (14:06):
+  PROJ-1234 done ✅
+  • Root cause: missing null-check in `authMiddleware.js:42` — undefined session
+    when the cookie is malformed.
+  • Fix proposal: 3 file changes (middleware + 2 tests). Branch:
+    feature/PROJ-1234-fix-auth-nullcheck.
+  • Cost: $0.14 | Duration: 3m 51s
+  Full report: <localhost:3000 report URL>
+```
+
+**What's different from Prevoyant's direct inbound:** Prevoyant alone would need exact `/dev PROJ-1234` — no "Hey, can you…" parsing. Hermes adds the NL layer; the heavy lifting on Prevoyant's side is identical.
+
+---
+
+#### Example 2 — Review request in a team group chat
+
+```
+─── #payments-team Telegram group ───
+
+@lead-dev (Telegram, 09:14):
+  @prevoyant_via_hermes_bot please review TRX-2001 before standup
+
+Hermes (09:14):
+  Got it @lead-dev — review queued for TRX-2001. Will reply here at standup
+  time.
+
+  [POST /internal/enqueue { ticket_key: "TRX-2001", mode: "review",
+                            event_type: "jira.pr.opened",
+                            meta: { requested_by: "@lead-dev",
+                                    deadline: "standup" } }]
+
+  ── Hermes polls /internal/jobs/recent-results every 60s ──
+
+Hermes (09:21):
+  TRX-2001 review complete:
+  ✅ Approved — no blocking issues.
+  • Coverage delta: +2.3% (87.1% → 89.4%)
+  • New tests: 4 unit + 1 integration
+  • Style: minor — one unused import in helpers.ts:8
+  • Risk: low — touches isolated handler, no schema changes
+  Recommendation: merge before standup. Full report attached.
+```
+
+**Why Hermes shines in groups:** the bot only responds when @mentioned (controlled by BotFather privacy mode, on by default). Multiple devs can chat freely without each line being interpreted as a command. Prevoyant's deterministic listener would react to anything starting with `/` from the allowlist chat — fine for a DM, noisy in a group.
+
+---
+
+#### Example 3 — Status check on an in-flight job
+
+```
+You (Telegram, 10:30):
+  what's happening with PROJ-1234?
+
+Hermes (10:30):
+  Looking… checking Prevoyant's job state.
+  [GET http://localhost:3000/internal/jobs/recent-results
+       — returns nothing for in-flight, only completed]
+  [GET http://localhost:3000/dashboard/json
+       — public dashboard JSON includes the running ticket]
+
+Hermes (10:30):
+  PROJ-1234 is currently RUNNING in dev mode.
+  • Started: 4 min ago (10:26)
+  • Stage: 6 of 12 — "exploring failure trace"
+  • Token spend so far: 28k input + 5.2k output = ~$0.09
+  Expected to finish in ~6–8 min based on similar past tickets.
+```
+
+**Caveat — today's reality:** Prevoyant doesn't yet expose a dedicated `/internal/status/<ticket>` endpoint to Hermes, but the dashboard's public JSON at `/dashboard/json` carries the same information. A well-configured Hermes deployment can read it directly. The next reasonable improvement is a tightly-scoped `/internal/status` endpoint behind `X-Hermes-Secret` — open as a follow-up.
+
+---
+
+#### Example 4 — Conditional routing based on Jira metadata
+
+This is what Hermes was built for: stitch together signals and make routing decisions Prevoyant alone couldn't.
+
+```
+[A Jira webhook lands at Hermes, not at Prevoyant.]
+[Hermes sees: TRX-9988, label="urgent", assignee=@bob, status=Code Review]
+
+Hermes (decides — its own rules):
+  - urgent label + Code Review status → mode=review with priority=urgent
+  - Notify @bob and the #payments-team group simultaneously
+  - Track ticket for standup follow-up
+
+Hermes → Prevoyant:
+  POST /internal/enqueue
+  { ticket_key: "TRX-9988", event_type: "jira.pr.opened",
+    mode: "review", priority: "urgent",
+    meta: { assignee: "@bob", label: "urgent" } }
+
+Hermes → @bob (DM, instant):
+  TRX-9988 review just queued urgent (you're assignee). ETA ~5 min.
+
+Hermes → #payments-team (instant):
+  Heads-up: TRX-9988 is in urgent review, @bob is on it. I'll post the result
+  here when ready.
+
+  ── 5 min later ──
+
+Hermes → both chats:
+  TRX-9988: ⚠️ REQUEST_CHANGES — found 2 blocking issues. See attached report.
+```
+
+This is the difference Hermes makes: **Prevoyant runs the analysis, Hermes orchestrates the human side of it** — fan-out, priority routing, conversational state, follow-ups.
+
+---
+
+#### How to mentally model it
+
+| Layer       | Best at                                                            |
+| ----------- | ------------------------------------------------------------------ |
+| **Prevoyant direct inbound** (`PRX_TELEGRAM_INBOUND_ENABLED=Y`) | Deterministic slash commands. Single-user DMs. Zero LLM cost on the command path. No public URL needed. |
+| **Hermes-routed inbound** (`PRX_HERMES_ENABLED=Y`)              | Natural-language requests. Group chats. Cross-platform fan-out (Telegram + Slack + Discord + email). Conditional routing rules. Conversational follow-ups. |
+
+You can also run both **with separate bots** — one Telegram bot for `PRX_TELEGRAM_*` (Prevoyant's deterministic surface, e.g. for CI scripts that POST exact commands), and a different bot Hermes owns for the human-facing channel. They never collide because they have different tokens, so `getUpdates` on each is independent.
 
 ### Reverting to standalone
 
@@ -1057,6 +1338,12 @@ rm -rf ~/.prevoyant/reports   # or the path set in CLAUDE_REPORT_DIR
 - **`server/integrations/hermes/scripts/install.sh` / `uninstall.sh`:** Interactive setup/teardown scripts. `install.sh` writes the Hermes env vars, prints Jira webhook registration instructions, and guides the Hermes-side configuration in one run. `uninstall.sh` reverts to standalone in under 30 seconds.
 
 - **Startup fallback sweep in Hermes mode:** Even when Hermes owns the cron, a one-time `poll-jira.sh` sweep runs on server startup to recover tickets that arrived while the server was offline.
+
+- **Telegram notifications (built-in, no Hermes required):** New `PRX_TELEGRAM_*` channel in `server/notifications/telegram.js` dispatched from the activity-log fan-out alongside webhook + WhatsApp. Configure under **Dashboard → Hermes Config → Telegram Notifications**: bot token, chat ID, and per-event allowlist (`ticket_completed`, `ticket_failed`, etc.). Sends `🟢 Hermes gateway started`, `❌ PROJ-123 failed`, and the other activity events as plain-text Telegram messages. Independent of `PRX_HERMES_ENABLED` — works in either mode.
+
+- **Bi-directional Telegram (slash commands):** Toggle `PRX_TELEGRAM_INBOUND_ENABLED=Y` to make Prevoyant accept commands sent to the bot. Available commands: `/dev <KEY>` queues a dev-mode analysis, `/review <KEY>` queues review mode, `/estimate <KEY>` queues estimate mode, `/status <KEY>` shows the live state of a ticket, `/queue` lists all active+queued tickets, `/help` shows the menu. The listener long-polls Telegram (`getUpdates`, ~25 s wait) and persists its update offset in `~/.prevoyant/telegram-state.json` across restarts. **Auto-disabled when `PRX_HERMES_ENABLED=Y`** — Hermes already owns the chat surface and only one consumer can poll a bot at a time. Only messages from `PRX_TELEGRAM_CHAT_ID` are accepted; others are dropped with a debug log. Inbound listener status (running / stopped / off-due-to-Hermes) is shown live in the Hermes Config page.
+
+- **Hermes gateway lifecycle dashboard:** New dedicated page at `/dashboard/hermes-config` (linked from the topbar's Hermes badge when enabled). Live status pills with coloured pulse dots (CLI installed · Gateway running · Skill deployed), Start/Stop gateway buttons, post-Start verification poll (12 s) that surfaces crashes via toast, and a rolling gateway log panel that tails `~/.hermes/gateway.log` and auto-refreshes every 5 s. Gateway liveness now reads `~/.hermes/gateway.pid` directly instead of relying on `pgrep` (the daemon runs as `python -m hermes_cli.main gateway run`, which the old `pgrep "hermes gateway"` heuristic missed). Stop uses `hermes gateway stop` with a SIGTERM fallback to the recorded PID.
 
 ### v1.2.10 — Memory Efficiency, Animated Sun Logo, Backup & Export, Per-agent Personal Memory, KB Flow Analyst
 

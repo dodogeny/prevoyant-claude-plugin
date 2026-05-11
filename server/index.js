@@ -21,6 +21,7 @@ const { restoreScheduledJobs } = require('./queue/jobQueue');
 const activityLog   = require('./dashboard/activityLog');
 const serverEvents  = require('./serverEvents');
 const watchManager  = require('./watchers/watchManager');
+const telegramListener = require('./notifications/telegramListener');
 
 const app = express();
 app.use(express.json());
@@ -350,6 +351,14 @@ serverEvents.on('settings-saved', () => {
     // PRX_HERMES_ENABLED toggled to N — stop the gateway (don't uninstall).
     setImmediate(() => hermesManager.stopGateway());
   }
+
+  // Telegram inbound listener — auto-disabled while Hermes mode is on.
+  const tgListenerStatus = telegramListener.status();
+  if (telegramListener.isInboundEnabled() && !tgListenerStatus.running) {
+    telegramListener.start();
+  } else if (!telegramListener.isInboundEnabled() && tgListenerStatus.running) {
+    telegramListener.stop();
+  }
 });
 
 // Manual scan trigger from /dashboard/knowledge-builder run-now button.
@@ -404,4 +413,7 @@ app.listen(config.port, () => {
     console.log('[prevoyant-server] Scheduled polling disabled — running one-time startup scan as webhook fallback');
     runFallbackPoll();
   }
+
+  // Bi-directional Telegram (no-op if disabled / Hermes is on).
+  telegramListener.start();
 });

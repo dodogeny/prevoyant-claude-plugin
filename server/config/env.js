@@ -15,6 +15,7 @@ module.exports = {
   telegramBotToken: process.env.PRX_TELEGRAM_BOT_TOKEN || '',
   telegramChatId: process.env.PRX_TELEGRAM_CHAT_ID || '',
   telegramEvents: process.env.PRX_TELEGRAM_EVENTS || '',
+  telegramInboundEnabled: process.env.PRX_TELEGRAM_INBOUND_ENABLED === 'Y',
   jiraUsername: process.env.JIRA_USERNAME || process.env.JIRA_USER || '',
   jiraUrl: process.env.JIRA_URL || '',
   jiraToken: process.env.JIRA_API_TOKEN || process.env.JIRA_TOKEN || '',

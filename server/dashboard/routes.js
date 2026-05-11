@@ -1058,10 +1058,11 @@ function renderDashboard(stats, budget) {
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       Settings
     </a>
-    ${process.env.PRX_HERMES_ENABLED === 'Y' ? `<a href="/dashboard/hermes-config" class="hermes-agent-badge" title="Hermes agent active — click to manage">
-      <span class="hermes-pulse-dot"></span>
+    ${process.env.PRX_HERMES_ENABLED === 'Y' ? `<a id="dash-hermes-badge" href="/dashboard/hermes-config" class="hermes-agent-badge" title="Hermes — click to manage">
+      <span id="dash-hermes-dot" class="hermes-pulse-dot"></span>
       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-      Hermes
+      <span>Hermes</span>
+      <span id="dash-hermes-state" style="opacity:.8;font-weight:500;font-size:.72rem;margin-left:.15rem">· starting…</span>
     </a>` : ''}
     <div class="refresh-note">
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
@@ -1076,6 +1077,86 @@ function renderDashboard(stats, budget) {
       </select>
     </div>
   </header>
+
+  ${process.env.PRX_HERMES_ENABLED === 'Y' ? `
+  <div id="dash-hermes-strip" style="display:none;background:#f0fdf4;border-bottom:1px solid #bbf7d0;padding:.45rem 1.4rem;font-size:.78rem;color:#166534;align-items:center;gap:.6rem">
+    <span id="dash-hermes-strip-dot" style="display:inline-block;width:8px;height:8px;border-radius:50%;background:#22c55e;position:relative;flex-shrink:0">
+      <span style="position:absolute;inset:-4px;border-radius:50%;border:2px solid #22c55e;animation:hermes-ripple 1.8s ease-out infinite"></span>
+    </span>
+    <strong>Hermes gateway</strong>
+    <span id="dash-hermes-strip-text">listening for events</span>
+    <span id="dash-hermes-strip-meta" style="color:#15803d;opacity:.75;margin-left:.35rem"></span>
+    <a href="/dashboard/hermes-config" style="margin-left:auto;font-size:.74rem;color:#166534;text-decoration:none;border:1px solid #86efac;padding:2px 9px;border-radius:6px;background:#dcfce7">Manage →</a>
+  </div>
+  <script>
+    (function() {
+      const STATE_COLORS = {
+        listening: { strip:'#f0fdf4', border:'#bbf7d0', text:'#166534', dot:'#22c55e', mgrBg:'#dcfce7', pulse:true },
+        idle:      { strip:'#fef2f2', border:'#fecaca', text:'#991b1b', dot:'#ef4444', mgrBg:'#fee2e2', pulse:false },
+        installing:{ strip:'#eff6ff', border:'#bfdbfe', text:'#1e40af', dot:'#3b82f6', mgrBg:'#dbeafe', pulse:true },
+        setup:     { strip:'#f9fafb', border:'#e5e7eb', text:'#374151', dot:'#9ca3af', mgrBg:'#f3f4f6', pulse:false },
+      };
+      const STATE_TEXT = {
+        listening: 'listening for events',
+        idle:      'stopped — click Manage to start',
+        installing:'installing Hermes CLI in background…',
+        setup:     'CLI not installed — visit Manage to install',
+      };
+
+      function applyStripState(state) {
+        const c    = STATE_COLORS[state];
+        const strip = document.getElementById('dash-hermes-strip');
+        if (!strip || !c) return;
+        strip.style.display     = 'flex';
+        strip.style.background  = c.strip;
+        strip.style.borderColor = c.border;
+        strip.style.color       = c.text;
+        const dot = document.getElementById('dash-hermes-strip-dot');
+        dot.style.background = c.dot;
+        dot.firstElementChild.style.borderColor = c.dot;
+        dot.firstElementChild.style.display = c.pulse ? '' : 'none';
+        document.getElementById('dash-hermes-strip-text').textContent = STATE_TEXT[state];
+        const a = strip.querySelector('a');
+        a.style.background = c.mgrBg;
+        a.style.borderColor = c.border;
+        a.style.color = c.text;
+      }
+
+      function applyBadgeState(state) {
+        const labelMap = { listening:'· Listening', idle:'· Idle', installing:'· Installing', setup:'· Setup' };
+        const colorMap = { listening:'#22c55e', idle:'#ef4444', installing:'#3b82f6', setup:'#9ca3af' };
+        const titleMap = {
+          listening: 'Hermes gateway listening for events',
+          idle:      'Hermes gateway stopped — click to manage',
+          installing:'Hermes CLI installing in background',
+          setup:     'Hermes CLI not installed — click to set up',
+        };
+        const badge = document.getElementById('dash-hermes-badge');
+        if (!badge) return;
+        const dot   = document.getElementById('dash-hermes-dot');
+        const text  = document.getElementById('dash-hermes-state');
+        text.textContent = labelMap[state] || '';
+        dot.style.background = colorMap[state] || '#9ca3af';
+        // The ripple inherits the dot background via ::after border-color; restyle inline.
+        badge.title = titleMap[state] || 'Hermes';
+      }
+
+      function refreshHermesStatus() {
+        fetch('/dashboard/api/hermes-status').then(r => r.json()).then(s => {
+          let state;
+          if (s.installing)            state = 'installing';
+          else if (!s.installed)       state = 'setup';
+          else if (s.gatewayRunning)   state = 'listening';
+          else                         state = 'idle';
+          applyBadgeState(state);
+          applyStripState(state);
+        }).catch(() => {});
+      }
+
+      refreshHermesStatus();
+      setInterval(refreshHermesStatus, 10000);
+    })();
+  </script>` : ''}
 
   ${(() => {
     const upd = readUpdateStatus();
@@ -5276,6 +5357,16 @@ router.post('/api/hermes-telegram-test', (_req, res) => {
     .catch(err => res.json({ ok: false, reason: err.message }));
 });
 
+// Inbound Telegram listener status — polled by the Hermes Config page.
+router.get('/api/telegram-inbound/status', (_req, res) => {
+  try {
+    const listener = require('../notifications/telegramListener');
+    res.json({ ok: true, ...listener.status() });
+  } catch (err) {
+    res.json({ ok: false, reason: err.message });
+  }
+});
+
 // Hermes Config page
 router.get('/hermes-config', (_req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
@@ -5287,6 +5378,7 @@ router.post('/hermes-config', express.urlencoded({ extended: false }), (req, res
   const FIELDS = [
     'PRX_HERMES_ENABLED', 'PRX_HERMES_GATEWAY_URL', 'PRX_HERMES_SECRET', 'PRX_HERMES_JIRA_WRITEBACK',
     'PRX_TELEGRAM_ENABLED', 'PRX_TELEGRAM_BOT_TOKEN', 'PRX_TELEGRAM_CHAT_ID', 'PRX_TELEGRAM_EVENTS',
+    'PRX_TELEGRAM_INBOUND_ENABLED',
   ];
   try {
     const updates = {};
@@ -6053,6 +6145,20 @@ function renderHermesConfig(vals, flash) {
             <label class="s-label" style="margin-bottom:.4rem">Notify on events</label>
             ${tgEventCheckboxes}
           </div>
+
+          <!-- ── Bi-directional commands (inbound) ──────────────────────────── -->
+          <div class="s-field span2" style="border-top:1px dashed #e5e7eb;padding-top:.85rem;margin-top:.5rem">
+            <label class="s-label">Bi-directional commands <code class="s-key">PRX_TELEGRAM_INBOUND_ENABLED</code></label>
+            <select name="PRX_TELEGRAM_INBOUND_ENABLED" class="s-input" style="max-width:360px">
+              <option value="N"${v('PRX_TELEGRAM_INBOUND_ENABLED') !== 'Y' ? ' selected' : ''}>N — outbound only (default)</option>
+              <option value="Y"${v('PRX_TELEGRAM_INBOUND_ENABLED') === 'Y' ? ' selected' : ''}>Y — accept commands from Telegram</option>
+            </select>
+            <span class="s-hint">When enabled, Prevoyant long-polls Telegram and accepts slash commands from the configured chat ID. <strong>Available commands:</strong> <code>/dev</code> <code>/review</code> <code>/estimate</code> <code>/status</code> <code>/queue</code> <code>/help</code>. Auto-disabled while <code>PRX_HERMES_ENABLED=Y</code> (Hermes owns the chat surface).</span>
+            <div id="tg-inbound-status" style="margin-top:.45rem;font-size:.74rem;display:flex;align-items:center;gap:.4rem">
+              <span class="hermes-badge-pill badge-grey"><span class="hc-dot hc-dot-grey"></span>Listener: checking…</span>
+            </div>
+          </div>
+
           <div class="s-field span2">
             <button type="button" onclick="testTelegramMsg()" style="width:fit-content;font-size:.8rem;padding:.35rem .9rem;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer">Send test message</button>
             <span id="tg-test-result" style="font-size:.78rem;color:#6b7280"></span>
@@ -6287,6 +6393,38 @@ function renderHermesConfig(vals, flash) {
       const vals = [...document.querySelectorAll('.tg-evt-cb:checked')].map(c => c.value);
       document.getElementById('tg-events-hidden').value = vals.join(',');
     }
+
+    // ── Inbound listener status ───────────────────────────────────────────────
+    function hcLoadInboundStatus() {
+      fetch('/dashboard/api/telegram-inbound/status').then(r => r.json()).then(d => {
+        const el = document.getElementById('tg-inbound-status');
+        if (!el) return;
+        if (!d.ok) {
+          el.innerHTML = '<span class="hermes-badge-pill badge-red"><span class="hc-dot hc-dot-red"></span>Listener: error</span>';
+          return;
+        }
+        let badge;
+        if (d.running) {
+          badge = '<span class="hermes-badge-pill badge-green alive"><span class="hc-dot hc-dot-green pulse"></span>Listener: running</span>'
+                + ' <span style="color:#6b7280">· offset ' + (d.lastUpdateId || 0) + '</span>';
+        } else if (d.disabledReason === 'hermes_enabled') {
+          badge = '<span class="hermes-badge-pill badge-blue"><span class="hc-dot hc-dot-blue"></span>Listener: off (Hermes mode)</span>';
+        } else if (d.disabledReason) {
+          const labelMap = {
+            telegram_disabled: 'Telegram disabled',
+            inbound_disabled:  'Inbound disabled',
+            missing_token:     'Bot token missing',
+            missing_chat_id:   'Chat ID missing',
+          };
+          badge = '<span class="hermes-badge-pill badge-grey"><span class="hc-dot hc-dot-grey"></span>Listener: off — ' + (labelMap[d.disabledReason] || d.disabledReason) + '</span>';
+        } else {
+          badge = '<span class="hermes-badge-pill badge-grey"><span class="hc-dot hc-dot-grey"></span>Listener: stopped</span>';
+        }
+        el.innerHTML = badge;
+      }).catch(() => {});
+    }
+    hcLoadInboundStatus();
+    setInterval(hcLoadInboundStatus, 8000);
 
     // ── Test message ──────────────────────────────────────────────────────────
     function testTelegramMsg() {

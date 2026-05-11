@@ -18,10 +18,10 @@ function shouldSend(eventType) {
   return raw.split(',').map(s => s.trim()).filter(Boolean).includes(eventType);
 }
 
-function sendText(text) {
-  const token  = process.env.PRX_TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.PRX_TELEGRAM_CHAT_ID;
-  const body   = Buffer.from(JSON.stringify({ chat_id: chatId, text, parse_mode: 'HTML' }));
+function sendText(text, chatId) {
+  const token = process.env.PRX_TELEGRAM_BOT_TOKEN;
+  const dest  = chatId || process.env.PRX_TELEGRAM_CHAT_ID;
+  const body  = Buffer.from(JSON.stringify({ chat_id: dest, text, parse_mode: 'HTML' }));
 
   return new Promise((resolve, reject) => {
     const req = https.request({
@@ -39,6 +39,58 @@ function sendText(text) {
     req.write(body);
     req.end();
   }).catch(e => console.error('[telegram] sendText failed:', e.message));
+}
+
+// Long-poll for inbound updates. Telegram allows up to 50s of long-poll wait;
+// we use 25s by default so a stop() is observed within ~25s.
+function getUpdates(offset = 0, timeoutSecs = 25) {
+  const token = process.env.PRX_TELEGRAM_BOT_TOKEN;
+  if (!token) return Promise.reject(new Error('PRX_TELEGRAM_BOT_TOKEN not set'));
+
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: 'api.telegram.org',
+      path:     `/bot${token}/getUpdates?offset=${offset}&timeout=${timeoutSecs}&allowed_updates=${encodeURIComponent('["message","channel_post"]')}`,
+      method:   'GET',
+    }, res => {
+      let data = '';
+      res.on('data', c => { data += c; });
+      res.on('end', () => {
+        try {
+          const j = JSON.parse(data);
+          if (!j.ok) return reject(new Error(`Telegram API error: ${j.description || data}`));
+          resolve(j.result || []);
+        } catch (err) { reject(err); }
+      });
+    });
+    req.on('error', reject);
+    // Allow ~5s grace beyond Telegram's own timeout before we give up locally.
+    req.setTimeout((timeoutSecs + 5) * 1000, () => { req.destroy(new Error('getUpdates timeout')); });
+    req.end();
+  });
+}
+
+// Registers the bot's slash-command menu (appears in Telegram clients).
+function setMyCommands(commands) {
+  const token = process.env.PRX_TELEGRAM_BOT_TOKEN;
+  if (!token) return Promise.reject(new Error('PRX_TELEGRAM_BOT_TOKEN not set'));
+  const body = Buffer.from(JSON.stringify({ commands }));
+  return new Promise((resolve, reject) => {
+    const req = https.request({
+      hostname: 'api.telegram.org',
+      path:     `/bot${token}/setMyCommands`,
+      method:   'POST',
+      headers:  { 'Content-Type': 'application/json', 'Content-Length': body.length },
+    }, res => {
+      let data = '';
+      res.on('data', c => { data += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body: data }));
+    });
+    req.on('error', reject);
+    req.setTimeout(10000, () => { req.destroy(); reject(new Error('setMyCommands timeout')); });
+    req.write(body);
+    req.end();
+  });
 }
 
 // ── Event → message text ──────────────────────────────────────────────────────
@@ -66,4 +118,4 @@ function eventText(type, key, details) {
   return fn ? fn(key || '', details || {}) : null;
 }
 
-module.exports = { isEnabled, shouldSend, sendText, eventText };
+module.exports = { isEnabled, shouldSend, sendText, eventText, getUpdates, setMyCommands };
