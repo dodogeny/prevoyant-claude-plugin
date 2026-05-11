@@ -330,6 +330,52 @@ const BASE_CSS = `
     to   { transform: rotate(360deg); }
   }
 
+  .hermes-agent-badge {
+    display: inline-flex; align-items: center; gap: .45rem;
+    background: rgba(99,102,241,.1);
+    border: 1px solid rgba(99,102,241,.28);
+    border-radius: 20px;
+    padding: .28rem .7rem .28rem .5rem;
+    color: #a5b4fc;
+    font-size: .72rem;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background .2s, border-color .2s, color .2s;
+  }
+  .hermes-agent-badge:hover {
+    background: rgba(99,102,241,.2);
+    border-color: rgba(99,102,241,.5);
+    color: #c7d2fe;
+  }
+  .hermes-pulse-dot {
+    width: 7px; height: 7px;
+    border-radius: 50%;
+    background: #818cf8;
+    flex-shrink: 0;
+    position: relative;
+  }
+  .hermes-pulse-dot::after {
+    content: '';
+    position: absolute;
+    inset: -3px;
+    border-radius: 50%;
+    border: 2px solid #818cf8;
+    animation: hermes-ripple 1.8s ease-out infinite;
+  }
+  @keyframes hermes-ripple {
+    0%   { opacity: .75; transform: scale(1); }
+    100% { opacity: 0;   transform: scale(2.5); }
+  }
+  .hermes-agent-badge svg {
+    animation: hermes-orbit 7s linear infinite;
+    flex-shrink: 0;
+  }
+  @keyframes hermes-orbit {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+
   .version-badge {
     background: rgba(255,255,255,.07);
     border: 1px solid rgba(255,255,255,.12);
@@ -1012,6 +1058,11 @@ function renderDashboard(stats, budget) {
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       Settings
     </a>
+    ${process.env.PRX_HERMES_ENABLED === 'Y' ? `<a href="/dashboard/settings#hermes" class="hermes-agent-badge" title="Hermes agent active — click to manage">
+      <span class="hermes-pulse-dot"></span>
+      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+      Hermes
+    </a>` : ''}
     <div class="refresh-note">
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
       Refresh every
@@ -3907,6 +3958,55 @@ function renderSettings(vals, flash) {
         </div>
       </details>
 
+      <!-- Hermes Integration -->
+      <details class="s-section"${v('PRX_HERMES_ENABLED') === 'Y' ? ' open' : ''} id="hermes" onToggle="if(this.open) hermesCheckStatus()">
+        <summary>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
+          Hermes Integration
+          <span class="s-opt">Optional</span>
+          <span id="hermes-summary-badge" style="margin-left:6px;font-size:10px;padding:1px 7px;border-radius:10px;display:none"></span>
+          <span class="s-chevron">›</span>
+        </summary>
+        <div class="s-body">
+          <!-- Live status row -->
+          <div class="s-field span2" id="hermes-status-row" style="display:none">
+            <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:8px">
+              <span id="hs-installed"  style="font-size:10px;padding:2px 9px;border-radius:10px;border:1px solid #d1d5db;background:#f3f4f6;color:#374151">Checking…</span>
+              <span id="hs-gateway"    style="font-size:10px;padding:2px 9px;border-radius:10px;border:1px solid #d1d5db;background:#f3f4f6;color:#374151">Gateway…</span>
+              <span id="hs-skill"      style="font-size:10px;padding:2px 9px;border-radius:10px;border:1px solid #d1d5db;background:#f3f4f6;color:#374151">Skill…</span>
+              <button type="button" onclick="hermesCheckStatus()" style="font-size:10px;padding:2px 10px;border:1px solid #d1d5db;border-radius:6px;background:#fff;cursor:pointer;margin-left:auto">Recheck</button>
+            </div>
+          </div>
+
+          <!-- Install guide — shown only when not installed -->
+          <div class="s-field span2" id="hermes-install-guide" style="display:none">
+            <div style="background:#fffbeb;border:1px solid #fbbf24;border-radius:6px;padding:10px 12px;font-size:11px;line-height:1.7;color:#78350f">
+              <strong>Hermes CLI not found.</strong> Install it first, then save settings again:<br>
+              <code style="display:block;margin:6px 0;padding:5px 8px;background:#fef3c7;border-radius:4px;font-size:11px;word-break:break-all">curl -fsSL https://raw.githubusercontent.com/NousResearch/hermes-agent/main/scripts/install.sh | bash</code>
+              After install, run <code>source ~/.bashrc</code> (or <code>~/.zshrc</code>), then click <em>Recheck</em> above or save again.
+              Full docs: <a href="https://github.com/nousresearch/hermes-agent" target="_blank" style="color:#92400e">github.com/nousresearch/hermes-agent</a>
+            </div>
+          </div>
+
+          <div class="s-field span2">
+            <div class="s-hint" style="margin-top:0">
+              Connects Prevoyant to a local <a href="https://github.com/nousresearch/hermes-agent" target="_blank" style="color:#1e40af">Hermes</a> gateway (Nous Research).
+              When enabled: Hermes becomes the front door for Jira + GitHub events, calling <code>POST /internal/enqueue</code> here.
+              Prevoyant pushes completed job results to <code>GET /internal/jobs/recent-results</code> for Hermes to poll and deliver via Telegram, Slack, Discord.
+              Cron scheduling is handed to Hermes; a one-time startup sweep still runs to recover tickets missed while offline.
+              The Prevoyant skill is automatically copied to <code>~/.hermes/skills/prevoyant/</code> and the gateway is started when you save with Hermes enabled.
+              <strong>Route changes require Save &amp; Restart.</strong>
+            </div>
+          </div>
+          ${fld('PRX_HERMES_ENABLED','Enable Hermes','select',v('PRX_HERMES_ENABLED') || 'N','','Switches between standalone mode (cron + direct Jira webhook) and Hermes mode. Hermes must be installed before enabling. Route change requires restart.',
+            [{v:'N',l:'N — standalone (default)'},{v:'Y',l:'Y — Hermes as front door'}])}
+          ${fld('PRX_HERMES_GATEWAY_URL','Gateway URL','text',v('PRX_HERMES_GATEWAY_URL'),'http://localhost:8080','Base URL of the Hermes gateway. Prevoyant polls /internal/jobs/recent-results via Hermes skill. Default: http://localhost:8080.')}
+          ${fld('PRX_HERMES_SECRET','Shared secret','password',v('PRX_HERMES_SECRET'),'','Token Hermes must send in X-Hermes-Secret header when calling /internal/enqueue. Leave blank to skip (trusted network only).')}
+          ${fld('PRX_HERMES_JIRA_WRITEBACK','Jira write-back','select',v('PRX_HERMES_JIRA_WRITEBACK') || 'N','','When Y, Prevoyant automatically posts a comment on each Jira ticket when its analysis completes, fails, or is interrupted. Uses the JIRA_URL / JIRA_USERNAME / JIRA_API_TOKEN credentials already configured above.',
+            [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — post comment on completion'}])}
+        </div>
+      </details>
+
       <div class="s-actions">
         <button type="submit" class="btn-save">Save</button>
         <button type="button" class="btn-restart" onclick="saveAndRestart()">Save &amp; Restart Server</button>
@@ -3923,6 +4023,44 @@ function renderSettings(vals, flash) {
     function saveAndRestart() {
       document.getElementById('_restart').value = '1';
       document.querySelector('form').submit();
+    }
+
+    // ── Hermes status ─────────────────────────────────────────────────────────
+    function hermesCheckStatus() {
+      document.getElementById('hermes-status-row').style.display = '';
+      fetch('/dashboard/api/hermes-status')
+        .then(r => r.json())
+        .then(s => {
+          const badge = (id, ok, yesLabel, noLabel) => {
+            const el = document.getElementById(id);
+            el.textContent   = ok ? yesLabel : noLabel;
+            el.style.background     = ok ? '#dcfce7' : '#fee2e2';
+            el.style.borderColor    = ok ? '#86efac' : '#fca5a5';
+            el.style.color          = ok ? '#166534' : '#991b1b';
+          };
+          badge('hs-installed', s.installed,      'Hermes installed',   'Not installed');
+          badge('hs-gateway',   s.gatewayRunning,  'Gateway running',    'Gateway stopped');
+          badge('hs-skill',     s.skillInstalled,  'Skill deployed',     'Skill not deployed');
+
+          // Show install guide only when CLI is missing
+          document.getElementById('hermes-install-guide').style.display = s.installed ? 'none' : '';
+
+          // Summary badge in <summary>
+          const sb = document.getElementById('hermes-summary-badge');
+          sb.style.display     = 'inline';
+          sb.textContent       = s.installed && s.gatewayRunning ? 'Active' : s.installed ? 'Installed' : 'Not installed';
+          sb.style.background  = s.installed && s.gatewayRunning ? '#dcfce7' : s.installed ? '#fef9c3' : '#fee2e2';
+          sb.style.borderColor = s.installed && s.gatewayRunning ? '#86efac' : s.installed ? '#fde047' : '#fca5a5';
+          sb.style.color       = s.installed && s.gatewayRunning ? '#166534' : s.installed ? '#854d0e' : '#991b1b';
+          sb.style.border      = '1px solid';
+        })
+        .catch(() => {
+          document.getElementById('hs-installed').textContent = 'Status unavailable';
+        });
+    }
+    // Auto-check if section is already open on page load
+    if (document.getElementById('hermes') && document.getElementById('hermes').open) {
+      hermesCheckStatus();
     }
 
     // ── Notifications ─────────────────────────────────────────────────────────
@@ -5007,6 +5145,16 @@ router.get('/settings', (_req, res) => {
   res.send(renderSettings(readEnvValues(), _req.query.saved === '1' ? 'saved' : null));
 });
 
+// Hermes status API — polled by the settings page to show live install/gateway badges.
+router.get('/api/hermes-status', (_req, res) => {
+  try {
+    const manager = require('../integrations/hermes/manager');
+    res.json(manager.status());
+  } catch (err) {
+    res.json({ installed: false, gatewayRunning: false, skillInstalled: false, error: err.message });
+  }
+});
+
 // Memory status API — polled by the settings page JS to show live badge + connection test
 router.get('/api/memory-status', async (_req, res) => {
   try {
@@ -5045,6 +5193,7 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'PRX_KBFLOW_ENABLED', 'PRX_KBFLOW_INTERVAL_DAYS', 'PRX_KBFLOW_LOOKBACK_DAYS', 'PRX_KBFLOW_MAX_FLOWS',
     'PRX_WASENDER_ENABLED', 'PRX_WASENDER_API_KEY', 'PRX_WASENDER_TO',
     'PRX_WASENDER_PUBLIC_URL', 'PRX_WASENDER_EVENTS', 'PRX_WASENDER_PDF_PASSWORD',
+    'PRX_HERMES_ENABLED', 'PRX_HERMES_GATEWAY_URL', 'PRX_HERMES_SECRET', 'PRX_HERMES_JIRA_WRITEBACK',
   ];
 
   try {
@@ -5073,6 +5222,19 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     // Notify index.js to reactively start/stop workers (disk monitor, watchdog)
     // without requiring a full server restart.
     serverEvents.emit('settings-saved', updates);
+
+    // Hermes: when toggled to Y, try to install skill + start gateway immediately.
+    // Route change (/jira-events ↔ /internal/enqueue) still requires restart.
+    if (updates.PRX_HERMES_ENABLED === 'Y') {
+      setImmediate(() => {
+        try {
+          const manager = require('../integrations/hermes/manager');
+          manager.startup();
+        } catch (err) {
+          console.warn('[hermes] startup after settings save failed:', err.message);
+        }
+      });
+    }
   } catch (err) {
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     return res.send(renderSettings(readEnvValues(), 'error'));

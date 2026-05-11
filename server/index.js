@@ -35,8 +35,15 @@ app.use('/dashboard', dashboardRoutes);
 // Legacy redirect — /stats → /dashboard
 app.use('/stats', (req, res) => res.redirect(301, '/dashboard' + req.url));
 
-// Jira pushes events here: POST /jira-events?token=WEBHOOK_SECRET
-app.use('/jira-events', jiraWebhook);
+// Trigger routing: cron poll is the default; webhook and Hermes are optional accelerators.
+// PRX_HERMES_ENABLED=N (default) — register /jira-events for direct Jira webhooks.
+// PRX_HERMES_ENABLED=Y          — Hermes is the front door; expose /internal/* instead.
+if (!config.hermesEnabled) {
+  app.use('/jira-events', jiraWebhook);
+} else {
+  app.use('/internal/enqueue',             require('./integrations/hermes/routes/enqueue'));
+  app.use('/internal/jobs/recent-results', require('./integrations/hermes/routes/results'));
+}
 
 // ── Health-monitor watchdog (worker thread) ───────────────────────────────────
 
@@ -46,6 +53,7 @@ let updateWorker         = null;
 let kbSyncWorker         = null;
 let ticketWatcherWorker  = null;
 let kbFlowAnalystWorker  = null;
+let hermesNotifierActive = false;
 
 function startWatchdog() {
   if (process.env.PRX_WATCHDOG_ENABLED !== 'Y') return;
@@ -327,6 +335,21 @@ serverEvents.on('settings-saved', () => {
   if (!watcherEnabled && ticketWatcherWorker)             stopTicketWatcher();
   if (kbflowEnabled && !kbFlowAnalystWorker)              startKbFlowAnalyst();
   if (!kbflowEnabled && kbFlowAnalystWorker)              stopKbFlowAnalyst();
+
+  // Hermes: skill install + gateway start/stop can happen without restart.
+  // Route registration (/jira-events vs /internal/enqueue) still needs restart.
+  const hermesManager    = require('./integrations/hermes/manager');
+  const hermesNowEnabled = process.env.PRX_HERMES_ENABLED === 'Y';
+  if (hermesNowEnabled && !hermesNotifierActive) {
+    setImmediate(() => hermesManager.startup());
+    require('./integrations/hermes/notifier').start(
+      process.env.PRX_HERMES_GATEWAY_URL || 'http://localhost:8080'
+    );
+    hermesNotifierActive = true;
+  } else if (!hermesNowEnabled && hermesManager.isGatewayRunning()) {
+    // PRX_HERMES_ENABLED toggled to N — stop the gateway (don't uninstall).
+    setImmediate(() => hermesManager.stopGateway());
+  }
 });
 
 // Manual scan trigger from /dashboard/knowledge-builder run-now button.
@@ -362,7 +385,20 @@ app.listen(config.port, () => {
   startTicketWatcher();
   startKbFlowAnalyst();
 
-  if (config.pollIntervalDays > 0) {
+  if (config.hermesEnabled) {
+    // Hermes owns scheduling — run one startup sweep to catch tickets missed
+    // while offline, then hand control to Hermes's cron.
+    console.log('[prevoyant-server] Hermes mode active — scheduling owned by Hermes gateway');
+
+    // Install skill + start gateway (idempotent — safe on every boot).
+    const hermesManager = require('./integrations/hermes/manager');
+    hermesManager.startup();
+
+    require('./integrations/hermes/notifier').start(config.hermesGatewayUrl);
+    hermesNotifierActive = true;
+    runFallbackPoll();
+  } else if (config.pollIntervalDays > 0) {
+    // Cron is the primary trigger; webhook accelerates real-time delivery.
     schedulePollScript(config.pollIntervalDays);
   } else {
     console.log('[prevoyant-server] Scheduled polling disabled — running one-time startup scan as webhook fallback');

@@ -230,7 +230,17 @@ Set `PRX_EMAIL_TO` to enable. Leave it unset to disable email entirely.
 |----------|---------|-------------|
 | `WEBHOOK_PORT` | `3000` | Port the Express server listens on. |
 | `WEBHOOK_SECRET` | — | Token appended to the webhook URL registered in Jira: `http://your-server:3000/jira-events?token=YOUR_SECRET`. Leave empty to skip token validation (only safe on a private network). |
-| `WEBHOOK_POLL_INTERVAL_DAYS` | `0` (disabled) | Run `poll-jira.sh` every N days as a scheduled fallback. Set to `0` or leave unset to disable. Fractional values work: `0.5` = every 12 hours. |
+| `WEBHOOK_POLL_INTERVAL_DAYS` | `0` (disabled) | Run `poll-jira.sh` every N days as the primary cron trigger. Cron is the default heartbeat; the Jira webhook accelerates real-time delivery on top of it. Set to `0` to disable. Fractional values work: `0.5` = every 12 hours. |
+
+### Hermes Integration (optional)
+
+Connects Prevoyant to a local [Hermes](https://github.com/nousresearch/hermes-agent) gateway for multi-platform notifications, persistent cross-session memory, and unified webhook routing. See [Hermes Integration](#hermes-integration-1) for full setup instructions.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PRX_HERMES_ENABLED` | `N` | Set to `Y` to activate Hermes mode. Hermes becomes the front door for all Jira/GitHub events; Prevoyant exposes `POST /internal/enqueue` instead of `POST /jira-events`. Requires server restart. |
+| `PRX_HERMES_GATEWAY_URL` | `http://localhost:8080` | Base URL of the Hermes gateway process. Prevoyant POSTs job results here so Hermes can deliver them to Telegram, Slack, Discord, etc. |
+| `PRX_HERMES_SECRET` | — | Shared secret Hermes must send in the `X-Hermes-Secret` header when calling `/internal/enqueue`. Leave blank to skip validation (trusted network only). |
 
 ### Notifications (optional)
 
@@ -760,6 +770,103 @@ claude plugin update prevoyant@dodogeny
 
 ---
 
+## Hermes Integration
+
+> **Full documentation:** [docs/hermes-integration.md](docs/hermes-integration.md)
+
+[Hermes](https://github.com/nousresearch/hermes-agent) is an open-source autonomous agent by Nous Research that acts as the nervous system for Prevoyant — handling multi-platform notifications, persistent cross-session memory, unified webhook routing, and proactive scheduling, while Prevoyant remains the domain intelligence layer for Jira ticket analysis.
+
+### Architecture
+
+```
+External Triggers
+  ├── Jira webhooks     ─┐
+  ├── GitHub PR events  ─┼─► Hermes Gateway (port 8080)
+  └── Cron / Proactive  ─┘         │
+                                    │  POST /internal/enqueue
+                                    ▼
+                          Prevoyant Server (port 3000)
+                            ├── Job queue
+                            ├── Claude Code session (/prx:dev)
+                            └── POST /prevoyant/result ──► Hermes
+                                                              │
+                                                   Telegram / Slack / Discord
+```
+
+**Without Hermes (`PRX_HERMES_ENABLED=N`, default):** Prevoyant operates standalone. Cron polling (`WEBHOOK_POLL_INTERVAL_DAYS`) is the primary trigger; the Jira webhook at `POST /jira-events` provides real-time acceleration on top.
+
+**With Hermes (`PRX_HERMES_ENABLED=Y`):** Hermes becomes the front door. Prevoyant exposes `POST /internal/enqueue` for Hermes to hand off events. A one-time startup sweep still runs to catch tickets missed while the server was offline. Scheduling and notifications are owned by Hermes.
+
+### SKILL.md compatibility
+
+Hermes uses the same portable `SKILL.md` standard as Prevoyant. The file at `server/integrations/hermes/hermes-skill.md` tells Hermes how to invoke Prevoyant — what events to send, what payload format, and what the result callback looks like. Load it in Hermes with:
+
+```bash
+hermes skill install ./server/integrations/hermes/hermes-skill.md
+```
+
+### Quick setup
+
+```bash
+# 1. Install and configure Hermes (see https://github.com/nousresearch/hermes-agent)
+#    Then run the Prevoyant install script:
+bash server/integrations/hermes/scripts/install.sh
+
+# The script will:
+#   - Set PRX_HERMES_ENABLED=Y in .env
+#   - Configure PRX_HERMES_GATEWAY_URL and PRX_HERMES_SECRET
+#   - Print the exact Hermes registration steps
+
+# Or toggle from the dashboard: Settings → Hermes Integration
+```
+
+### What Hermes receives
+
+When a Prevoyant job finishes, the server POSTs to `<PRX_HERMES_GATEWAY_URL>/prevoyant/result`:
+
+```json
+{
+  "ticket_key": "PROJ-123",
+  "status": "success",
+  "mode": "dev",
+  "cost_usd": 0.14,
+  "completed_at": "2026-05-10T08:32:00.000Z"
+}
+```
+
+Hermes uses this to send a push notification to the developer with the result summary.
+
+### What Hermes sends
+
+Hermes calls `POST /internal/enqueue` (authenticated by `X-Hermes-Secret`):
+
+```json
+{
+  "ticket_key": "PROJ-123",
+  "event_type": "jira.status.in_progress",
+  "mode": "dev",
+  "priority": "normal"
+}
+```
+
+| Event type | Prevoyant mode |
+|---|---|
+| `jira.status.in_progress` | dev |
+| `jira.issue_assigned` | dev |
+| `jira.issue_created` | dev |
+| `jira.pr.opened` | review |
+| `jira.ticket.stale` | estimate |
+
+### Reverting to standalone
+
+```bash
+bash server/integrations/hermes/scripts/uninstall.sh
+# Sets PRX_HERMES_ENABLED=N and clears gateway config.
+# Restart the server to re-register /jira-events.
+```
+
+---
+
 ## Upgrading
 
 ```bash
@@ -898,6 +1005,22 @@ rm -rf ~/.prevoyant/reports   # or the path set in CLAUDE_REPORT_DIR
 ---
 
 ## Changelog
+
+### v1.3.0 — Hermes Integration (Full-Time Agent Mode)
+
+- **Hermes integration — optional feature flag:** Prevoyant can now operate as a full-time autonomous agent by connecting to a local [Hermes](https://github.com/nousresearch/hermes-agent) gateway. Toggle via `PRX_HERMES_ENABLED=Y/N` in `.env` or **Settings → Hermes Integration** in the dashboard. Default is `N` — standalone behaviour is unchanged.
+
+- **Trigger priority:** Cron polling (`WEBHOOK_POLL_INTERVAL_DAYS`) is now explicitly the primary/default trigger. The Jira webhook at `/jira-events` acts as a real-time accelerator on top of the cron heartbeat. When Hermes is enabled, Hermes owns both the cron schedule and webhook reception.
+
+- **`POST /internal/enqueue`:** New internal endpoint registered only when `PRX_HERMES_ENABLED=Y`. Hermes calls this to hand off Jira/GitHub events into the Prevoyant job queue. Validates via `X-Hermes-Secret` header. Maps Hermes event types (`jira.status.in_progress`, `jira.pr.opened`, `jira.ticket.stale`, etc.) to Prevoyant modes automatically.
+
+- **Hermes result notifier:** When a job completes, fails, or is interrupted, Prevoyant POSTs the result to `<PRX_HERMES_GATEWAY_URL>/prevoyant/result` so Hermes can deliver it to Telegram, Slack, Discord, or any configured platform. The notifier starts automatically when Hermes is enabled (including reactive toggle from settings without restart).
+
+- **`server/integrations/hermes/hermes-skill.md`:** agentskills.io-compatible SKILL.md file Hermes loads to understand how to invoke Prevoyant — event types, payload format, result callback shape, and KB read path.
+
+- **`server/integrations/hermes/scripts/install.sh` / `uninstall.sh`:** Interactive setup/teardown scripts. `install.sh` writes the Hermes env vars, prints Jira webhook registration instructions, and guides the Hermes-side configuration in one run. `uninstall.sh` reverts to standalone in under 30 seconds.
+
+- **Startup fallback sweep in Hermes mode:** Even when Hermes owns the cron, a one-time `poll-jira.sh` sweep runs on server startup to recover tickets that arrived while the server was offline.
 
 ### v1.2.10 — Memory Efficiency, Animated Sun Logo, Backup & Export, Per-agent Personal Memory, KB Flow Analyst
 

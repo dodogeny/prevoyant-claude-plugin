@@ -449,7 +449,17 @@ The poll script is run once at server startup (if enabled) and then every N days
 
 | Method | Path | Description |
 |--------|------|-------------|
-| POST | `/jira-events?token=...` | Jira webhook receiver |
+| POST | `/jira-events?token=...` | Jira webhook receiver (standalone mode only) |
+
+### Hermes Integration (optional)
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/internal/enqueue` | Hermes → Prevoyant event handoff (Hermes mode only) |
+| GET | `/internal/jobs/recent-results` | Results poll endpoint for Hermes skill |
+| GET | `/dashboard/api/hermes-status` | Live Hermes install/gateway/skill status |
+
+> See [hermes-integration.md](hermes-integration.md) for the full setup guide and API reference.
 
 ---
 
@@ -522,6 +532,18 @@ server/
 ├── notifications/
 │   ├── email.js                  Email stub (planned)
 │   └── sms.js                    SMS stub (planned)
+│
+├── integrations/
+│   └── hermes/                   Optional Hermes agent layer (PRX_HERMES_ENABLED=Y)
+│       ├── manager.js            CLI detect, skill deploy, gateway lifecycle
+│       ├── notifier.js           Push results to Hermes, Jira write-back, memory sync
+│       ├── hermes-skill.md       SKILL.md deployed to ~/.hermes/skills/prevoyant/
+│       ├── routes/
+│       │   ├── enqueue.js        POST /internal/enqueue
+│       │   └── results.js        GET /internal/jobs/recent-results
+│       └── scripts/
+│           ├── install.sh        Write env vars, print registration steps
+│           └── uninstall.sh      Set PRX_HERMES_ENABLED=N, stop gateway
 │
 └── scripts/
     ├── start.sh                  Start server in background, write PID

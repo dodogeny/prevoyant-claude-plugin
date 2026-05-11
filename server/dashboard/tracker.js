@@ -3,7 +3,8 @@
 const os = require('os');
 const fs = require('fs');
 const path = require('path');
-const activityLog = require('./activityLog');
+const activityLog   = require('./activityLog');
+const serverEvents  = require('../serverEvents');
 
 const serverStartedAt = new Date();
 
@@ -275,6 +276,7 @@ function recordCompleted(ticketKey, success) {
     ticketKey, 'system',
     { mode: entry.mode, ...(costUsd != null ? { costUsd } : {}) }
   );
+  serverEvents.emit('job-completed', { ticketKey, success, mode: entry.mode, costUsd: costUsd ?? null });
 }
 
 function recordInterrupted(ticketKey, reason = 'manual') {
@@ -289,6 +291,7 @@ function recordInterrupted(ticketKey, reason = 'manual') {
   tickets.set(ticketKey, { ...entry, completedAt: now, status: 'interrupted', interruptReason: reason, stages });
   saveSession(ticketKey);
   activityLog.record('ticket_interrupted', ticketKey, reason === 'manual' ? 'user' : 'system', { mode: entry.mode, reason });
+  serverEvents.emit('job-interrupted', { ticketKey, reason, mode: entry.mode });
 }
 
 // ── Stage tracking ────────────────────────────────────────────────────────────
