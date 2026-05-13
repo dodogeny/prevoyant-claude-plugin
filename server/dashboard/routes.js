@@ -1459,6 +1459,15 @@ function renderDashboard(stats, budget) {
           Urgent priority <span style="font-size:.72rem;font-weight:400;color:#9ca3af">— moves to front of queue</span>
         </label>
       </div>
+      <div class="modal-field" style="flex-direction:row;align-items:flex-start;gap:.6rem">
+        <input type="checkbox" id="modal-apply-changes" style="width:15px;height:15px;accent-color:#059669;cursor:pointer;margin-top:3px">
+        <label for="modal-apply-changes" class="modal-label" style="cursor:pointer;margin:0;line-height:1.45">
+          Apply code changes
+          <span style="display:block;font-size:.72rem;font-weight:400;color:#9ca3af;margin-top:2px">
+            Create the feature branch and commit the proposed fix. Off by default — runs analysis only (PDF report, no working-tree edits).
+          </span>
+        </label>
+      </div>
       <div class="modal-field">
         <label class="modal-label" for="modal-scheduled-at">Schedule for <span style="font-size:.72rem;font-weight:400;color:#9ca3af">(optional — leave blank to run now)</span></label>
         <input type="datetime-local" id="modal-scheduled-at" class="modal-input" style="color-scheme:light">
@@ -1705,12 +1714,13 @@ function renderDashboard(stats, budget) {
       }
       schedErr.style.display = 'none';
 
-      const mode     = document.getElementById('modal-ticket-mode').value;
-      const priority = document.getElementById('modal-priority').checked ? 'urgent' : 'normal';
+      const mode         = document.getElementById('modal-ticket-mode').value;
+      const priority     = document.getElementById('modal-priority').checked ? 'urgent' : 'normal';
+      const applyChanges = document.getElementById('modal-apply-changes').checked ? 'Y' : 'N';
       const form = document.createElement('form');
       form.method = 'POST';
       form.action = '/dashboard/queue';
-      const fields = [['ticketKey', key], ['mode', mode], ['priority', priority]];
+      const fields = [['ticketKey', key], ['mode', mode], ['priority', priority], ['applyChanges', applyChanges]];
       if (schedVal) fields.push(['scheduledAt', schedVal]);
       fields.forEach(([n, v]) => {
         const i = document.createElement('input');
@@ -3588,7 +3598,7 @@ function renderSettings(vals, flash) {
           ${fld('PRX_SOURCE_REPO_URL','Source Repo URL','text',v('PRX_SOURCE_REPO_URL'),'https://github.com/myorg/myrepo','Used to cross-check KB file:line refs against the live branch. Omit to skip.')}
           ${fld('PRX_KNOWLEDGE_DIR','KB Directory (local mode)','text',v('PRX_KNOWLEDGE_DIR'),'$HOME/.prevoyant/knowledge-base','Override default KB path. Local mode only.')}
           ${fld('PRX_KB_REPO','KB Repo URL (distributed)','text',v('PRX_KB_REPO'),'git@github.com:yourorg/team-kb.git','Private git repo for shared KB. Required in distributed mode.')}
-          ${fld('PRX_KB_LOCAL_CLONE','KB Local Clone (distributed)','text',v('PRX_KB_LOCAL_CLONE'),'$HOME/.prevoyant/kb','Local clone path. Distributed mode only.')}
+          ${fld('PRX_KB_LOCAL_CLONE','KB Local Clone (distributed)','text',v('PRX_KB_LOCAL_CLONE'),'$HOME/.prevoyant/kb','Local clone path. Distributed mode only. Keep this path separate from PRX_KNOWLEDGE_DIR — defaults differ on purpose (kb vs knowledge-base) so files do not collide when you switch modes.')}
           <div class="s-field span2">
             ${fld('PRX_KB_KEY','Encryption Key (distributed)','password',v('PRX_KB_KEY'),'your-strong-passphrase','AES-256-CBC passphrase for encrypting KB files. Optional. Never commit this value.')}
           </div>
@@ -5382,6 +5392,11 @@ router.post('/queue', express.urlencoded({ extended: false }), (req, res) => {
   if (!ticketKey || !VALID_MODES.has(mode)) return res.redirect(303, '/dashboard');
 
   const priority = (req.body.priority || 'normal') === 'urgent' ? 'urgent' : 'normal';
+  // Apply-changes opt-in: when 'Y', the skill creates the feature branch and
+  // commits the proposed fix. Default 'N' = analysis-only (PDF report only).
+  // The skill honours PRX_APPLY_CHANGES=Y at Step 4c (branch) and 8d (apply fix).
+  const applyChanges = (req.body.applyChanges || 'N').toUpperCase() === 'Y';
+  const meta = { applyChanges };
 
   const existing = getTicket(ticketKey);
   if (existing && (existing.status === 'running' || existing.status === 'queued' || existing.status === 'scheduled')) {
@@ -5393,13 +5408,13 @@ router.post('/queue', express.urlencoded({ extended: false }), (req, res) => {
     const scheduledFor = new Date(rawScheduled);
     if (!isNaN(scheduledFor) && scheduledFor > new Date()) {
       recordScheduled(ticketKey, mode, scheduledFor, 'manual');
-      scheduleJob(ticketKey, mode, scheduledFor);
+      scheduleJob(ticketKey, mode, scheduledFor, meta);
       return res.redirect(303, '/dashboard');
     }
   }
 
   reRunTicket(ticketKey, mode, 'manual', priority);
-  enqueue(ticketKey, mode, priority);
+  enqueue(ticketKey, mode, priority, meta);
   res.redirect(303, '/dashboard');
 });
 

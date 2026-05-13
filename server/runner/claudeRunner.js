@@ -270,6 +270,14 @@ async function runClaudeAnalysis(ticketKey, mode = 'dev', ticketMeta = {}) {
       childEnv.CLAUDE_REPORT_SUFFIX = datetimeSuffix();
       console.log(`[runner] Existing report for ${ticketKey} — suffix ${childEnv.CLAUDE_REPORT_SUFFIX}`);
     }
+    // Per-ticket override from the Add Ticket modal. When set, SKILL.md's
+    // headless defaults at Step 4c (branch creation) and Step 8d (apply fix)
+    // flip from "skip / propose only" to "run git + Edit". Default is unset
+    // → analysis-only, matching the documented headless behaviour.
+    if (ticketMeta && ticketMeta.applyChanges) {
+      childEnv.PRX_APPLY_CHANGES = 'Y';
+      console.log(`[runner] ${ticketKey} — PRX_APPLY_CHANGES=Y (will create branch + apply fix)`);
+    }
 
     const proc = spawn(
       'claude',

@@ -1153,7 +1153,7 @@ When `AUTO_MODE_ON=1`, the skill runs in **analysis-only mode** with no interact
 | Step R9 — KB update failure (Review mode) | Same as Step 13 | Same as Step 13 |
 | Step 1 — MCP failure | Stop and wait for developer | Print `HEADLESS_ERROR: {reason}` and exit immediately |
 | Step 4a — Base branch unconfirmed | Ask developer which branch to use | Default to `development`; note the fallback in output |
-| Step 4c — Branch creation | Run `git checkout -b …` | **Skip** — report the branch name that would be created, run no git commands |
+| Step 4c — Branch creation | Run `git checkout -b …` | **Default: skip** — report the branch name that would be created, run no git commands. **Override:** if `PRX_APPLY_CHANGES=Y` (set per-ticket from the dashboard's *Add Ticket → Apply code changes* checkbox), run `git checkout -b …` as in interactive mode. |
 | Step 5 — Low file-map confidence | Stop and ask developer | Proceed with `⚠️ LOW CONFIDENCE — manual review required` |
 | Step 6e — Low replication confidence | Stop and ask developer | Proceed with `⚠️ LOW CONFIDENCE — assumptions noted` |
 | Step 7b — Morgan briefing *(Bug only)* | Morgan opens session and briefs team | Morgan briefing runs as normal; no developer input required |
@@ -1163,7 +1163,7 @@ When `AUTO_MODE_ON=1`, the skill runs in **analysis-only mode** with no interact
 | Step 7h — Morgan verdict *(Bug only)* | Morgan scores and declares adopted root cause | Verdict runs automatically; proceed with highest-scoring hypothesis |
 | Step 7h-ii — Henk's check-in *(Bug only)* | Morgan consults Henk on business necessity and client value | Henk's check-in runs automatically; if Henk returns ⚠️ QUESTION or ❌ CHALLENGE, Morgan's response is recorded in the Root Cause Statement team note |
 | Step 8c — Morgan fix review | Morgan vets the proposed fix | Review runs automatically; if REWORK REQUIRED, revise once and re-run; if still failing, proceed with `⚠️ UNRESOLVED — developer review required` |
-| Step 8d — Apply fix prompt | Ask yes / no / partial | **Default to no** — propose the fix only; do not call Edit or modify any files |
+| Step 8d — Apply fix prompt | Ask yes / no / partial | **Default: no** — propose the fix only; do not call Edit or modify any files. **Override:** if `PRX_APPLY_CHANGES=Y`, treat as **yes** — call Edit on the affected files, then stage + commit on the feature branch created at Step 4c (`git add` + `git commit -m "{TICKET_KEY}: {one-line summary}"`). Skipped only if Step 4c also skipped (no branch). |
 | Step 12e — Email report | Send report to `PRX_EMAIL_TO` if set | **Always runs** — email is sent automatically whenever `PRX_EMAIL_TO` is configured; no interactive element |
 
 In headless mode, Steps 1–10 run and produce full output with all interactive gates bypassed using safe defaults. Steps 11 and 12 (session stats + PDF report) run as normal so the PDF is saved to disk. Email (Step 12e) fires automatically if `PRX_EMAIL_TO` is set.

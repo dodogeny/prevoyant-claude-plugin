@@ -73,7 +73,9 @@ function drain() {
           const handle = setTimeout(() => {
             retryTimers.delete(ticket);
             tracker.reRunTicket(ticket, mode, 'retry', priority);
-            enqueue(ticket, mode, priority);
+            // Preserve meta (e.g. applyChanges) across retries so the user's
+            // original intent isn't quietly dropped on the second attempt.
+            enqueue(ticket, mode, priority, meta);
           }, delaySecs * 1000);
           retryTimers.set(ticket, handle);
         } else {
@@ -98,11 +100,11 @@ function prioritizeJob(ticketKey) {
   return true;
 }
 
-function scheduleJob(ticketKey, mode = 'dev', scheduledAt) {
+function scheduleJob(ticketKey, mode = 'dev', scheduledAt, meta = {}) {
   const delay = scheduledAt - Date.now();
   if (delay <= 0) {
     tracker.reRunTicket(ticketKey, mode, 'scheduled');
-    enqueue(ticketKey, mode);
+    enqueue(ticketKey, mode, 'normal', meta);
     return;
   }
   console.log(`[queue] Scheduled ${ticketKey} mode=${mode} for ${scheduledAt.toISOString()} (in ${Math.round(delay / 1000)}s)`);
@@ -110,7 +112,7 @@ function scheduleJob(ticketKey, mode = 'dev', scheduledAt) {
     scheduledTimers.delete(ticketKey);
     console.log(`[queue] Scheduled time reached for ${ticketKey} — queuing`);
     tracker.reRunTicket(ticketKey, mode, 'scheduled');
-    enqueue(ticketKey, mode);
+    enqueue(ticketKey, mode, 'normal', meta);
   }, delay);
   scheduledTimers.set(ticketKey, handle);
 }
