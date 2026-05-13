@@ -432,11 +432,51 @@ const BASE_CSS = `
     cursor: pointer;
     transition: background .15s, color .15s;
     white-space: nowrap; font-family: inherit;
+    text-decoration: none;
   }
   .header-btn:hover { background: rgba(255,255,255,.07); color: #cbd5e1; }
   .header-btn.icon-only { padding: .3rem .5rem; }
   .header-btn-active { background: rgba(245,158,11,.1); color: #fbbf24; border-color: rgba(245,158,11,.28); }
   .header-btn-active:hover { background: rgba(245,158,11,.16); color: #fcd34d; }
+  .header-btn .alert-dot {
+    position: absolute; top: 4px; right: 4px;
+    width: 7px; height: 7px; border-radius: 50%; background: var(--orange);
+    box-shadow: 0 0 0 1.5px var(--header-bg);
+  }
+
+  /* ── Dropdown menu ───────────────────────────────────────────── */
+  .nav-menu { position: relative; display: inline-flex; }
+  .nav-menu-trigger { position: relative; }
+  .nav-menu-trigger .chev { transition: transform .15s; opacity: .75; }
+  .nav-menu.open .nav-menu-trigger .chev { transform: rotate(180deg); }
+  .nav-menu-panel {
+    position: absolute; right: 0; top: calc(100% + 8px);
+    min-width: 220px; background: #1e293b;
+    border: 1px solid rgba(255,255,255,.12);
+    border-radius: var(--r-md);
+    box-shadow: 0 12px 40px rgba(0,0,0,.45), 0 4px 12px rgba(0,0,0,.25);
+    padding: .35rem; display: none; z-index: 200;
+  }
+  .nav-menu.open .nav-menu-panel { display: block; }
+  .nav-menu-item {
+    display: flex; align-items: center; gap: .6rem;
+    padding: .5rem .65rem; font-size: .78rem; font-weight: 500;
+    color: #cbd5e1; text-decoration: none;
+    border-radius: var(--r-sm); cursor: pointer;
+    background: none; border: none; font-family: inherit;
+    width: 100%; text-align: left;
+    transition: background .12s, color .12s;
+  }
+  .nav-menu-item:hover { background: rgba(255,255,255,.07); color: #fff; }
+  .nav-menu-item svg { color: #94a3b8; flex-shrink: 0; }
+  .nav-menu-item:hover svg { color: #c7d2fe; }
+  .nav-menu-item .nav-menu-flag {
+    margin-left: auto; background: rgba(234,88,12,.18);
+    color: #fb923c; border-radius: 10px;
+    padding: 1px 8px; font-size: .65rem; font-weight: 700;
+    text-transform: uppercase; letter-spacing: .04em;
+  }
+  .nav-menu-divider { height: 1px; background: rgba(255,255,255,.08); margin: .35rem .15rem; }
 
   /* ── Badges ──────────────────────────────────────────────────── */
   .badge {
@@ -834,22 +874,24 @@ function renderDashboard(stats, budget) {
     .info-val.warn  { color: var(--amber); }
 
     /* ── Stat cards ─────────────────────────────────────────────── */
-    .cards { display: flex; gap: .85rem; padding: 1.4rem 1.75rem 0; flex-wrap: wrap; }
+    .cards { display: flex; gap: .75rem; padding: 1.25rem 1.75rem 0; flex-wrap: wrap; }
     .card {
-      background: var(--surface); border-radius: var(--r-lg);
-      padding: 1rem 1.4rem; flex: 1; min-width: 88px;
-      box-shadow: var(--shadow); border: 1px solid var(--border-light);
-      position: relative; overflow: hidden;
+      background: var(--surface); border-radius: var(--r-md);
+      padding: .85rem 1.15rem; flex: 1; min-width: 96px;
+      border: 1px solid var(--border-light);
+      display: flex; flex-direction: column; gap: 4px;
+      transition: border-color .15s, transform .15s;
     }
-    .card::before {
-      content: ''; position: absolute; top: 0; left: 0; right: 0; height: 3px;
-      background: var(--border-light); border-radius: var(--r-lg) var(--r-lg) 0 0;
+    .card:hover { border-color: var(--border); transform: translateY(-1px); }
+    .card .num {
+      font-size: 1.55rem; font-weight: 700; line-height: 1.05;
+      letter-spacing: -.025em; color: var(--text);
+      font-variant-numeric: tabular-nums;
     }
-    .card.success::before { background: var(--green); }
-    .card.failed::before  { background: var(--red); }
-    .card.running::before { background: var(--accent); }
-    .card .num { font-size: 1.85rem; font-weight: 700; line-height: 1; letter-spacing: -.03em; }
-    .card .lbl { font-size: .67rem; color: var(--text-3); margin-top: 5px; text-transform: uppercase; letter-spacing: .07em; font-weight: 600; }
+    .card .lbl {
+      font-size: .66rem; color: var(--text-3);
+      text-transform: uppercase; letter-spacing: .08em; font-weight: 600;
+    }
     .card.success .num { color: var(--green); }
     .card.failed  .num { color: var(--red); }
     .card.running .num { color: var(--accent); }
@@ -1030,34 +1072,6 @@ function renderDashboard(stats, budget) {
         ? `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg> Resume`
         : `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause Queue`}
     </button>
-    <button type="button" class="header-btn icon-only" id="check-update-btn" title="Check for updates" onclick="checkForUpdates()">
-      <svg id="check-update-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/></svg>
-    </button>
-    <button type="button" class="header-btn icon-only" title="About Prevoyant" onclick="openModal('info-modal')">
-      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
-    </button>
-    <a href="/dashboard/activity" class="settings-link" title="Activity Log">
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
-      Activity
-    </a>
-    <a href="/dashboard/watch" class="settings-link" title="Ticket Watcher">
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
-      Watch
-    </a>
-    <a href="/dashboard/knowledge-builder" class="settings-link" title="Knowledge Builder">
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
-      Knowledge
-    </a>
-    ${readDiskStatus().pendingCleanup
-      ? `<a href="/dashboard/disk" class="settings-link" title="Disk Monitor — cleanup pending" style="color:#ea580c">`
-      : `<a href="/dashboard/disk" class="settings-link" title="Disk Monitor">`}
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
-      Disk${readDiskStatus().pendingCleanup ? ' ⚑' : ''}
-    </a>
-    <a href="/dashboard/settings" class="settings-link">
-      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-      Settings
-    </a>
     ${process.env.PRX_HERMES_ENABLED === 'Y' ? `<a id="dash-hermes-badge" href="/dashboard/hermes-config" class="hermes-agent-badge" title="Hermes — click to manage">
       <span id="dash-hermes-dot" class="hermes-pulse-dot"></span>
       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
@@ -1069,6 +1083,42 @@ function renderDashboard(stats, budget) {
       <span>Review</span>
       <span id="dash-insights-count" style="background:#fff;border-radius:9px;padding:0 7px;font-size:.7rem">0</span>
     </a>` : ''}
+    <div class="nav-menu" id="nav-menu">
+      <button type="button" class="header-btn nav-menu-trigger" onclick="toggleNavMenu(event)" aria-haspopup="true" aria-expanded="false" title="Menu">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
+        Menu
+        <svg class="chev" xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="6 9 12 15 18 9"/></svg>
+        ${readDiskStatus().pendingCleanup ? `<span class="alert-dot" title="Disk cleanup pending"></span>` : ''}
+      </button>
+      <div class="nav-menu-panel" role="menu">
+        <a href="/dashboard/activity" class="nav-menu-item" role="menuitem">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          Activity Log
+        </a>
+        <a href="/dashboard/watch" class="nav-menu-item" role="menuitem">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
+          Ticket Watcher
+        </a>
+        <a href="/dashboard/knowledge-builder" class="nav-menu-item" role="menuitem">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
+          Knowledge Builder
+        </a>
+        <a href="/dashboard/disk" class="nav-menu-item" role="menuitem">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
+          Disk Monitor
+          ${readDiskStatus().pendingCleanup ? `<span class="nav-menu-flag">cleanup</span>` : ''}
+        </a>
+      </div>
+    </div>
+    <a href="/dashboard/settings" class="header-btn icon-only" title="Settings">
+      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+    </a>
+    <button type="button" class="header-btn icon-only" id="check-update-btn" title="Check for updates" onclick="checkForUpdates()">
+      <svg id="check-update-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="8 17 12 21 16 17"/><line x1="12" y1="12" x2="12" y2="21"/><path d="M20.88 18.09A5 5 0 0 0 18 9h-1.26A8 8 0 1 0 3 16.29"/></svg>
+    </button>
+    <button type="button" class="header-btn icon-only" title="About Prevoyant" onclick="openModal('info-modal')">
+      <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>
+    </button>
     <div class="refresh-note">
       <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
       Refresh every
@@ -1568,6 +1618,32 @@ function renderDashboard(stats, budget) {
       clearTimeout(t._tid);
       if (duration !== 0) t._tid = setTimeout(() => t.classList.remove('show'), duration || 3000);
     }
+    function toggleNavMenu(e) {
+      e && e.stopPropagation();
+      const m = document.getElementById('nav-menu');
+      if (!m) return;
+      m.classList.toggle('open');
+      const trigger = m.querySelector('.nav-menu-trigger');
+      if (trigger) trigger.setAttribute('aria-expanded', m.classList.contains('open') ? 'true' : 'false');
+    }
+    document.addEventListener('click', (e) => {
+      const m = document.getElementById('nav-menu');
+      if (m && m.classList.contains('open') && !m.contains(e.target)) {
+        m.classList.remove('open');
+        const trigger = m.querySelector('.nav-menu-trigger');
+        if (trigger) trigger.setAttribute('aria-expanded', 'false');
+      }
+    });
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape') {
+        const m = document.getElementById('nav-menu');
+        if (m && m.classList.contains('open')) {
+          m.classList.remove('open');
+          const trigger = m.querySelector('.nav-menu-trigger');
+          if (trigger) trigger.setAttribute('aria-expanded', 'false');
+        }
+      }
+    });
     function checkForUpdates() {
       const btn  = document.getElementById('check-update-btn');
       const icon = document.getElementById('check-update-icon');
