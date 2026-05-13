@@ -1,4 +1,4 @@
-# Prevoyant - Claude Code Plugin `v1.3.0`
+# Prevoyant - Claude Code Plugin `v1.3.1`
 
 **Prevoyant** is a [Claude Code](https://claude.ai/code) plugin — an AI agent team that runs a structured, end-to-end developer workflow for Jira tickets. Three modes:
 
@@ -364,6 +364,17 @@ The skill generates reports via pandoc → Chrome headless → HTML fallback (tr
 | Linux / Windows WSL | `cargo install ast-grep` (requires Rust) or download a binary from [github.com/ast-grep/ast-grep/releases](https://github.com/ast-grep/ast-grep/releases) |
 
 Verify: `sg --version`
+
+### graphify (auto-installed — codebase knowledge graph)
+
+[graphify](https://github.com/safishamsi/graphify) is installed automatically by `scripts/setup.sh` / `scripts/setup.ps1` and produces `graph.json` + `GRAPH_REPORT.md` at the root of `PRX_REPO_DIR`. The dev skill uses it as Pass 0 of Step 5 (Locate Affected Code) for instant symbol lookups, for the KB stale-anchor sweep at Step 0a (graph-aware `RELOCATED`/`STALE` detection), and for the KB coverage audit (god-node gaps and surprising cross-module connections are staged into `kbflow-pending.md` for Sam's Step 13j review). All graph-aware paths fall back to grep/ast-grep when the graph is absent.
+
+| Platform | Command |
+|----------|---------|
+| macOS / Linux / Windows | `uv tool install graphifyy` (preferred — installed automatically by setup) |
+| Fallback (any OS)       | `pipx install graphifyy` |
+
+Verify: `graphify --version`. If `graphify` is not on PATH after install, run `uv tool update-shell` (or `pipx ensurepath`) and reopen the shell.
 
 ### Git
 The repository at `REPO_DIR` must be present locally. The skill creates branches there.
@@ -1493,6 +1504,20 @@ rm -rf ~/.prevoyant/reports   # or the path set in CLAUDE_REPORT_DIR
 ---
 
 ## Changelog
+
+### v1.3.1 — graphify Knowledge-Graph Augmentation
+
+- **graphify is now a first-class prerequisite.** Setup scripts (`scripts/setup.sh` and `scripts/setup.ps1`) install [graphify](https://github.com/safishamsi/graphify) via `uv tool install graphifyy` (falling back to `pipx install graphifyy` if `uv` is unavailable) and run an initial `graphify .` extraction against `PRX_REPO_DIR` at the end of setup — so session 1 starts with a ready `graph.json` + `GRAPH_REPORT.md`. Works identically on macOS, Linux, and Windows; install paths (`~/.local/bin` on macOS/Linux, `%USERPROFILE%\.local\bin` on Windows) are added to `PATH` for the current session and persisted on Windows via `setx`.
+
+- **New Pass 0 in SKILL.md Step 5 — Locate Affected Code:** before grep/ast-grep, the dev agent queries `graph.json` for the target symbol's location and neighbors. Short-circuits Passes 1–2 when the graph already knows the answer (cost ≈ 0 tokens). Falls through gracefully when the graph is unavailable, stale, or ambiguous — Passes 1–3 (grep → ast-grep → Read) are unchanged. A stale-graph guard rebuilds `graph.json` in the background when the repo has moved >24h or >100 commits ahead of the last extraction.
+
+- **Class hierarchy via `get-neighbors` (Step 5.5):** the four `sg --pattern 'class $NAME extends …'` queries are now backed by a single `graphify get-neighbors --edges extends,implements --depth 3` call when the graph is present. Transitive, language-agnostic, and faster on large hierarchies. ast-grep remains the documented fallback.
+
+- **Graph-aware KB stale-anchor sweep (Step 0a):** the lightweight KB integrity sweep no longer relies on file-existence checks alone. With `graph.json` present, every `file:line` reference in `shared/*.md` and `core-mental-map/*.md` is validated against the live symbol graph — catching method renames, intra-file moves, and cross-file relocations that the previous `ls` heuristic missed entirely. Emits separate `STALE_REF` and `RELOCATED_REF` lists so Step 13c (shared) and Step 13g (CMM) can auto-heal with either `[DELETED]` or `[RELOCATED]` markers. Falls back to the file-existence check when graphify is unavailable.
+
+- **KB coverage audit — automatic candidate staging:** at session start, the dev skill reads `GRAPH_REPORT.md` and stages two kinds of KB candidates into `~/.prevoyant/knowledge-buildup/kbflow-pending.md` for Sam's Step 13j review: (a) **god-node gaps** — graphify's most-connected symbols that have no current `INDEX.md` entry, flagging a coverage hole; (b) **surprising cross-module connections** — high-rank unexpectedness edges from `GRAPH_REPORT.md` that may deserve a `shared/architecture.md` or `shared/regression-risks.md` entry. Candidates land as `Status: PENDING APPROVAL` and are picked up by the standing agenda check — any coverage gap surfaced this way forces Step 13j review before the session closes.
+
+- **Cross-platform parity:** graphify install handled across all three platforms with the same fallback ladder: `uv tool` → `pipx` → manual instructions. Setup script step count bumped from 9/9 → 10/10 to surface graphify as a distinct, optional-but-installed-by-default prerequisite. SKILL.md additions degrade gracefully when graphify is absent — every new path documents its grep/ast-grep fallback inline.
 
 ### v1.3.0 — Hermes Integration (Full-Time Agent Mode)
 

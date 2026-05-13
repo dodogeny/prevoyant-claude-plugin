@@ -1489,17 +1489,70 @@ KB: {KNOWLEDGE_DIR}
     Index file     : INDEX.md (Memory Palace + Master Index)
 ```
 
-**Lightweight KB integrity sweep** — immediately after the status block above, run a quick background pass over `shared/*.md` to flag entries with file:line references that are obviously stale (file no longer exists). Budget: ≤ 5 targeted `ls` or `grep` checks — do not read whole files.
+**Lightweight KB integrity sweep** — immediately after the status block above, run a quick background pass over `shared/*.md` and `core-mental-map/*.md` to flag entries with `file:line` references that have drifted. Budget: ≤ 5 targeted operations — do not read whole files.
+
+**Preferred path (graphify — symbol-level validation):** if `graph.json` exists at `{REPO_DIR}/` and `graphify` is on PATH, validate each `ref:` against the live symbol graph. This catches three cases the file-existence check below misses entirely: method renamed in place, method moved to another file, line number shifted.
 
 ```bash
-# For each file:line reference found in shared KB and Core Mental Map files, check the file still exists:
-grep -rh "ref:" "$KNOWLEDGE_DIR/shared/" "$KNOWLEDGE_DIR/core-mental-map/" 2>/dev/null \
-  | grep -oP '[a-zA-Z/._-]+\.(java|py|js|ts|sql|xml)' | sort -u | while read f; do
-  [ ! -f "$REPO_DIR/$f" ] && echo "STALE_REF: $f"
-done
+if [ -f "$REPO_DIR/graph.json" ] && command -v graphify &>/dev/null; then
+  grep -rh "ref:" "$KB_WORK_DIR/shared/" "$KB_WORK_DIR/core-mental-map/" 2>/dev/null \
+    | grep -oE '[a-zA-Z/._-]+\.(java|py|js|ts|sql|xml):[0-9]+' | sort -u \
+    | while read ref; do
+        file="${ref%:*}"; line="${ref##*:}"
+        # Ask the graph: is there a node at file:line (or within ±5 lines)?
+        # graphify returns the node label + new line if it moved, or empty if deleted.
+        hit=$(graphify query "node at $file:$line" --graph "$REPO_DIR/graph.json" 2>/dev/null)
+        if   [ -z "$hit" ];                                  then echo "STALE_REF: $ref (symbol absent from graph — flag DELETED)"
+        elif echo "$hit" | grep -q "line: $line"; then        :  # VALID — no-op
+        else                                                       echo "RELOCATED_REF: $ref → $(echo "$hit" | grep -oE 'line: [0-9]+')"
+        fi
+      done
+else
+  # Fallback (no graph): file-existence check only — coarse but cheap.
+  grep -rh "ref:" "$KB_WORK_DIR/shared/" "$KB_WORK_DIR/core-mental-map/" 2>/dev/null \
+    | grep -oP '[a-zA-Z/._-]+\.(java|py|js|ts|sql|xml)' | sort -u | while read f; do
+    [ ! -f "$REPO_DIR/$f" ] && echo "STALE_REF: $f"
+  done
+fi
 ```
 
-Any `STALE_REF` lines are held in memory for the session. These entries will be auto-healed in Step 13c (shared files) and Step 13g (Core Mental Map) after the session analysis is complete. Do not interrupt Step 0 for this — note `{N} stale file references flagged for auto-heal` and continue.
+`STALE_REF` and `RELOCATED_REF` lines are held in memory for the session. STALE entries auto-heal at Step 13c (shared) / Step 13g (CMM) with the `[DELETED]` marker; RELOCATED entries are rewritten with the new file:line and the `[RELOCATED]` marker. Do not interrupt Step 0 for this — note `{N} stale + {M} relocated refs flagged for auto-heal` and continue.
+
+**KB coverage audit (graph-aware — runs only if `GRAPH_REPORT.md` exists at `{REPO_DIR}/`):**
+
+graphify's `GRAPH_REPORT.md` lists (a) the codebase's most-connected symbols ("god nodes") and (b) cross-module connections ranked by unexpectedness. Both are high-value seeds for KB entries that don't yet exist. Compute the coverage delta and stage the gaps as proposals for Sam to triage at Step 13j.
+
+Budget: ≤ 4 ops — read `GRAPH_REPORT.md` once, grep `INDEX.md` once per candidate batch, append to `kbflow-pending.md` once.
+
+```bash
+GRAPH_REPORT="$REPO_DIR/GRAPH_REPORT.md"
+KBFLOW_PENDING="$HOME/.prevoyant/knowledge-buildup/kbflow-pending.md"
+
+if [ -f "$GRAPH_REPORT" ]; then
+  mkdir -p "$(dirname "$KBFLOW_PENDING")"
+  today="$(date +%Y-%m-%d)"
+
+  # (a) God nodes — most-connected symbols. Any god node not mentioned in INDEX.md is a coverage hole.
+  awk '/^## God Nodes/,/^## /' "$GRAPH_REPORT" | grep -oE '`[A-Za-z_][A-Za-z0-9_]+`' \
+    | tr -d '`' | sort -u | while read sym; do
+      grep -qi "$sym" "$KB_WORK_DIR/INDEX.md" && continue
+      printf '\n## CANDIDATE-COVERAGE-%s\nStatus: PENDING APPROVAL\nDate: %s\nSource: graphify god-node\nSymbol: %s\nProposal: New KB entry — frequently-coupled symbol with no current coverage.\n' \
+        "$sym" "$today" "$sym" >> "$KBFLOW_PENDING"
+    done
+
+  # (b) Surprising connections — cross-module edges ranked by unexpectedness.
+  # Read the top-5 of the "Surprising Connections" section and stage each as a discovery candidate.
+  awk '/^## Surprising Connections/,/^## /' "$GRAPH_REPORT" | head -20 \
+    | grep -oE '`[^`]+`[[:space:]]*↔[[:space:]]*`[^`]+`' | head -5 | while read edge; do
+      # Hash-ish dedup key — append only if this edge isn't already in kbflow-pending.md
+      grep -qF "$edge" "$KBFLOW_PENDING" 2>/dev/null && continue
+      printf '\n## CANDIDATE-CONNECTION\nStatus: PENDING APPROVAL\nDate: %s\nSource: graphify surprising-connection\nEdge: %s\nProposal: Investigate whether this cross-module coupling deserves an architecture or risk entry.\n' \
+        "$today" "$edge" >> "$KBFLOW_PENDING"
+    done
+fi
+```
+
+Emit: `KB coverage audit: {N} god-node gaps + {M} surprising-connection candidates staged for Sam (Step 13j).` These count as `PENDING APPROVAL` and are picked up by the standing-agenda check below — so any coverage gap surfaced here forces Step 13j review before the session closes.
 
 **Pending KB contributions check (standing agenda item):**
 
@@ -1964,7 +2017,17 @@ Based on the ticket description, comments, and labels, search the codebase at `{
 2. **Entry point** — where does the flow start? (API endpoint, UI event handler, worker, scheduled job)
 3. **Data flow** — trace the relevant path through the layers (Frontend → API → DataSource → DB, or Worker → Plugin → etc.)
 4. **Related files** — any model, DTO, or DB script changes that will likely be needed
-5. **Class hierarchy** *(mandatory for enhancement tickets adding new fields or methods)* — identify the full inheritance chain of the target class using ast-grep:
+5. **Class hierarchy** *(mandatory for enhancement tickets adding new fields or methods)* — identify the full inheritance chain of the target class.
+
+   **Preferred (graphify — single query, transitive, language-agnostic):**
+   ```bash
+   # All ancestors + descendants + interface implementors of {TargetClass}
+   graphify query "class hierarchy of {TargetClass}" --graph "$REPO_DIR/graph.json"
+   # Or, structured:
+   graphify get-neighbors "{TargetClass}" --edges extends,implements --depth 3 --graph "$REPO_DIR/graph.json"
+   ```
+
+   **Fallback (ast-grep — when graph unavailable or symbol not extracted):**
    ```bash
    # All direct subclasses
    sg --pattern 'class $NAME extends {TargetClass}' --lang java {REPO_DIR}/
@@ -1978,9 +2041,33 @@ Based on the ticket description, comments, and labels, search the codebase at `{
    - **Rule:** If the abstract base already owns similar state for other listeners/workers in the same family, the new state belongs there too. Keep only the concrete-class-specific config wiring (`getConfig()` items, `setAttribute()` cases) in the concrete class.
    - Add the abstract base class to the file map with role "Abstract base — owns shared infrastructure"
 
-#### Three-Pass Search Sequence (mandatory)
+#### Search Sequence (mandatory — up to four passes)
 
-Never read an entire source file speculatively. Always follow these three passes in order:
+Never read an entire source file speculatively. Always follow these passes in order, stopping as soon as confidence is **High**:
+
+**Pass 0 — graphify (knowledge graph lookup)** *(optional — runs only if `graph.json` exists at `{REPO_DIR}/`)*
+
+Before grepping, ask the codebase knowledge graph: where does `{ClassName}` / `{methodName}` live, and what are its immediate neighbors?
+
+```bash
+# Prerequisite: graphify CLI + graph.json at the repo root
+which graphify >/dev/null 2>&1 && [ -f "$REPO_DIR/graph.json" ] || echo "graph index unavailable — skip Pass 0"
+
+# Locate the node
+graphify query "where is {ClassName}" --graph "$REPO_DIR/graph.json"
+graphify query "where is {methodName}" --graph "$REPO_DIR/graph.json"
+
+# Pull the structural neighborhood (callers, callees, fields, subclasses)
+graphify get-neighbors "{ClassName}" --graph "$REPO_DIR/graph.json"
+```
+
+Purpose: short-circuit Passes 1–2 when the graph already knows the answer. Costs ~0 tokens per query (graph stays on disk; only the JSON answer is read into context).
+
+> **When to stop at Pass 0:** if the graph returns a unique node with file:line + at least one neighbor that matches the ticket's vocabulary, set `File map confidence: High` and skip directly to Pass 3 (Read). Pass 1/2 exist for cases the graph doesn't cover.
+>
+> **When to fall through:** missing/stale `graph.json`, ambiguous results (>5 matching nodes with the same label), or a symbol the graph couldn't extract (macros, generated code, dynamic dispatch). Note the reason inline (`Pass 0: ambiguous — 7 nodes named {Method} across {N} files`) and continue with Pass 1.
+>
+> **Stale graph guard:** if the most recent commit on `{REPO_DIR}` is newer than the `graph.json` mtime by >24h or >100 commits, treat the graph as stale — log `Pass 0: graph stale, rebuilding in background` and trigger `(cd "$REPO_DIR" && graphify . &)` so the next session has fresh data. Do not block this session waiting for it.
 
 **Pass 1 — Grep (candidate files)**
 ```bash
@@ -3646,12 +3733,16 @@ For each extracted item:
 
 **Stale reference auto-heal** — for every `shared/*.md` entry that contains a `file:line` reference, validate and heal as follows (opportunistically, using only files already read or grepped during this session to avoid extra ops):
 
+> **If the Step 0a sweep ran in graph-aware mode** (`graph.json` present + `graphify` installed), prefer its already-collected `STALE_REF` and `RELOCATED_REF` lists — they're symbol-level accurate. Use the grep walk below only as a fallback or as a confirmation pass for entries the graph couldn't resolve.
+
 ```
 For each file:line reference encountered in KB entries:
-  1. grep -n "{method_or_class_name}" "$REPO_DIR/{file}"
+  1. graphify query "node at {file}:{line}" --graph "$REPO_DIR/graph.json"   (preferred)
+     OR
+     grep -n "{method_or_class_name}" "$REPO_DIR/{file}"                       (fallback)
   2. VALID     → found at same line ± 5   → no change
   3. RELOCATED → found at different line  → update file:line; append [RELOCATED {skill_version}]
-  4. MOVED     → not in that file; grep across REPO_DIR finds it elsewhere
+  4. MOVED     → not in that file; graph/grep finds it elsewhere
                 → update to new file:line; append [RELOCATED {skill_version}]
   5. DELETED   → symbol not found anywhere in REPO_DIR
                 → mark entry [DELETED {skill_version}]; retain pattern/rule text

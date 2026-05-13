@@ -537,7 +537,7 @@ printf "════════════════════════
 
 # ── 1. uvx (Jira MCP) ─────────────────────────────────────────────────────────
 
-step "1/9  uvx  (Jira MCP server)  [required]"
+step "1/10  uvx  (Jira MCP server)  [required]"
 
 if command -v uvx &>/dev/null; then
   ok "uvx already installed"
@@ -564,7 +564,7 @@ fi
 
 # ── 2. Node.js + codeburn ─────────────────────────────────────────────────────
 
-step "2/9  Node.js  (budget tracking + Prevoyant Server)  [required]"
+step "2/10  Node.js  (budget tracking + Prevoyant Server)  [required]"
 
 if locate_npx &>/dev/null; then
   ok "Node.js already installed ($(node --version 2>/dev/null || echo 'found'))"
@@ -627,7 +627,7 @@ fi
 
 # ── 3. pandoc (PDF generation) ────────────────────────────────────────────────
 
-step "3/9  pandoc  (PDF reports)  [optional — Chrome headless or HTML fallback]"
+step "3/10  pandoc  (PDF reports)  [optional — Chrome headless or HTML fallback]"
 
 if command -v pandoc &>/dev/null; then
   ok "pandoc already installed ($(pandoc --version 2>/dev/null | head -1 || echo 'found'))"
@@ -683,7 +683,7 @@ fi
 
 # ── 4. qpdf (PDF encryption for WhatsApp delivery) ───────────────────────────
 
-step "4/9  qpdf  (PDF encryption)  [optional — needed for PRX_WASENDER_PDF_PASSWORD]"
+step "4/10  qpdf  (PDF encryption)  [optional — needed for PRX_WASENDER_PDF_PASSWORD]"
 
 if command -v qpdf &>/dev/null; then
   ok "qpdf already installed ($(qpdf --version 2>/dev/null | head -1 || echo 'found'))"
@@ -723,7 +723,7 @@ fi
 
 # ── 5. basic-memory (per-agent personal memory MCP) ──────────────────────────
 
-step "5/9  basic-memory  (per-agent MCP)  [downloads & configures]"
+step "5/10  basic-memory  (per-agent MCP)  [downloads & configures]"
 
 if command -v uvx &>/dev/null; then
   info "Pre-fetching basic-memory package (priming uvx cache)..."
@@ -740,9 +740,60 @@ else
   impact "Personal agent memory MCP will not start until uvx is installed"
 fi
 
-# ── 6. .env ───────────────────────────────────────────────────────────────────
+# ── 6. graphify (codebase knowledge graph) ───────────────────────────────────
 
-step "6/9  .env  (environment file)  [required]"
+step "6/10  graphify  (codebase knowledge graph)  [augments grep/ast-grep]"
+
+# graphify produces graph.json + GRAPH_REPORT.md at the repo root, used by
+# SKILL.md Step 5 (Pass 0 structural search) and the KB integrity sweep at
+# Step 0a (auto-heal stale file:line refs against the live symbol graph).
+# CLI is installed here; the initial graph extraction runs at the end of
+# step 10 once .env has been written and PRX_REPO_DIR is known.
+
+if command -v graphify &>/dev/null; then
+  ok "graphify already installed ($(graphify --version 2>/dev/null | head -1 || echo 'found'))"
+else
+  GRAPHIFY_OK=0
+
+  # Ensure ~/.local/bin is on PATH for this session before probing post-install.
+  # uv tool installs to $HOME/.local/bin on macOS/Linux and to %USERPROFILE%\.local\bin
+  # on Windows (Git Bash maps $HOME → %USERPROFILE%, so the same path works).
+  export PATH="$HOME/.local/bin:$PATH"
+
+  if command -v uv &>/dev/null; then
+    info "Installing graphify via uv tool..."
+    uv tool install graphifyy 2>&1 | tail -3
+    # uv tool update-shell persists ~/.local/bin in the user's shell rc files (or
+    # user-scope PATH on Windows). Safe to re-run; no-ops if already updated.
+    uv tool update-shell 2>/dev/null || true
+    command -v graphify &>/dev/null && GRAPHIFY_OK=1
+  fi
+  if [ "$GRAPHIFY_OK" -eq 0 ] && command -v pipx &>/dev/null; then
+    info "→ pipx fallback"
+    pipx install graphifyy 2>&1 | tail -3
+    pipx ensurepath 2>/dev/null || true
+    command -v graphify &>/dev/null && GRAPHIFY_OK=1
+  fi
+
+  # Windows (Git Bash): also persist ~/.local/bin to user-scope PATH so future
+  # native PowerShell / CMD sessions can find graphify without re-running setup.
+  if [ "$GRAPHIFY_OK" -eq 1 ] && [ "$IS_WIN_BASH" -eq 1 ]; then
+    persist_user_path_win "$HOME/.local/bin"
+  fi
+
+  if [ "$GRAPHIFY_OK" -eq 1 ]; then
+    ok "graphify installed ($(graphify --version 2>/dev/null | head -1 || echo 'found'))"
+    info "Add to your shell profile (if not already present): export PATH=\"\$HOME/.local/bin:\$PATH\""
+  else
+    warn "graphify install failed — skill will fall back to grep/ast-grep only"
+    impact "Structural Pass 0 search and graph-based KB stale-ref detection disabled"
+    info "Install manually: uv tool install graphifyy  (or pipx install graphifyy)"
+  fi
+fi
+
+# ── 7. .env ───────────────────────────────────────────────────────────────────
+
+step "7/10  .env  (environment file)  [required]"
 
 ENV_FILE="$PROJECT_ROOT/.env"
 ENV_EXAMPLE="$PROJECT_ROOT/.env.example"
@@ -814,7 +865,7 @@ fi
 
 # ── 7. Claude Code settings.json (marketplace registration) ───────────────────
 
-step "7/9  Claude Code marketplace registration  [required]"
+step "8/10  Claude Code marketplace registration  [required]"
 
 # On WSL, Claude Code runs on Windows — write to the Windows user profile.
 # On Git Bash, $HOME already maps to the Windows user folder.
@@ -895,7 +946,7 @@ fi
 # .claude/settings.json and work without this file.  This file only adds
 # pre-approved permissions so common commands don't trigger prompts.
 
-step "8/9  settings.local.json  (permission allowlist)  [optional]"
+step "9/10  settings.local.json  (permission allowlist)  [optional]"
 
 LOCAL_SETTINGS="$PROJECT_ROOT/.claude/settings.local.json"
 mkdir -p "$PROJECT_ROOT/.claude"
@@ -949,7 +1000,7 @@ fi
 
 # ── 9. Plugin install + enable ────────────────────────────────────────────────
 
-step "9/9  plugin install + enable  [required]"
+step "10/10  plugin install + enable  [required]"
 
 PLUGIN_OK=0
 if command -v claude &>/dev/null; then
@@ -975,6 +1026,31 @@ else
   warn "claude CLI not found in PATH — plugin will not be auto-installed"
   impact "After Claude Code is installed, run:"
   info "  claude plugin install prevoyant@dodogeny && claude plugin enable prevoyant@dodogeny"
+fi
+
+# ── 10b. Initial graphify extraction (depends on .env from step 7) ───────────
+# Builds graph.json + GRAPH_REPORT.md at PRX_REPO_DIR so SKILL.md Pass 0 and
+# the KB integrity sweep can use the graph from session 1. Skipped if PRX_REPO_DIR
+# is unset (the skill will retry lazily on first use).
+
+if command -v graphify &>/dev/null && [ -f "$ENV_FILE" ]; then
+  REPO_DIR_FROM_ENV="$(grep '^PRX_REPO_DIR=' "$ENV_FILE" 2>/dev/null | cut -d= -f2- | tr -d '"' | tr -d "'")"
+  REPO_DIR_FROM_ENV="${REPO_DIR_FROM_ENV/#\~/$HOME}"
+  if [ -n "$REPO_DIR_FROM_ENV" ] && [ -d "$REPO_DIR_FROM_ENV/.git" ]; then
+    if [ -f "$REPO_DIR_FROM_ENV/graph.json" ]; then
+      ok "graph.json already exists at $REPO_DIR_FROM_ENV — skipping extraction"
+    else
+      info "Building initial codebase graph at $REPO_DIR_FROM_ENV (one-time, may take a few minutes)..."
+      if (cd "$REPO_DIR_FROM_ENV" && graphify . 2>&1 | tail -3); then
+        ok "Initial graph extracted — graph.json, GRAPH_REPORT.md ready"
+      else
+        warn "graphify extraction failed — skill will retry on first use"
+        impact "Pass 0 search degrades to grep/ast-grep until graph.json exists"
+      fi
+    fi
+  else
+    info "PRX_REPO_DIR not set or not a git repo — graph will build on first skill use"
+  fi
 fi
 
 # ── summary ───────────────────────────────────────────────────────────────────

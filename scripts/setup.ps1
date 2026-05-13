@@ -41,7 +41,7 @@ Write-Host "Repo     : $PROJECT_ROOT"
 Write-Host "======================================"
 
 # ── 1. uvx (Jira MCP) ─────────────────────────────────────────────────────────
-step "1/9  uvx  (Jira MCP server)  [required]"
+step "1/10  uvx  (Jira MCP server)  [required]"
 
 if (cmd_exists 'uvx') {
     ok "uvx already installed"
@@ -65,7 +65,7 @@ if (cmd_exists 'uvx') {
 }
 
 # ── 2. Node.js (codeburn) ─────────────────────────────────────────────────────
-step "2/9  Node.js  (budget tracking + Prevoyant Server)  [required]"
+step "2/10  Node.js  (budget tracking + Prevoyant Server)  [required]"
 
 if (cmd_exists 'node') {
     ok "Node.js already installed ($(node --version 2>$null))"
@@ -110,7 +110,7 @@ if (cmd_exists 'node') {
 }
 
 # ── 3. pandoc (PDF generation) ────────────────────────────────────────────────
-step "3/9  pandoc  (PDF reports)  [optional — Chrome headless or HTML fallback]"
+step "3/10  pandoc  (PDF reports)  [optional — Chrome headless or HTML fallback]"
 
 if (cmd_exists 'pandoc') {
     ok "pandoc already installed ($(pandoc --version 2>$null | Select-Object -First 1))"
@@ -157,7 +157,7 @@ if (cmd_exists 'pandoc') {
 }
 
 # ── 4. qpdf (PDF encryption for WhatsApp delivery) ───────────────────────────
-step "4/9  qpdf  (PDF encryption)  [optional — needed for PRX_WASENDER_PDF_PASSWORD]"
+step "4/10  qpdf  (PDF encryption)  [optional — needed for PRX_WASENDER_PDF_PASSWORD]"
 
 if (cmd_exists 'qpdf') {
     ok "qpdf already installed ($((qpdf --version 2>$null | Select-Object -First 1) -replace '.*qpdf version ','qpdf '))"
@@ -204,7 +204,7 @@ if (cmd_exists 'qpdf') {
 }
 
 # ── 5. basic-memory (per-agent personal memory MCP) ──────────────────────────
-step "5/9  basic-memory  (per-agent MCP)  [downloads & configures]"
+step "5/10  basic-memory  (per-agent MCP)  [downloads & configures]"
 
 if (cmd_exists 'uvx') {
     info "Pre-fetching basic-memory package (priming uvx cache)..."
@@ -223,12 +223,82 @@ if (cmd_exists 'uvx') {
         impact "First plugin run with PRX_BASIC_MEMORY_ENABLED=Y may take longer"
     }
 } else {
-    warn "uvx not found — basic-memory requires uvx (step 1/9 must succeed first)"
+    warn "uvx not found — basic-memory requires uvx (step 1/10 must succeed first)"
     impact "Personal agent memory MCP will not start until uvx is installed"
 }
 
-# ── 6. .env ───────────────────────────────────────────────────────────────────
-step "6/9  .env  (environment file)  [required]"
+# ── 6. graphify (codebase knowledge graph) ───────────────────────────────────
+step "6/10  graphify  (codebase knowledge graph)  [augments grep/ast-grep]"
+
+# graphify produces graph.json + GRAPH_REPORT.md at the repo root, used by
+# SKILL.md Step 5 (Pass 0 structural search) and the KB integrity sweep at
+# Step 0a (auto-heal stale file:line refs against the live symbol graph).
+# CLI is installed here; the initial graph extraction runs at the end of
+# step 10 once .env has been written and PRX_REPO_DIR is known.
+
+if (cmd_exists 'graphify') {
+    $gfVersion = (& graphify --version 2>$null | Select-Object -First 1)
+    ok "graphify already installed ($gfVersion)"
+} else {
+    $GRAPHIFY_OK = $false
+
+    # uv tool installs to %USERPROFILE%\.local\bin on Windows. Add to session PATH
+    # before probing post-install so cmd_exists 'graphify' resolves correctly.
+    $localBin = Join-Path $env:USERPROFILE ".local\bin"
+    if (Test-Path $localBin) {
+        if ($env:PATH -notlike "*$localBin*") { $env:PATH = "$localBin;$env:PATH" }
+    }
+
+    if (cmd_exists 'uv') {
+        info "Installing graphify via uv tool..."
+        try {
+            & uv tool install graphifyy 2>&1 | Select-Object -Last 3 | ForEach-Object { info $_ }
+            # Persist ~/.local/bin to user PATH so future PowerShell / CMD sessions
+            # see graphify without re-running setup. No-op if already present.
+            & uv tool update-shell 2>&1 | Out-Null
+            refresh_path
+            if (-not (Test-Path $localBin)) { $localBin = Join-Path $env:USERPROFILE ".local\bin" }
+            if ((Test-Path $localBin) -and ($env:PATH -notlike "*$localBin*")) {
+                $env:PATH = "$localBin;$env:PATH"
+            }
+            if (cmd_exists 'graphify') { $GRAPHIFY_OK = $true }
+        } catch { info "uv tool install attempt failed: $_" }
+    }
+    if (-not $GRAPHIFY_OK -and (cmd_exists 'pipx')) {
+        info "--> pipx fallback"
+        try {
+            & pipx install graphifyy 2>&1 | Select-Object -Last 3 | ForEach-Object { info $_ }
+            & pipx ensurepath 2>&1 | Out-Null
+            refresh_path
+            if (cmd_exists 'graphify') { $GRAPHIFY_OK = $true }
+        } catch { info "pipx install attempt failed: $_" }
+    }
+
+    # Final safety net: explicitly persist %USERPROFILE%\.local\bin to user PATH on
+    # Windows if uv/pipx didn't (e.g. uv versions older than tool update-shell).
+    if ($GRAPHIFY_OK) {
+        try {
+            $userPath = [System.Environment]::GetEnvironmentVariable("Path", "User")
+            if ($userPath -notlike "*$localBin*") {
+                $newPath = if ($userPath) { "$localBin;$userPath" } else { $localBin }
+                [System.Environment]::SetEnvironmentVariable("Path", $newPath, "User")
+                info "Persisted $localBin to user PATH for future sessions"
+            }
+        } catch { info "Could not persist user PATH: $_" }
+    }
+
+    if ($GRAPHIFY_OK) {
+        $gfVersion = (& graphify --version 2>$null | Select-Object -First 1)
+        ok "graphify installed ($gfVersion)"
+    } else {
+        warn "graphify install failed — skill will fall back to grep/ast-grep only"
+        impact "Structural Pass 0 search and graph-based KB stale-ref detection disabled"
+        info "Install manually: uv tool install graphifyy  (or pipx install graphifyy)"
+    }
+}
+
+# ── 7. .env ───────────────────────────────────────────────────────────────────
+step "7/10  .env  (environment file)  [required]"
 
 $EnvFile       = Join-Path $PROJECT_ROOT ".env"
 $EnvExample    = Join-Path $PROJECT_ROOT ".env.example"
@@ -286,8 +356,8 @@ if (Test-Path $EnvFile) {
     }
 }
 
-# ── 7. Claude Code settings.json (marketplace registration) ───────────────────
-step "7/9  Claude Code marketplace registration  [required]"
+# ── 8. Claude Code settings.json (marketplace registration) ───────────────────
+step "8/10  Claude Code marketplace registration  [required]"
 
 $SettingsFile = Join-Path $env:USERPROFILE ".claude\settings.json"
 $SettingsDir  = Split-Path -Parent $SettingsFile
@@ -325,11 +395,11 @@ try {
     info "Add the marketplace manually (see README)"
 }
 
-# ── 8. .claude/settings.local.json (permissions) ─────────────────────────────
+# ── 9. .claude/settings.local.json (permissions) ─────────────────────────────
 # SessionStart hooks (load-env + check-budget) live in the committed
 # .claude/settings.json and work without this file.  This file only adds
 # pre-approved permissions so common commands don't trigger prompts.
-step "8/9  settings.local.json  (permission allowlist)  [optional]"
+step "9/10  settings.local.json  (permission allowlist)  [optional]"
 
 $LocalSettings = Join-Path $PROJECT_ROOT ".claude\settings.local.json"
 $LocalDir = Split-Path -Parent $LocalSettings
@@ -357,8 +427,8 @@ if (Test-Path $LocalSettings) {
     }
 }
 
-# ── 9. Plugin install + enable ────────────────────────────────────────────────
-step "9/9  plugin install + enable  [required]"
+# ── 10. Plugin install + enable ───────────────────────────────────────────────
+step "10/10  plugin install + enable  [required]"
 
 $PLUGIN_OK = $false
 if (cmd_exists 'claude') {
@@ -393,6 +463,48 @@ if (cmd_exists 'claude') {
     warn "claude CLI not found in PATH — plugin will not be auto-installed"
     impact "After Claude Code is installed, run:"
     info "  claude plugin install prevoyant@dodogeny && claude plugin enable prevoyant@dodogeny"
+}
+
+# ── 10b. Initial graphify extraction (depends on .env from step 7) ───────────
+# Builds graph.json + GRAPH_REPORT.md at PRX_REPO_DIR so SKILL.md Pass 0 and
+# the KB integrity sweep can use the graph from session 1. Skipped if PRX_REPO_DIR
+# is unset (the skill will retry lazily on first use).
+
+if ((cmd_exists 'graphify') -and (Test-Path $EnvFile)) {
+    $repoDirFromEnv = $null
+    foreach ($line in Get-Content $EnvFile) {
+        if ($line -match '^PRX_REPO_DIR=(.*)$') {
+            $repoDirFromEnv = $Matches[1].Trim().Trim('"').Trim("'")
+            if ($repoDirFromEnv.StartsWith('~')) {
+                $repoDirFromEnv = $repoDirFromEnv -replace '^~', $HOME
+            }
+            break
+        }
+    }
+    if ($repoDirFromEnv -and (Test-Path (Join-Path $repoDirFromEnv ".git"))) {
+        $graphPath = Join-Path $repoDirFromEnv "graph.json"
+        if (Test-Path $graphPath) {
+            ok "graph.json already exists at $repoDirFromEnv — skipping extraction"
+        } else {
+            info "Building initial codebase graph at $repoDirFromEnv (one-time, may take a few minutes)..."
+            try {
+                Push-Location $repoDirFromEnv
+                & graphify . 2>&1 | Select-Object -Last 3 | ForEach-Object { info $_ }
+                Pop-Location
+                if (Test-Path $graphPath) {
+                    ok "Initial graph extracted — graph.json, GRAPH_REPORT.md ready"
+                } else {
+                    warn "graphify extraction did not produce graph.json — skill will retry on first use"
+                    impact "Pass 0 search degrades to grep/ast-grep until graph.json exists"
+                }
+            } catch {
+                warn "graphify extraction failed: $_ — skill will retry on first use"
+                impact "Pass 0 search degrades to grep/ast-grep until graph.json exists"
+            }
+        }
+    } else {
+        info "PRX_REPO_DIR not set or not a git repo — graph will build on first skill use"
+    }
 }
 
 # ── summary ───────────────────────────────────────────────────────────────────
