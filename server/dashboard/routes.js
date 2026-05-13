@@ -3482,7 +3482,7 @@ function renderSettings(vals, flash) {
       </details>
 
       <!-- Webhook & Polling -->
-      <details class="s-section" open>
+      <details class="s-section">
         <summary>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
           Webhook &amp; Polling
@@ -3499,7 +3499,7 @@ function renderSettings(vals, flash) {
       </details>
 
       <!-- Knowledge Base -->
-      <details class="s-section"${sectionHasValues(kbKeys, vals) ? ' open' : ''}>
+      <details class="s-section">
         <summary>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>
           Knowledge Base
@@ -3644,7 +3644,7 @@ function renderSettings(vals, flash) {
       </details>
 
       <!-- Report Output -->
-      <details class="s-section"${sectionHasValues(reportKeys, vals) ? ' open' : ''}>
+      <details class="s-section">
         <summary>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
           Report Output
@@ -3657,7 +3657,7 @@ function renderSettings(vals, flash) {
       </details>
 
       <!-- Agent Memory -->
-      <details class="s-section"${sectionHasValues(memKeys, vals) ? ' open' : ''} id="agent-memory">
+      <details class="s-section" id="agent-memory">
         <summary>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
           Agent Memory
@@ -3783,7 +3783,7 @@ function renderSettings(vals, flash) {
       </script>
 
       <!-- Automation -->
-      <details class="s-section"${sectionHasValues(autoKeys, vals) ? ' open' : ''}>
+      <details class="s-section">
         <summary>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
           Automation
@@ -3805,7 +3805,7 @@ function renderSettings(vals, flash) {
       </details>
 
       <!-- Email Delivery -->
-      <details class="s-section"${sectionHasValues(emailKeys, vals) ? ' open' : ''}>
+      <details class="s-section">
         <summary>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
           Email Delivery
@@ -3824,7 +3824,7 @@ function renderSettings(vals, flash) {
       </details>
 
       <!-- Notifications -->
-      <details class="s-section"${nOpen ? ' open' : ''}>
+      <details class="s-section">
         <summary>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.73 21a2 2 0 0 1-3.46 0"/></svg>
           Notifications
@@ -3891,7 +3891,7 @@ function renderSettings(vals, flash) {
       </details>
 
       <!-- WhatsApp / WaSender -->
-      <details class="s-section"${waOpen ? ' open' : ''}>
+      <details class="s-section">
         <summary>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
           WhatsApp Notifications
@@ -3943,7 +3943,7 @@ function renderSettings(vals, flash) {
       </details>
 
       <!-- Bryan -->
-      <details class="s-section"${sectionHasValues(bryanKeys, vals) ? ' open' : ''}>
+      <details class="s-section">
         <summary>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
           Bryan — Scrum Master
@@ -3960,7 +3960,7 @@ function renderSettings(vals, flash) {
       </details>
 
       <!-- Health Monitor (Watchdog) -->
-      <details class="s-section"${sectionHasValues(['PRX_WATCHDOG_ENABLED','PRX_WATCHDOG_INTERVAL_SECS','PRX_WATCHDOG_FAIL_THRESHOLD'], vals) ? ' open' : ''}>
+      <details class="s-section">
         <summary>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
           Health Monitor
@@ -3989,7 +3989,7 @@ function renderSettings(vals, flash) {
       </details>
 
       <!-- Disk Monitor -->
-      <details id="disk-monitor" class="s-section"${sectionHasValues(['PRX_DISK_MONITOR_ENABLED','PRX_DISK_MONITOR_INTERVAL_MINS','PRX_DISK_CLEANUP_INTERVAL_DAYS','PRX_PREVOYANT_MAX_SIZE_MB','PRX_DISK_CAPACITY_ALERT_PCT'], vals) ? ' open' : ''}>
+      <details id="disk-monitor" class="s-section">
         <summary>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
           Disk Monitor
@@ -4019,7 +4019,7 @@ function renderSettings(vals, flash) {
       </details>
 
       <!-- Ticket Watcher -->
-      <details class="s-section"${v('PRX_WATCH_ENABLED') === 'Y' ? ' open' : ''} id="ticket-watcher">
+      <details class="s-section" id="ticket-watcher">
         <summary>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
           Ticket Watcher
@@ -4046,7 +4046,7 @@ function renderSettings(vals, flash) {
       </details>
 
       <!-- KB Flow Analyst -->
-      <details class="s-section"${v('PRX_KBFLOW_ENABLED') === 'Y' ? ' open' : ''} id="kb-flow-analyst">
+      <details class="s-section" id="kb-flow-analyst">
         <summary>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
           KB Flow Analyst
@@ -4072,7 +4072,7 @@ function renderSettings(vals, flash) {
       </details>
 
       <!-- Hermes Integration -->
-      <details class="s-section"${v('PRX_HERMES_ENABLED') === 'Y' ? ' open' : ''} id="hermes" onToggle="if(this.open) hermesCheckStatus()">
+      <details class="s-section" id="hermes" onToggle="if(this.open) hermesCheckStatus()">
         <summary>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="2" y1="12" x2="22" y2="12"/><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/></svg>
           Hermes Integration
@@ -6342,10 +6342,11 @@ function renderHermesConfig(vals, flash) {
     <form method="POST" action="/dashboard/hermes-config">
 
       <!-- ── Hermes Connection ───────────────────────────────────────────────── -->
-      <details class="s-section" open>
+      <details class="s-section">
         <summary>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
           Hermes Connection
+          <span class="s-opt">Optional</span>
           <span class="s-chevron">›</span>
         </summary>
         <div class="s-body">
@@ -6417,7 +6418,7 @@ function renderHermesConfig(vals, flash) {
       </details>
 
       <!-- ── Telegram Notifications ─────────────────────────────────────────── -->
-      <details class="s-section"${v('PRX_TELEGRAM_ENABLED') === 'Y' || v('PRX_TELEGRAM_BOT_TOKEN') ? ' open' : ''}>
+      <details class="s-section">
         <summary>
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
           Telegram Notifications
