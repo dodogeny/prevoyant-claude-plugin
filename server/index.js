@@ -51,11 +51,13 @@ if (!config.hermesEnabled) {
 
 let watchdogWorker       = null;
 let diskWorker           = null;
-let updateWorker         = null;
-let kbSyncWorker         = null;
-let ticketWatcherWorker  = null;
-let kbFlowAnalystWorker  = null;
-let hermesNotifierActive = false;
+let updateWorker            = null;
+let kbSyncWorker            = null;
+let ticketWatcherWorker     = null;
+let kbFlowAnalystWorker     = null;
+let patternMinerWorker      = null;
+let kbStalenessWorker       = null;
+let hermesNotifierActive    = false;
 
 function startWatchdog() {
   if (process.env.PRX_WATCHDOG_ENABLED !== 'Y') return;
@@ -314,8 +316,72 @@ function stopKbFlowAnalyst() {
   }
 }
 
-process.on('SIGTERM', () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); stopKbFlowAnalyst(); setTimeout(() => process.exit(0), 600); });
-process.on('SIGINT',  () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); stopKbFlowAnalyst(); setTimeout(() => process.exit(0), 600); });
+function startPatternMiner() {
+  if (process.env.PRX_PATTERN_MINER_ENABLED !== 'Y') return;
+  if (patternMinerWorker) return;
+  patternMinerWorker = new Worker(
+    path.join(__dirname, 'workers', 'memoryPatternMinerWorker.js'),
+    { workerData: {} }
+  );
+  patternMinerWorker.on('message', msg => {
+    if (!msg) return;
+    if (msg.type === 'patterns-proposed') {
+      activityLog.record('pattern_miner_proposed', null, 'system', { count: msg.count });
+    }
+  });
+  patternMinerWorker.on('error', err =>
+    console.error('[pattern-miner] Worker error:', err.message)
+  );
+  patternMinerWorker.on('exit', code => {
+    patternMinerWorker = null;
+    if (code !== 0) console.error(`[pattern-miner] Worker exited with code ${code}`);
+  });
+  const interval = process.env.PRX_PATTERN_MINER_INTERVAL_DAYS || '7';
+  console.log(`[prevoyant-server] Memory Pattern Miner active — every ${interval} day(s)`);
+}
+
+function stopPatternMiner() {
+  if (patternMinerWorker) {
+    patternMinerWorker.postMessage({ type: 'graceful-stop' });
+    patternMinerWorker = null;
+  }
+}
+
+function startKbStaleness() {
+  if (process.env.PRX_STALENESS_ENABLED !== 'Y') return;
+  if (kbStalenessWorker) return;
+  kbStalenessWorker = new Worker(
+    path.join(__dirname, 'workers', 'kbStalenessWorker.js'),
+    { workerData: {} }
+  );
+  kbStalenessWorker.on('message', msg => {
+    if (!msg) return;
+    if (msg.type === 'staleness-scanned') {
+      activityLog.record('kb_staleness_scanned', null, 'system', {
+        kbFiles: msg.kbFiles, refsChecked: msg.refsChecked, stale: msg.stale,
+      });
+    }
+  });
+  kbStalenessWorker.on('error', err =>
+    console.error('[kb-staleness] Worker error:', err.message)
+  );
+  kbStalenessWorker.on('exit', code => {
+    kbStalenessWorker = null;
+    if (code !== 0) console.error(`[kb-staleness] Worker exited with code ${code}`);
+  });
+  const interval = process.env.PRX_STALENESS_INTERVAL_DAYS || '7';
+  console.log(`[prevoyant-server] KB Staleness Scanner active — every ${interval} day(s)`);
+}
+
+function stopKbStaleness() {
+  if (kbStalenessWorker) {
+    kbStalenessWorker.postMessage({ type: 'graceful-stop' });
+    kbStalenessWorker = null;
+  }
+}
+
+process.on('SIGTERM', () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); stopKbFlowAnalyst(); stopPatternMiner(); stopKbStaleness(); setTimeout(() => process.exit(0), 600); });
+process.on('SIGINT',  () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); stopKbFlowAnalyst(); stopPatternMiner(); stopKbStaleness(); setTimeout(() => process.exit(0), 600); });
 
 // Reactively start/stop workers when settings are saved from the dashboard.
 // This avoids requiring a full server restart for monitor enable/disable toggles.
@@ -324,8 +390,10 @@ serverEvents.on('settings-saved', () => {
   const watchdogEnabled    = process.env.PRX_WATCHDOG_ENABLED     === 'Y';
   const kbSyncEnabled      = process.env.PRX_REALTIME_KB_SYNC     === 'Y'
                           && process.env.PRX_KB_MODE               === 'distributed';
-  const watcherEnabled     = process.env.PRX_WATCH_ENABLED         === 'Y';
-  const kbflowEnabled      = process.env.PRX_KBFLOW_ENABLED        === 'Y';
+  const watcherEnabled     = process.env.PRX_WATCH_ENABLED              === 'Y';
+  const kbflowEnabled      = process.env.PRX_KBFLOW_ENABLED             === 'Y';
+  const patternMinerOn     = process.env.PRX_PATTERN_MINER_ENABLED      === 'Y';
+  const stalenessOn        = process.env.PRX_STALENESS_ENABLED          === 'Y';
 
   if (diskEnabled && !diskWorker)                         startDiskMonitor();
   if (!diskEnabled && diskWorker)                         stopDiskMonitor();
@@ -337,6 +405,10 @@ serverEvents.on('settings-saved', () => {
   if (!watcherEnabled && ticketWatcherWorker)             stopTicketWatcher();
   if (kbflowEnabled && !kbFlowAnalystWorker)              startKbFlowAnalyst();
   if (!kbflowEnabled && kbFlowAnalystWorker)              stopKbFlowAnalyst();
+  if (patternMinerOn && !patternMinerWorker)              startPatternMiner();
+  if (!patternMinerOn && patternMinerWorker)              stopPatternMiner();
+  if (stalenessOn && !kbStalenessWorker)                 startKbStaleness();
+  if (!stalenessOn && kbStalenessWorker)                 stopKbStaleness();
 
   // Hermes: skill install + gateway start/stop can happen without restart.
   // Route registration (/jira-events vs /internal/enqueue) still needs restart.
@@ -364,9 +436,15 @@ serverEvents.on('settings-saved', () => {
 
 // Manual scan trigger from /dashboard/knowledge-builder run-now button.
 serverEvents.on('kbflow-run-now', () => {
-  if (kbFlowAnalystWorker) {
-    kbFlowAnalystWorker.postMessage({ type: 'run-now' });
-  }
+  if (kbFlowAnalystWorker)  kbFlowAnalystWorker.postMessage({ type: 'run-now' });
+});
+
+serverEvents.on('pattern-miner-run-now', () => {
+  if (patternMinerWorker)   patternMinerWorker.postMessage({ type: 'run-now' });
+});
+
+serverEvents.on('staleness-run-now', () => {
+  if (kbStalenessWorker)    kbStalenessWorker.postMessage({ type: 'run-now' });
 });
 
 // ── Server listen ─────────────────────────────────────────────────────────────
@@ -394,6 +472,8 @@ app.listen(config.port, () => {
   startKbSync();
   startTicketWatcher();
   startKbFlowAnalyst();
+  startPatternMiner();
+  startKbStaleness();
 
   // Config-coherence warnings — logged once at startup so they surface in logs
   // without requiring the user to open the settings page.

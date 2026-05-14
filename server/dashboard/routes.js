@@ -4288,6 +4288,68 @@ function renderSettings(vals, flash) {
         </div>
       </details>
 
+      <!-- Memory Pattern Miner -->
+      <details class="s-section" id="pattern-miner">
+        <summary>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          Memory Pattern Miner
+          <span class="s-opt">Optional</span>
+          <span class="s-chevron">›</span>
+        </summary>
+        <div class="s-body">
+          <div class="s-field span2">
+            <div class="s-hint" style="margin-top:0">
+              Background worker that periodically scans agent persona memory files for learnings
+              that recur across multiple distinct tickets. Pattern candidates are written to
+              <code>~/.prevoyant/knowledge-buildup/pattern-proposals.md</code> (PENDING APPROVAL).
+              A human or the Step 13j review process must promote them to
+              <code>shared/patterns.md</code> — nothing is written to the KB directly.
+            </div>
+          </div>
+          ${fld('PRX_PATTERN_MINER_ENABLED','Enable Pattern Miner','select',v('PRX_PATTERN_MINER_ENABLED') || 'N','','Starts the Memory Pattern Miner background worker.',
+            [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
+          ${fld('PRX_PATTERN_MINER_INTERVAL_DAYS','Run interval (days)','text',v('PRX_PATTERN_MINER_INTERVAL_DAYS'),'7','Days between scan runs. Fractional values supported. Default: 7.')}
+          ${fld('PRX_PATTERN_MINER_MIN_TICKETS','Min tickets for pattern','number',v('PRX_PATTERN_MINER_MIN_TICKETS'),'3','Minimum number of distinct tickets a learning must appear in to qualify as a pattern. Minimum enforced: 2. Default: 3.')}
+          ${fld('PRX_PATTERN_MINER_MAX_PROPOSALS','Max proposals per run','number',v('PRX_PATTERN_MINER_MAX_PROPOSALS'),'20','Maximum proposals written per run. Default: 20.')}
+          <div class="s-field span2" style="margin-top:4px">
+            <button type="button" onclick="patternMinerRunNow()"
+              style="font-size:11px;padding:3px 12px;border:1px solid #6366f1;border-radius:6px;background:#eef2ff;color:#4338ca;cursor:pointer">
+              ▶ Run now
+            </button>
+          </div>
+        </div>
+      </details>
+
+      <!-- KB Staleness Scanner -->
+      <details class="s-section" id="kb-staleness">
+        <summary>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+          KB Staleness Scanner
+          <span class="s-opt">Optional</span>
+          <span class="s-chevron">›</span>
+        </summary>
+        <div class="s-body">
+          <div class="s-field span2">
+            <div class="s-hint" style="margin-top:0">
+              Background worker that periodically walks all <code>.md</code> files in the knowledge base,
+              extracts <code>ref: file:line</code> references, and checks whether those source files still
+              exist at the configured <code>PRX_REPO_DIR</code>. Stale refs are written to
+              <code>~/.prevoyant/knowledge-buildup/stale-refs.md</code> for review.
+              Requires <code>PRX_REPO_DIR</code> to be configured.
+            </div>
+          </div>
+          ${fld('PRX_STALENESS_ENABLED','Enable Staleness Scanner','select',v('PRX_STALENESS_ENABLED') || 'N','','Starts the KB Staleness Scanner background worker.',
+            [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
+          ${fld('PRX_STALENESS_INTERVAL_DAYS','Run interval (days)','text',v('PRX_STALENESS_INTERVAL_DAYS'),'7','Days between scan runs. Fractional values supported. Default: 7.')}
+          <div class="s-field span2" style="margin-top:4px">
+            <button type="button" onclick="stalenessRunNow()"
+              style="font-size:11px;padding:3px 12px;border:1px solid #6366f1;border-radius:6px;background:#eef2ff;color:#4338ca;cursor:pointer">
+              ▶ Run now
+            </button>
+          </div>
+        </div>
+      </details>
+
       <!-- Hermes Integration -->
       <details class="s-section" id="hermes" onToggle="if(this.open) hermesCheckStatus()">
         <summary>
@@ -4467,6 +4529,45 @@ function renderSettings(vals, flash) {
         .then(() => hermesCheckStatus())
         .catch(() => hermesCheckStatus())
         .finally(() => { btn.disabled = false; });
+    }
+
+    // ── Pattern Miner / Staleness run-now ────────────────────────────────────
+    async function patternMinerRunNow() {
+      const btn = event.target;
+      btn.disabled = true; btn.textContent = 'Queued…';
+      try {
+        const r = await fetch('/dashboard/settings/pattern-miner/run-now', { method: 'POST' });
+        const d = await r.json();
+        btn.textContent = d.ok ? '✓ Queued' : (d.error || 'Error');
+        btn.style.background = d.ok ? '#dcfce7' : '#fee2e2';
+        btn.style.borderColor = d.ok ? '#86efac' : '#fca5a5';
+        btn.style.color       = d.ok ? '#166534' : '#991b1b';
+      } catch (_) {
+        btn.textContent = 'Error';
+      }
+      setTimeout(() => {
+        btn.disabled = false; btn.textContent = '▶ Run now';
+        btn.style.background = ''; btn.style.borderColor = ''; btn.style.color = '';
+      }, 4000);
+    }
+
+    async function stalenessRunNow() {
+      const btn = event.target;
+      btn.disabled = true; btn.textContent = 'Queued…';
+      try {
+        const r = await fetch('/dashboard/settings/staleness/run-now', { method: 'POST' });
+        const d = await r.json();
+        btn.textContent = d.ok ? '✓ Queued' : (d.error || 'Error');
+        btn.style.background = d.ok ? '#dcfce7' : '#fee2e2';
+        btn.style.borderColor = d.ok ? '#86efac' : '#fca5a5';
+        btn.style.color       = d.ok ? '#166534' : '#991b1b';
+      } catch (_) {
+        btn.textContent = 'Error';
+      }
+      setTimeout(() => {
+        btn.disabled = false; btn.textContent = '▶ Run now';
+        btn.style.background = ''; btn.style.borderColor = ''; btn.style.color = '';
+      }, 4000);
     }
 
     // ── Notifications ─────────────────────────────────────────────────────────
@@ -5802,6 +5903,8 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'PRX_WATCH_ENABLED', 'PRX_WATCH_POLL_INTERVAL', 'PRX_WATCH_MAX_POLLS',
     'PRX_WATCH_LOG_KEEP_DAYS', 'PRX_WATCH_LOG_KEEP_PER_TICKET',
     'PRX_KBFLOW_ENABLED', 'PRX_KBFLOW_INTERVAL_DAYS', 'PRX_KBFLOW_LOOKBACK_DAYS', 'PRX_KBFLOW_MAX_FLOWS',
+    'PRX_PATTERN_MINER_ENABLED', 'PRX_PATTERN_MINER_INTERVAL_DAYS', 'PRX_PATTERN_MINER_MIN_TICKETS', 'PRX_PATTERN_MINER_MAX_PROPOSALS',
+    'PRX_STALENESS_ENABLED', 'PRX_STALENESS_INTERVAL_DAYS',
     'PRX_WASENDER_ENABLED', 'PRX_WASENDER_API_KEY', 'PRX_WASENDER_TO',
     'PRX_WASENDER_PUBLIC_URL', 'PRX_WASENDER_EVENTS', 'PRX_WASENDER_PDF_PASSWORD',
     'PRX_HERMES_ENABLED', 'PRX_HERMES_GATEWAY_URL', 'PRX_HERMES_SECRET', 'PRX_HERMES_JIRA_WRITEBACK',
@@ -7445,6 +7548,22 @@ router.post('/knowledge-builder/run-now', (_req, res) => {
   serverEvents.emit('kbflow-run-now');
   activityLog.record('kbflow_scan_started', null, 'user', { trigger: 'manual' });
   res.redirect(303, '/dashboard/knowledge-builder?flash=run-queued');
+});
+
+router.post('/settings/pattern-miner/run-now', express.json(), (_req, res) => {
+  if (process.env.PRX_PATTERN_MINER_ENABLED !== 'Y') {
+    return res.status(400).json({ ok: false, error: 'Pattern Miner is not enabled' });
+  }
+  serverEvents.emit('pattern-miner-run-now');
+  res.json({ ok: true });
+});
+
+router.post('/settings/staleness/run-now', express.json(), (_req, res) => {
+  if (process.env.PRX_STALENESS_ENABLED !== 'Y') {
+    return res.status(400).json({ ok: false, error: 'Staleness Scanner is not enabled' });
+  }
+  serverEvents.emit('staleness-run-now');
+  res.json({ ok: true });
 });
 
 module.exports = router;

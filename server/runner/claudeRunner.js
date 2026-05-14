@@ -217,6 +217,11 @@ function buildEvidenceBlock(meta, fetchedUrls = []) {
 }
 
 function evidenceOnlyPrompt(ticketKey, evidenceBlock) {
+  const kbDir = process.env.PRX_KNOWLEDGE_DIR
+    || path.join(os.homedir(), '.prevoyant', 'knowledge-base');
+  const outFile = path.join(kbDir, 'evidence-insights', `${ticketKey}.md`);
+  const now     = new Date().toISOString();
+
   return (evidenceBlock ? evidenceBlock + '\n\n' : '')
     + `## Evidence-Only Analysis — ${ticketKey}\n\n`
     + 'No Jira ticket is associated with this run. Analyse all evidence provided above and produce a structured findings report.\n\n'
@@ -225,7 +230,39 @@ function evidenceOnlyPrompt(ticketKey, evidenceBlock) {
     + '2. **Key observations** — anomalies, patterns, and notable data points\n'
     + '3. **Root cause analysis** — if a fault or issue is evident\n'
     + '4. **Recommendations** — next steps or remediation actions\n\n'
-    + 'Be specific. Cite line numbers, timestamps, or values from the evidence where relevant.';
+    + 'Be specific. Cite line numbers, timestamps, or values from the evidence where relevant.\n\n'
+    + '---\n\n'
+    + '## KB Contribution Step (required — do not skip)\n\n'
+    + 'While analysing, emit `[KB+]` markers inline for any reusable knowledge:\n'
+    + '```\n'
+    + '[KB+ BIZ]  {domain rule or invariant} — Source: {evidence file or URL}\n'
+    + '[KB+ PAT]  Pattern #{N}: {description} — {source}  [NEW or BUMP]\n'
+    + '[KB+ RISK] {area} is fragile — {reason} — Source: {evidence}\n'
+    + '[KB+ ARCH] {architecture insight} — Source: {evidence}\n'
+    + '```\n\n'
+    + `After completing your analysis, use the Write tool to create the following file (create parent directory if needed):\n\n`
+    + `**File:** \`${outFile}\`\n\n`
+    + '**Content (fill in the placeholders — remove lines that do not apply):**\n'
+    + '```markdown\n'
+    + '---\n'
+    + 'source: evidence-only\n'
+    + `submitted_at: ${now}\n`
+    + `key: ${ticketKey}\n`
+    + '---\n\n'
+    + `# ${ticketKey} — Evidence Analysis\n\n`
+    + '## Summary\n'
+    + '{1–2 sentences describing what the evidence represents}\n\n'
+    + '## Key Findings\n'
+    + '- {finding 1} — _{source citation}_\n'
+    + '- {finding 2} — _{source citation}_\n\n'
+    + '## Root Cause\n'
+    + '{root cause if identifiable, otherwise omit this section}\n\n'
+    + '## Recommendations\n'
+    + '- {recommendation 1}\n\n'
+    + '## KB Contributions\n'
+    + '{copy any [KB+] markers emitted during analysis, one per line}\n'
+    + '```\n\n'
+    + 'This write makes findings available to future sessions that process related tickets.';
 }
 
 function modePrompt(ticketKey, mode, kbBlock = null, evidenceBlock = null) {
@@ -483,6 +520,16 @@ async function runClaudeAnalysis(ticketKey, mode = 'dev', ticketMeta = {}) {
     if (n > 0) console.log(`[runner] ${ticketKey} — indexed ${n} new memory entry(s)`);
   } catch (memErr) {
     console.warn(`[runner] ${ticketKey} — memory indexing skipped: ${memErr.message}`);
+  }
+
+  // Marker safety net — scan output for [KB+]/[CMM+]/[LL+] markers that Step 13
+  // may not have processed (e.g. session killed or errored before Step 13 ran).
+  try {
+    const { rescueMarkers } = require('./markerRescue');
+    const entry = tracker.getTicket(ticketKey);
+    rescueMarkers(ticketKey, entry && entry.outputLog, entry && entry.status);
+  } catch (rescueErr) {
+    console.warn(`[runner] ${ticketKey} — marker rescue skipped: ${rescueErr.message}`);
   }
 
   if (runError) throw runError;

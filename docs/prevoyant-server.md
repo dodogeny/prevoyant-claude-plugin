@@ -1,6 +1,6 @@
 # Prevoyant Server
 
-Prevoyant Server is an optional Node.js service that runs alongside the Claude Code plugin as an always-on ambient agent. It receives Jira webhook events (or polls on a schedule), queues tickets for analysis, spawns Claude, and surfaces live progress on a web dashboard.
+Prevoyant Server is an optional Node.js service that runs alongside the Claude Code plugin as an always-on ambient agent. It receives Jira webhook events (or polls on a schedule), queues tickets for analysis, spawns Claude, and surfaces live progress on a web dashboard. Over time it also augments the Knowledge Base automatically through a suite of background workers.
 
 ---
 
@@ -11,9 +11,13 @@ Prevoyant Server is an optional Node.js service that runs alongside the Claude C
 - [Start / Stop the Server](#start--stop-the-server)
 - [Environment Variables](#environment-variables)
 - [Dashboard](#dashboard)
+- [Add Ticket to Queue](#add-ticket-to-queue)
+- [Evidence-Only Runs](#evidence-only-runs)
 - [Pipeline Tracking](#pipeline-tracking)
 - [Job Queue & Stop/Kill](#job-queue--stopkill)
 - [Stage Instructions](#stage-instructions)
+- [Knowledge Base Augmentation](#knowledge-base-augmentation)
+- [Background Workers](#background-workers)
 - [Jira Webhook Setup](#jira-webhook-setup)
 - [Scheduled Polling](#scheduled-polling)
 - [API Reference](#api-reference)
@@ -149,6 +153,21 @@ Every ticket can be run in any of three modes, selectable from the dashboard:
 | **Review** | `review` | 11-step PR review: fetches the feature branch diff → Engineering Panel code review → consolidated findings PDF |
 | **Estimate** | `estimate` | 9-step Planning Poker: scope analysis → simultaneous voting → structured debate → consensus → PDF estimate |
 
+### Evidence-Only Runs
+
+Any document or URL can be submitted for analysis without a Jira ticket. Leave the ticket key blank in the **Add Ticket to Queue** modal and the server generates a synthetic key (`EV-YYYYMMDD-HHMMSS`). Claude performs direct evidence analysis and writes its findings to the `evidence-insights` KB layer — bypassing the `/prx:dev` skill entirely. See [Evidence-Only Runs](#evidence-only-runs) for details.
+
+### Automatic KB Augmentation
+
+A suite of background workers keeps the Knowledge Base growing and healthy without manual intervention:
+
+- **Marker Rescue** — catches `[KB+]` / `[CMM+]` / `[LL+]` markers from interrupted sessions
+- **Memory Pattern Miner** — surfaces recurring cross-ticket learnings as pattern proposals
+- **KB Staleness Scanner** — validates `ref: file:line` entries against the source repository
+- **Evidence Insights** — evidence-only analyses are indexed into the KB for future runs
+
+See [Knowledge Base Augmentation](#knowledge-base-augmentation) and [Background Workers](#background-workers) for details.
+
 ### Health Endpoint
 
 `GET /health` returns `{ status: "ok", server: "prevoyant-server", ts: "..." }` — useful for uptime monitors, load balancers, and deployment health checks.
@@ -232,6 +251,32 @@ All variables are read from the root `.env` file. The server never reads a `serv
 | `CLAUDE_REPORT_DIR` | `~/.prevoyant/reports` | Directory where Claude saves PDF/HTML reports |
 | `AUTO_MODE` | — | Set to `Y` to bypass all Claude confirmation gates (headless mode) |
 | `FORCE_FULL_RUN_ON` | — | Set to `1` to force all steps to run in full even on reruns |
+| `PRX_REPO_DIR` | — | Absolute path to the source repository. Used by the KB Staleness Scanner and any feature that checks file existence. Falls back to `PRX_SOURCE_REPO_DIR`. |
+
+### Knowledge Base
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PRX_KB_MODE` | `local` | `local` — KB lives at `PRX_KNOWLEDGE_DIR`. `distributed` — KB is a git-managed clone at `PRX_KB_LOCAL_CLONE`. |
+| `PRX_KNOWLEDGE_DIR` | `~/.prevoyant/knowledge-base` | Path to the local knowledge base (used when `PRX_KB_MODE=local`). |
+| `PRX_KB_LOCAL_CLONE` | `~/.prevoyant/kb` | Path to the git-cloned KB (used when `PRX_KB_MODE=distributed`). |
+| `PRX_REALTIME_KB_SYNC` | `N` | Set to `Y` to push KB updates to Upstash Redis in real time (requires `PRX_KB_MODE=distributed`). Has no effect in `local` mode. |
+
+### Memory Pattern Miner
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PRX_PATTERN_MINER_ENABLED` | `N` | Set to `Y` to enable the Memory Pattern Miner background worker. |
+| `PRX_PATTERN_MINER_INTERVAL_DAYS` | `7` | Days between scan runs. Fractional values supported. |
+| `PRX_PATTERN_MINER_MIN_TICKETS` | `3` | Minimum distinct tickets a learning must appear in to qualify as a pattern. Minimum enforced: 2. |
+| `PRX_PATTERN_MINER_MAX_PROPOSALS` | `20` | Maximum proposals written per run. |
+
+### KB Staleness Scanner
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PRX_STALENESS_ENABLED` | `N` | Set to `Y` to enable the KB Staleness Scanner background worker. |
+| `PRX_STALENESS_INTERVAL_DAYS` | `7` | Days between scan runs. Fractional values supported. |
 
 ---
 
@@ -249,7 +294,7 @@ Each row shows:
 
 | Column | Description |
 |--------|-------------|
-| Ticket | Jira key — click to open the detail page |
+| Ticket | Jira key (or `EV-*` synthetic key for evidence-only runs) — click to open the detail page |
 | Mode | Dev / Review / Estimate |
 | Source | `webhook` / `manual` / `disk` |
 | Status | Queued / Running / Done / Failed / Interrupted |
@@ -271,6 +316,69 @@ Click any ticket key to open its detail page, which shows:
 - **Run panel** — mode selector, Run button, and (when active) a **Stop Job** button
 - **View Output** — collapsible session log with markdown rendering; falls back to PDF embed when the session is complete
 - **Reports** — list of all associated PDF/HTML files with download and inline view links
+
+---
+
+## Add Ticket to Queue
+
+Click **+ Add Ticket to Queue** on the dashboard to open the modal. It supports two distinct workflows:
+
+### Standard Jira run
+
+1. Enter a **Ticket key** (e.g. `PRX-42`).
+2. Optionally set the **Analysis mode** (Dev / Review / Estimate).
+3. Optionally toggle **Apply changes** to commit Claude's proposed changes to a feature branch.
+4. Optionally expand **Extra evidence** to attach supplemental context (see below).
+5. Click **Add to Queue**.
+
+### Evidence-only run
+
+Leave the **Ticket key** blank. The form switches to evidence-only mode:
+
+- Jira fields are hidden.
+- The evidence section is required.
+- A synthetic key `EV-YYYYMMDD-HHMMSS` is generated automatically.
+
+Attach evidence in any combination of:
+
+| Method | Description |
+|--------|-------------|
+| **Files** | Select any number of files (no size limit). Text files are read in the browser and sent as JSON. |
+| **URLs** | Paste one URL per line. The server fetches each URL before spawning Claude (30 s timeout, follows redirects). |
+| **Analyst notes** | Free-form text injected directly into the prompt. |
+
+---
+
+## Evidence-Only Runs
+
+Evidence-only runs let you submit documents, logs, or URLs for analysis without a Jira ticket. They use a completely separate prompt path from the standard `/prx:dev` skill.
+
+### How they work
+
+1. The server assigns a synthetic key: `EV-YYYYMMDD-HHMMSS`.
+2. Any URLs in the submission are fetched server-side and their content included in the prompt.
+3. Claude receives an `evidenceOnlyPrompt` — no KB pre-load, no Jira context, direct analysis only.
+4. Claude is instructed to write `[KB+]` markers inline and save its findings to:
+   ```
+   ~/.prevoyant/knowledge-base/evidence-insights/{ticketKey}.md
+   ```
+5. The `evidence-insights` layer is included in the KB pre-load for all subsequent standard runs, so findings from evidence-only sessions feed forward into the team's knowledge.
+
+### Output
+
+| Artefact | Location |
+|----------|----------|
+| Evidence insight file | `~/.prevoyant/knowledge-base/evidence-insights/{EV-*}.md` |
+| Session output log | `~/.prevoyant/sessions/{EV-*}.json` |
+| Dashboard entry | Visible as any other ticket, labelled with the synthetic key |
+
+### URL fetching
+
+- Fetched server-side using Node's native `https`/`http` modules
+- 30-second timeout per URL
+- Follows HTTP redirects (up to one hop)
+- Failed fetches are included in the prompt as `_(fetch failed: reason)_` so Claude is aware of the attempt
+- Only `http://` and `https://` URLs are accepted
 
 ---
 
@@ -331,6 +439,7 @@ After stopping:
 - All remaining pending stages are marked **Skipped**
 - The session is persisted to disk with status `interrupted`
 - The ticket can be re-run at any time from the dashboard
+- The **Marker Rescue** safety net scans the output log for any `[KB+]` / `[CMM+]` / `[LL+]` markers and saves them for manual review (see [Marker Rescue](#marker-rescue))
 
 ---
 
@@ -360,6 +469,176 @@ Stage instructions let you define what Claude should do in a custom pipeline sta
 On the next session, Claude receives the stage sequence and the custom instructions injected into its prompt. It announces `### Step 15 — Security Scan` when it reaches that step, and the pipeline tracks it live.
 
 **Key rule:** The stage ID in `stages.json` must match what Claude announces (`"Step 15 —"`). The instructions file is what tells Claude to announce that step and what to do there.
+
+---
+
+## Knowledge Base Augmentation
+
+The KB is built up from multiple independent flows that each contribute different types of knowledge. Every flow is non-blocking — they write proposals or drafts for human review rather than committing directly to the KB.
+
+### KB layers
+
+| Layer | Path | Populated by |
+|-------|------|-------------|
+| `shared` | `knowledge-base/shared/` | Manual curation + Step 13j promotions |
+| `core-mental-map` | `knowledge-base/core-mental-map/` | KB Flow Analyst + manual |
+| `lessons-learned` | `knowledge-base/lessons-learned/` | Step 13 during Dev runs |
+| `personas/memory` | `knowledge-base/personas/memory/{agent}/` | Agent memory after each run |
+| `evidence-insights` | `knowledge-base/evidence-insights/` | Evidence-only runs (automatic) |
+
+### Augmentation flows
+
+#### 1. Step 13 — KB update (inline, every Dev run)
+
+The SKILL.md Step 13 instructs Claude to emit `[KB+]`, `[CMM+]`, and `[LL+]` markers inline during investigation and then consolidate them into the KB at the end of the session. This is the primary KB write path.
+
+#### 2. Evidence-only runs → evidence-insights layer
+
+Evidence-only runs (no Jira ticket) write their findings to `evidence-insights/{key}.md`. These files are included in the KB pre-load for all subsequent standard runs — so one-off document analyses feed forward into every future Claude session.
+
+#### 3. Marker Rescue — safety net for interrupted sessions
+
+When Step 13 does not run to completion (session killed, timeout, error), any `[KB+]` / `[CMM+]` / `[LL+]` markers emitted during the session are rescued and written to:
+```
+~/.prevoyant/knowledge-buildup/rescued-markers/{ticketKey}.md
+```
+These are for manual review. Nothing is written to the KB directly.
+
+#### 4. Memory Pattern Miner — cross-ticket pattern detection
+
+After enough tickets have been processed, the Pattern Miner scans the agent memory files for learnings that recur across multiple tickets and proposes them as shared patterns:
+```
+~/.prevoyant/knowledge-buildup/pattern-proposals.md
+```
+Proposals are **PENDING APPROVAL** — a human or the Step 13j review process must promote them to `shared/patterns.md`.
+
+#### 5. KB Flow Analyst — structural flow discovery
+
+The optional KB Flow Analyst worker queries Jira for recent incidents, identifies the most-impacted business flows, traces them in the codebase, and proposes Core Mental Map updates to:
+```
+~/.prevoyant/knowledge-buildup/kbflow-pending.md
+```
+
+#### 6. KB Staleness Scanner — ref hygiene
+
+Periodically validates all `ref: file:line` citations in the KB against the source repository. Stale refs are written to:
+```
+~/.prevoyant/knowledge-buildup/stale-refs.md
+```
+and a machine-readable summary to:
+```
+~/.prevoyant/server/kb-staleness-report.json
+```
+
+### Knowledge buildup directory
+
+All pending review artefacts land in `~/.prevoyant/knowledge-buildup/`:
+
+| File | Source |
+|------|--------|
+| `rescued-markers/{key}.md` | Marker Rescue |
+| `pattern-proposals.md` | Memory Pattern Miner |
+| `stale-refs.md` | KB Staleness Scanner |
+| `kbflow-pending.md` | KB Flow Analyst |
+| `kbflow-sessions.md` | KB Flow Analyst run log |
+
+---
+
+## Background Workers
+
+All workers run as `worker_threads` inside the server process. They can be enabled, disabled, and triggered manually from **Settings** in the dashboard without restarting the server.
+
+### Marker Rescue
+
+Not a long-running worker — runs once automatically after every ticket session ends.
+
+- Scans `tracker.outputLog` for `[KB+]`, `[CMM+]`, `[LL+]` markers
+- If markers are found **and** Step 13 did not run to completion, appends them to `rescued-markers/{ticketKey}.md`
+- No configuration required — always active
+
+### Memory Pattern Miner
+
+Enabled via `PRX_PATTERN_MINER_ENABLED=Y`.
+
+**How it works:**
+
+1. Reads all `{KB_DIR}/personas/memory/{agent}/*.md` files directly (no Redis required)
+2. Parses the `## What I Learned` and `## Things That Surprised Me` sections
+3. Groups learnings by category across all agents and tickets
+4. Any category that appears in `PRX_PATTERN_MINER_MIN_TICKETS` or more distinct tickets becomes a pattern candidate
+5. Top 3 representative learnings (by confidence) are selected per candidate
+6. Proposals are appended to `pattern-proposals.md`
+7. Already-proposed ticket sets are tracked in `~/.prevoyant/server/pattern-miner-state.json` to avoid duplicates
+
+**Proposal format:**
+```markdown
+## PATTERN-CANDIDATE: CACHING (4 tickets)
+Status: PENDING APPROVAL
+Date: 2025-11-01
+Source: memory-pattern-miner
+Tickets: PRX-12, PRX-34, PRX-56, PRX-78
+
+### Representative learnings
+  - [morgan/PRX-12] Redis TTL mismatches between write and read paths cause stale data...
+  - [alex/PRX-34] Cache keys must include tenant ID to avoid cross-tenant leakage...
+
+### Proposed shared/patterns.md entry
+> **Pattern: CACHING** — Appears in 4 tickets (PRX-12, PRX-34, PRX-56, PRX-78).
+> [Auto-proposal — review, refine, and promote to shared/patterns.md]
+```
+
+**Settings:**
+
+| Setting | Default |
+|---------|---------|
+| `PRX_PATTERN_MINER_ENABLED` | `N` |
+| `PRX_PATTERN_MINER_INTERVAL_DAYS` | `7` |
+| `PRX_PATTERN_MINER_MIN_TICKETS` | `3` |
+| `PRX_PATTERN_MINER_MAX_PROPOSALS` | `20` |
+
+### KB Staleness Scanner
+
+Enabled via `PRX_STALENESS_ENABLED=Y`. Requires `PRX_REPO_DIR` to check file existence.
+
+**How it works:**
+
+1. Walks all `.md` files in the active KB directory
+2. Extracts `ref: path/to/File.java:123` and `Source: path/to/File.java:123` references
+3. For each reference:
+   - Checks whether the file exists at `{PRX_REPO_DIR}/{filePart}`
+   - If it exists, checks the file's line count — if the referenced line is beyond the end of the file (with a 5-line tolerance), it is marked `line-stale`
+4. Writes a markdown report to `stale-refs.md` and a JSON summary to `kb-staleness-report.json`
+
+**Staleness categories:**
+
+| Status | Meaning |
+|--------|---------|
+| `ok` | File exists and line number is within range |
+| `file-missing` | File does not exist at the repo path |
+| `line-stale` | File exists but has fewer lines than the reference |
+| `no-repo` | `PRX_REPO_DIR` not configured — file checks skipped |
+
+**Settings:**
+
+| Setting | Default |
+|---------|---------|
+| `PRX_STALENESS_ENABLED` | `N` |
+| `PRX_STALENESS_INTERVAL_DAYS` | `7` |
+
+### KB Flow Analyst
+
+Enabled via `PRX_KBFLOW_ENABLED=Y`. Queries Jira and uses Claude to discover high-impact business flows and propose Core Mental Map updates. See the [KB Flow Analyst](#kb-flow-analyst-settings) settings section for configuration.
+
+### Configuring workers from the dashboard
+
+All background workers can be configured without editing `.env` directly:
+
+1. Go to **Dashboard → Settings**
+2. Scroll to the relevant worker section (Memory Pattern Miner, KB Staleness Scanner, KB Flow Analyst)
+3. Toggle **Enable**, adjust intervals, click **Save**
+4. Use the **▶ Run now** button to trigger an immediate scan without waiting for the interval
+
+Changes take effect immediately — no server restart required.
 
 ---
 
@@ -437,6 +716,25 @@ The poll script is run once at server startup (if enabled) and then every N days
 |--------|------|------|-------------|
 | POST | `/dashboard/ticket/:key/run` | `mode=dev\|review\|estimate`, `force=1` (optional) | Queue a ticket for analysis |
 | POST | `/dashboard/ticket/:key/stop` | — | Stop a running or queued job |
+| POST | `/dashboard/queue` | JSON body (see below) | Add a ticket or evidence-only run to the queue |
+
+**`POST /dashboard/queue` body:**
+
+```json
+{
+  "ticketKey": "PRX-42",          // optional — leave blank for evidence-only
+  "mode": "dev",                  // dev | review | estimate
+  "applyChanges": false,
+  "evidenceOnly": false,          // auto-set to true when ticketKey is blank
+  "extraContext": "...",          // analyst notes
+  "attachments": [                // files read by the browser
+    { "name": "error.log", "content": "..." }
+  ],
+  "evidenceUrls": [               // fetched server-side
+    "https://example.com/doc.txt"
+  ]
+}
+```
 
 ### Reports
 
@@ -444,6 +742,14 @@ The poll script is run once at server startup (if enabled) and then every N days
 |--------|------|-------------|
 | GET | `/dashboard/view?path=...` | Inline view of a PDF/HTML report (path must be inside reports directory) |
 | GET | `/dashboard/download?path=...` | Download a PDF/HTML report |
+
+### Background Worker Controls
+
+| Method | Path | Description |
+|--------|------|-------------|
+| POST | `/dashboard/settings/pattern-miner/run-now` | Trigger an immediate Pattern Miner scan (requires `PRX_PATTERN_MINER_ENABLED=Y`) |
+| POST | `/dashboard/settings/staleness/run-now` | Trigger an immediate Staleness scan (requires `PRX_STALENESS_ENABLED=Y`) |
+| POST | `/dashboard/knowledge-builder/run-now` | Trigger an immediate KB Flow Analyst run (requires `PRX_KBFLOW_ENABLED=Y`) |
 
 ### Webhook
 
@@ -474,23 +780,41 @@ Jira webhook ──▶ POST /jira-events
                         │
                         ▼
                   queue/jobQueue.js  ◀──  dashboard manual run
-                  (FIFO, MAX=1)
+                  (FIFO, MAX=1)      ◀──  evidence-only submission
                         │
                         ▼
                runner/claudeRunner.js
-               (spawn `claude --print`, parse stream-json)
+               (fetch URLs → build evidence block → KB pre-load →
+                spawn `claude --print`, parse stream-json)
                         │
-                   step detected
-                   (regex: "Step N —")
-                        │
-                        ▼
-               dashboard/tracker.js
-               (in-memory state + session files)
+                   step detected              session ends
+                   (regex: "Step N —")              │
+                        │                           ▼
+                        ▼              runner/markerRescue.js
+               dashboard/tracker.js   (scan outputLog, rescue
+               (in-memory state +      [KB+]/[CMM+]/[LL+] markers)
+                session files)
                         │
                ┌────────┴────────┐
                ▼                 ▼
     dashboard/routes.js     ~/.prevoyant/sessions/
     (HTTP + HTML rendering)  (disk persistence)
+
+Background workers (worker_threads):
+  ┌─────────────────────────────────────────────────┐
+  │  memoryPatternMinerWorker.js                    │
+  │    reads personas/memory/{agent}/*.md           │
+  │    → knowledge-buildup/pattern-proposals.md     │
+  ├─────────────────────────────────────────────────┤
+  │  kbStalenessWorker.js                           │
+  │    walks KB .md files, checks file:line refs    │
+  │    → knowledge-buildup/stale-refs.md            │
+  │    → server/kb-staleness-report.json            │
+  ├─────────────────────────────────────────────────┤
+  │  kbFlowAnalystWorker.js                         │
+  │    queries Jira + Claude for flow discovery     │
+  │    → knowledge-buildup/kbflow-pending.md        │
+  └─────────────────────────────────────────────────┘
 ```
 
 **Key design decisions:**
@@ -499,6 +823,8 @@ Jira webhook ──▶ POST /jira-events
 - **No template engine** — HTML is generated by plain JavaScript string concatenation. This keeps the server dependency-free beyond Express.
 - **Single concurrent job** — Claude is a resource-intensive process. Running one at a time prevents memory exhaustion and keeps the output logs readable.
 - **Stream parsing** — Claude is invoked with `--output-format stream-json`. The server buffers stdout into lines and parses each JSON event to extract assistant text and detect step boundaries in real time.
+- **Workers never write to KB directly** — all background workers write proposals to `~/.prevoyant/knowledge-buildup/` for human review. Only Step 13 (inline during a run) and evidence-only runs write directly to KB layers.
+- **Evidence-only runs skip KB pre-load** — no Jira key means no KB context to query; the evidence itself is the entire context.
 
 ---
 
@@ -506,7 +832,7 @@ Jira webhook ──▶ POST /jira-events
 
 ```
 server/
-├── index.js                      Express app setup, route mounting, server start
+├── index.js                      Express app setup, route mounting, worker lifecycle
 ├── package.json
 │
 ├── config/
@@ -523,14 +849,28 @@ server/
 │   └── jobQueue.js               FIFO queue, drain loop, killJob()
 │
 ├── runner/
-│   ├── claudeRunner.js           Spawns claude CLI, parses stream-json, kills process
+│   ├── claudeRunner.js           Spawns claude CLI, parses stream-json, builds prompts,
+│   │                             fetches evidence URLs, pre-loads KB
+│   ├── markerRescue.js           Post-run safety net: rescues [KB+]/[CMM+]/[LL+] markers
+│   │                             from interrupted sessions → knowledge-buildup/rescued-markers/
 │   └── pollScheduler.js          Schedules poll-jira.sh on a day interval
+│
+├── kb/
+│   ├── kbQuery.js                Builds KB pre-load block (all layers incl. evidence-insights)
+│   └── kbCache.js                5-minute in-memory cache of KB .md files
+│
+├── workers/
+│   ├── memoryPatternMinerWorker.js  Mines agent memory for cross-ticket patterns
+│   │                                → knowledge-buildup/pattern-proposals.md
+│   ├── kbStalenessWorker.js         Validates KB file:line refs against source repo
+│   │                                → knowledge-buildup/stale-refs.md
+│   └── kbFlowAnalystWorker.js       Autonomous KB Flow Analyst (PRX_KBFLOW_ENABLED)
 │
 ├── webhooks/
 │   └── jira.js                   POST /jira-events receiver, filtering, dedup
 │
 ├── notifications/
-│   ├── email.js                  Email stub (planned)
+│   ├── email.js                  Transactional email (SMTP)
 │   └── sms.js                    SMS stub (planned)
 │
 ├── integrations/
@@ -540,7 +880,8 @@ server/
 │       ├── hermes-skill.md       SKILL.md deployed to ~/.hermes/skills/prevoyant/
 │       ├── routes/
 │       │   ├── enqueue.js        POST /internal/enqueue
-│       │   └── results.js        GET /internal/jobs/recent-results
+│       │   ├── results.js        GET /internal/jobs/recent-results
+│       │   └── kbInsights.js     POST /internal/kb/insights (Hermes KB write-back)
 │       └── scripts/
 │           ├── install.sh        Write env vars, print registration steps
 │           └── uninstall.sh      Set PRX_HERMES_ENABLED=N, stop gateway

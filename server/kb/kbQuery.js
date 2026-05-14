@@ -112,6 +112,24 @@ async function buildPriorKnowledgeBlock({ ticketKey, components = [], labels = [
       }
     }
 
+    // ── Evidence Insights (from evidence-only runs) ────────────────────────────
+    const evFiles = Object.keys(cache)
+      .filter(k => k.startsWith(layers.evidenceInsights + '/') && k.endsWith('.md'))
+      .sort()
+      .slice(-10); // cap at 10 most recent to avoid bloating the prompt
+
+    if (evFiles.length) {
+      lines.push('---');
+      lines.push('### Evidence Insights (from past evidence-only analyses)');
+      lines.push('');
+      for (const rel of evFiles) {
+        lines.push(`#### ${rel}`);
+        lines.push('');
+        lines.push(cache[rel].trim());
+        lines.push('');
+      }
+    }
+
     // ── Agent Memory (indexed, relevance-scored) ──────────────────────────────
     // Replaces loading 5 sessions × 7 agents × 20 lines (~700 lines) with a
     // compact relevance-scored table (~20 lines) — ~96% token reduction.
