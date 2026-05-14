@@ -4,6 +4,8 @@ const { spawn, execFile } = require('child_process');
 const fs          = require('fs');
 const os          = require('os');
 const path        = require('path');
+const https       = require('https');
+const http        = require('http');
 const config      = require('../config/env');
 const tracker     = require('../dashboard/tracker');
 const stages      = require('../dashboard/stages.json');
@@ -165,12 +167,74 @@ function stageSequenceHint(mode) {
     + loadStageInstructions(list);
 }
 
-function modePrompt(ticketKey, mode, kbBlock = null) {
+function fetchUrl(url) {
+  return new Promise((resolve) => {
+    const lib = url.startsWith('https') ? https : http;
+    lib.get(url, { timeout: 30000 }, (res) => {
+      if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
+        return resolve(fetchUrl(res.headers.location));
+      }
+      const chunks = [];
+      res.on('data', c => chunks.push(c));
+      res.on('end', () => resolve({ ok: true, body: Buffer.concat(chunks).toString('utf8') }));
+      res.on('error', e => resolve({ ok: false, error: e.message }));
+    }).on('error', e => resolve({ ok: false, error: e.message }))
+      .on('timeout', () => resolve({ ok: false, error: 'timeout' }));
+  });
+}
+
+async function resolveEvidenceUrls(urls) {
+  if (!Array.isArray(urls) || !urls.length) return [];
+  const results = [];
+  for (const url of urls) {
+    const r = await fetchUrl(url);
+    results.push({ url, ...r });
+  }
+  return results;
+}
+
+function buildEvidenceBlock(meta, fetchedUrls = []) {
+  const parts = [];
+  if (meta.extraContext) {
+    parts.push('### Analyst Notes\n' + meta.extraContext);
+  }
+  if (Array.isArray(meta.attachments) && meta.attachments.length) {
+    for (const a of meta.attachments) {
+      parts.push(`### Attached File: ${a.name}\n\`\`\`\n${a.content}\n\`\`\``);
+    }
+  }
+  for (const r of fetchedUrls) {
+    if (r.ok) {
+      parts.push(`### URL: ${r.url}\n\`\`\`\n${r.body}\n\`\`\``);
+    } else {
+      parts.push(`### URL: ${r.url}\n_(fetch failed: ${r.error})_`);
+    }
+  }
+  if (!parts.length) return null;
+  return '## Supplemental Evidence (provided at queue time, bypassing Jira)\n\n'
+    + parts.join('\n\n')
+    + '\n\n---';
+}
+
+function evidenceOnlyPrompt(ticketKey, evidenceBlock) {
+  return (evidenceBlock ? evidenceBlock + '\n\n' : '')
+    + `## Evidence-Only Analysis — ${ticketKey}\n\n`
+    + 'No Jira ticket is associated with this run. Analyse all evidence provided above and produce a structured findings report.\n\n'
+    + 'Your report must cover:\n'
+    + '1. **Summary** — what the evidence represents\n'
+    + '2. **Key observations** — anomalies, patterns, and notable data points\n'
+    + '3. **Root cause analysis** — if a fault or issue is evident\n'
+    + '4. **Recommendations** — next steps or remediation actions\n\n'
+    + 'Be specific. Cite line numbers, timestamps, or values from the evidence where relevant.';
+}
+
+function modePrompt(ticketKey, mode, kbBlock = null, evidenceBlock = null) {
   const base = mode === 'review'   ? `/prx:dev review ${ticketKey}`
              : mode === 'estimate' ? `/prx:dev estimate ${ticketKey}`
              : `/prx:dev ${ticketKey}`;
   const invocation = base + stageSequenceHint(mode);
-  return kbBlock ? `${kbBlock}\n${invocation}` : invocation;
+  const blocks = [kbBlock, evidenceBlock].filter(Boolean);
+  return blocks.length ? `${blocks.join('\n\n')}\n${invocation}` : invocation;
 }
 
 function reportAlreadyExists(ticketKey, mode) {
@@ -246,27 +310,50 @@ async function runClaudeAnalysis(ticketKey, mode = 'dev', ticketMeta = {}) {
   // Snapshot daily spend before spawning so we can diff after completion.
   const costBefore = await getCodeburnDailyCost();
 
+  const isEvidenceOnly = !!ticketMeta.evidenceOnly;
+
+  // Fetch any document URLs provided at queue time before building the prompt.
+  let fetchedUrls = [];
+  if (Array.isArray(ticketMeta.evidenceUrls) && ticketMeta.evidenceUrls.length) {
+    console.log(`[runner] ${ticketKey} — fetching ${ticketMeta.evidenceUrls.length} evidence URL(s)`);
+    fetchedUrls = await resolveEvidenceUrls(ticketMeta.evidenceUrls);
+    fetchedUrls.forEach(r => {
+      if (r.ok) console.log(`[runner] ${ticketKey} — fetched ${r.url} (${r.body.length} chars)`);
+      else console.warn(`[runner] ${ticketKey} — failed to fetch ${r.url}: ${r.error}`);
+    });
+  }
+
   // Pre-load KB content so Claude skips Step 0a/0b disk reads.
   // Falls back gracefully to null if KB is empty, encrypted, or unavailable.
+  // Skipped for evidence-only runs — no Jira ticket to key against.
   let kbBlock = null;
-  try {
-    kbBlock = await kbQuery.buildPriorKnowledgeBlock({ ticketKey, ...ticketMeta });
-    if (kbBlock) console.log(`[runner] ${ticketKey} — KB pre-loaded (${kbBlock.length} chars)`);
-  } catch (err) {
-    console.warn(`[runner] ${ticketKey} — KB pre-load skipped: ${err.message}`);
+  if (!isEvidenceOnly) {
+    try {
+      kbBlock = await kbQuery.buildPriorKnowledgeBlock({ ticketKey, ...ticketMeta });
+      if (kbBlock) console.log(`[runner] ${ticketKey} — KB pre-loaded (${kbBlock.length} chars)`);
+    } catch (err) {
+      console.warn(`[runner] ${ticketKey} — KB pre-load skipped: ${err.message}`);
+    }
+  }
+
+  const evidenceBlock = buildEvidenceBlock(ticketMeta || {}, fetchedUrls);
+  if (evidenceBlock) {
+    const attachCount = (ticketMeta.attachments || []).length;
+    const urlCount = fetchedUrls.filter(r => r.ok).length;
+    console.log(`[runner] ${ticketKey} — evidence injected (notes: ${ticketMeta.extraContext ? 'yes' : 'no'}, files: ${attachCount}, urls: ${urlCount})`);
   }
 
   let runError = null;
   try {
     await new Promise((resolve, reject) => {
-    console.log(`[runner] Spawning claude for ${ticketKey} (mode: ${mode})`);
+    console.log(`[runner] Spawning claude for ${ticketKey} (mode: ${isEvidenceOnly ? 'evidence-only' : mode})`);
 
     const mcpConfig = buildMcpConfig();
     const usingTempConfig = mcpConfig !== config.mcpConfigFile;
 
     // AUTO_MODE=Y — SKILL.md checks for exactly 'Y' in confirmation gates
     const childEnv = { ...process.env, AUTO_MODE: 'Y' };
-    if (reportAlreadyExists(ticketKey, mode)) {
+    if (!isEvidenceOnly && reportAlreadyExists(ticketKey, mode)) {
       childEnv.CLAUDE_REPORT_SUFFIX = datetimeSuffix();
       console.log(`[runner] Existing report for ${ticketKey} — suffix ${childEnv.CLAUDE_REPORT_SUFFIX}`);
     }
@@ -274,16 +361,20 @@ async function runClaudeAnalysis(ticketKey, mode = 'dev', ticketMeta = {}) {
     // headless defaults at Step 4c (branch creation) and Step 8d (apply fix)
     // flip from "skip / propose only" to "run git + Edit". Default is unset
     // → analysis-only, matching the documented headless behaviour.
-    if (ticketMeta && ticketMeta.applyChanges) {
+    if (!isEvidenceOnly && ticketMeta && ticketMeta.applyChanges) {
       childEnv.PRX_APPLY_CHANGES = 'Y';
       console.log(`[runner] ${ticketKey} — PRX_APPLY_CHANGES=Y (will create branch + apply fix)`);
     }
+
+    const prompt = isEvidenceOnly
+      ? evidenceOnlyPrompt(ticketKey, evidenceBlock)
+      : modePrompt(ticketKey, mode, kbBlock, evidenceBlock);
 
     const proc = spawn(
       'claude',
       [
         '--dangerously-skip-permissions',
-        '--print', modePrompt(ticketKey, mode, kbBlock),
+        '--print', prompt,
         '--mcp-config', mcpConfig,
         '--output-format', 'stream-json',
         '--verbose',

@@ -1439,43 +1439,69 @@ function renderDashboard(stats, budget) {
         </button>
       </div>
       <div class="modal-field">
-        <label class="modal-label" for="modal-ticket-key">Jira Ticket Key</label>
-        <input type="text" id="modal-ticket-key" class="modal-input" placeholder="e.g. IV-1234"
+        <label class="modal-label" for="modal-ticket-key">Jira Ticket Key <span style="font-size:.72rem;font-weight:400;color:#9ca3af">— optional, leave blank to analyse evidence directly</span></label>
+        <input type="text" id="modal-ticket-key" class="modal-input" placeholder="e.g. IV-1234 (optional)"
                autocomplete="off" spellcheck="false" style="text-transform:uppercase"
+               oninput="onTicketKeyInput()"
                onkeydown="if(event.key==='Enter')submitAddTicket()">
-        <span id="modal-key-err" style="font-size:.76rem;color:#dc2626;display:none">Please enter a ticket key.</span>
+      </div>
+      <div id="modal-jira-fields">
+        <div class="modal-field">
+          <label class="modal-label" for="modal-ticket-mode">Mode</label>
+          <select id="modal-ticket-mode" class="modal-select">
+            <option value="dev">Dev</option>
+            <option value="review">Review</option>
+            <option value="estimate">Estimate</option>
+          </select>
+        </div>
+        <div class="modal-field" style="flex-direction:row;align-items:center;gap:.6rem">
+          <input type="checkbox" id="modal-priority" style="width:15px;height:15px;accent-color:#c2410c;cursor:pointer">
+          <label for="modal-priority" class="modal-label" style="cursor:pointer;margin:0">
+            Urgent priority <span style="font-size:.72rem;font-weight:400;color:#9ca3af">— moves to front of queue</span>
+          </label>
+        </div>
+        <div class="modal-field" style="flex-direction:row;align-items:flex-start;gap:.6rem">
+          <input type="checkbox" id="modal-apply-changes" style="width:15px;height:15px;accent-color:#059669;cursor:pointer;margin-top:3px">
+          <label for="modal-apply-changes" class="modal-label" style="cursor:pointer;margin:0;line-height:1.45">
+            Apply code changes
+            <span style="display:block;font-size:.72rem;font-weight:400;color:#9ca3af;margin-top:2px">
+              Create the feature branch and commit the proposed fix. Off by default — runs analysis only (PDF report, no working-tree edits).
+            </span>
+          </label>
+        </div>
+        <div class="modal-field">
+          <label class="modal-label" for="modal-scheduled-at">Schedule for <span style="font-size:.72rem;font-weight:400;color:#9ca3af">(optional — leave blank to run now)</span></label>
+          <input type="datetime-local" id="modal-scheduled-at" class="modal-input" style="color-scheme:light">
+          <span id="modal-sched-err" style="font-size:.76rem;color:#dc2626;display:none">Scheduled time must be in the future.</span>
+        </div>
       </div>
       <div class="modal-field">
-        <label class="modal-label" for="modal-ticket-mode">Mode</label>
-        <select id="modal-ticket-mode" class="modal-select">
-          <option value="dev">Dev</option>
-          <option value="review">Review</option>
-          <option value="estimate">Estimate</option>
-        </select>
-      </div>
-      <div class="modal-field" style="flex-direction:row;align-items:center;gap:.6rem">
-        <input type="checkbox" id="modal-priority" style="width:15px;height:15px;accent-color:#c2410c;cursor:pointer">
-        <label for="modal-priority" class="modal-label" style="cursor:pointer;margin:0">
-          Urgent priority <span style="font-size:.72rem;font-weight:400;color:#9ca3af">— moves to front of queue</span>
+        <label class="modal-label" for="modal-extra-context" style="display:flex;align-items:center;justify-content:space-between">
+          <span>Evidence <span id="modal-evidence-label-hint" style="font-size:.72rem;font-weight:400;color:#9ca3af">— optional</span></span>
+          <button type="button" id="modal-evidence-toggle" onclick="toggleEvidenceSection()" style="background:none;border:none;cursor:pointer;font-size:.72rem;color:#6b7280;padding:0;text-decoration:underline">show</button>
         </label>
+        <div id="modal-evidence-section" style="display:none;margin-top:.4rem">
+          <textarea id="modal-extra-context" class="modal-input" rows="4" placeholder="Paste log excerpts, stack traces, or investigation notes here…" style="resize:vertical;font-family:monospace;font-size:.78rem"></textarea>
+          <div style="margin-top:.5rem">
+            <label class="modal-label" for="modal-evidence-files" style="font-size:.76rem;margin-bottom:.25rem">Attach files</label>
+            <input type="file" id="modal-evidence-files" multiple
+                   style="font-size:.76rem;color:#374151;cursor:pointer;width:100%"
+                   onchange="updateFileList()">
+            <div id="modal-file-list" style="margin-top:.3rem;font-size:.73rem;color:#6b7280"></div>
+          </div>
+          <div style="margin-top:.5rem">
+            <label class="modal-label" for="modal-evidence-urls" style="font-size:.76rem;margin-bottom:.25rem">Document URLs <span style="font-weight:400;color:#9ca3af">— one per line, fetched at run time</span></label>
+            <textarea id="modal-evidence-urls" class="modal-input" rows="2" placeholder="https://example.com/report.txt&#10;https://paste.site/abc123" style="font-family:monospace;font-size:.78rem;resize:vertical"></textarea>
+          </div>
+          <span id="modal-file-err" style="font-size:.76rem;color:#dc2626;display:none;margin-top:.25rem"></span>
+        </div>
       </div>
-      <div class="modal-field" style="flex-direction:row;align-items:flex-start;gap:.6rem">
-        <input type="checkbox" id="modal-apply-changes" style="width:15px;height:15px;accent-color:#059669;cursor:pointer;margin-top:3px">
-        <label for="modal-apply-changes" class="modal-label" style="cursor:pointer;margin:0;line-height:1.45">
-          Apply code changes
-          <span style="display:block;font-size:.72rem;font-weight:400;color:#9ca3af;margin-top:2px">
-            Create the feature branch and commit the proposed fix. Off by default — runs analysis only (PDF report, no working-tree edits).
-          </span>
-        </label>
-      </div>
-      <div class="modal-field">
-        <label class="modal-label" for="modal-scheduled-at">Schedule for <span style="font-size:.72rem;font-weight:400;color:#9ca3af">(optional — leave blank to run now)</span></label>
-        <input type="datetime-local" id="modal-scheduled-at" class="modal-input" style="color-scheme:light">
-        <span id="modal-sched-err" style="font-size:.76rem;color:#dc2626;display:none">Scheduled time must be in the future.</span>
+      <div id="modal-evidence-only-hint" style="display:none;font-size:.76rem;color:#6b7280;background:#f9fafb;border:1px solid #e5e7eb;border-radius:6px;padding:.5rem .75rem;margin-top:-.25rem">
+        No ticket key — Claude will analyse the evidence directly and produce a free-form findings report.
       </div>
       <div class="modal-actions">
         <button type="button" class="modal-btn-cancel" onclick="closeModal('add-ticket-modal')">Cancel</button>
-        <button type="button" class="modal-btn-primary" onclick="submitAddTicket()">Add to Queue</button>
+        <button type="button" class="modal-btn-primary" id="modal-submit-btn" onclick="submitAddTicket()">Add to Queue</button>
       </div>
     </div>
   </div>
@@ -1696,39 +1722,137 @@ function renderDashboard(stats, budget) {
         })
         .catch(e => showUpdToast('Upgrade error: ' + e.message, 'fail'));
     }
-    function submitAddTicket() {
-      const keyEl   = document.getElementById('modal-ticket-key');
-      const key     = keyEl.value.trim().toUpperCase();
-      const keyErr  = document.getElementById('modal-key-err');
-      if (!key) { keyErr.style.display = ''; keyEl.focus(); return; }
-      keyErr.style.display = 'none';
+    function onTicketKeyInput() {
+      const key = document.getElementById('modal-ticket-key').value.trim();
+      const evidenceOnly = !key;
+      document.getElementById('modal-jira-fields').style.display = evidenceOnly ? 'none' : '';
+      document.getElementById('modal-evidence-only-hint').style.display = evidenceOnly ? '' : 'none';
+      document.getElementById('modal-evidence-label-hint').textContent = evidenceOnly ? '— required for evidence-only run' : '— optional';
+      if (evidenceOnly) openEvidenceSection();
+    }
+
+    function openEvidenceSection() {
+      const section = document.getElementById('modal-evidence-section');
+      const btn = document.getElementById('modal-evidence-toggle');
+      section.style.display = '';
+      btn.textContent = 'hide';
+    }
+
+    function toggleEvidenceSection() {
+      const section = document.getElementById('modal-evidence-section');
+      const btn = document.getElementById('modal-evidence-toggle');
+      const hidden = section.style.display === 'none';
+      section.style.display = hidden ? '' : 'none';
+      btn.textContent = hidden ? 'hide' : 'show';
+    }
+
+    function updateFileList() {
+      const input = document.getElementById('modal-evidence-files');
+      const listEl = document.getElementById('modal-file-list');
+      if (!input.files.length) { listEl.textContent = ''; return; }
+      const items = [];
+      for (const f of input.files) {
+        const kb = (f.size / 1024).toFixed(0);
+        const sz = f.size > 1048576 ? (f.size / 1048576).toFixed(1) + ' MB' : kb + ' KB';
+        items.push(f.name + ' (' + sz + ')');
+      }
+      listEl.textContent = items.join(' · ');
+    }
+
+    async function readFileAsText(file) {
+      return new Promise((resolve, reject) => {
+        const r = new FileReader();
+        r.onload = e => resolve(e.target.result);
+        r.onerror = () => reject(new Error('Failed to read ' + file.name));
+        r.readAsText(file);
+      });
+    }
+
+    async function submitAddTicket() {
+      const key = document.getElementById('modal-ticket-key').value.trim().toUpperCase();
+      const evidenceOnly = !key;
+
+      const fileErr = document.getElementById('modal-file-err');
+      fileErr.style.display = 'none';
+
+      // Evidence-only: must have at least some content
+      if (evidenceOnly) {
+        const hasText = (document.getElementById('modal-extra-context').value || '').trim();
+        const hasFiles = document.getElementById('modal-evidence-files').files.length > 0;
+        const hasUrls = (document.getElementById('modal-evidence-urls').value || '').trim();
+        if (!hasText && !hasFiles && !hasUrls) {
+          fileErr.textContent = 'Please provide at least one of: context text, attached files, or a URL.';
+          fileErr.style.display = '';
+          openEvidenceSection();
+          return;
+        }
+      }
 
       const schedEl  = document.getElementById('modal-scheduled-at');
-      const schedVal = schedEl.value;
-      const schedErr = document.getElementById('modal-sched-err');
-      if (schedVal) {
+      const schedVal = evidenceOnly ? '' : (schedEl ? schedEl.value : '');
+      if (!evidenceOnly && schedVal) {
+        const schedErr = document.getElementById('modal-sched-err');
         const schedDate = new Date(schedVal);
         if (isNaN(schedDate) || schedDate <= new Date()) {
           schedErr.style.display = ''; schedEl.focus(); return;
         }
+        schedErr.style.display = 'none';
       }
-      schedErr.style.display = 'none';
 
-      const mode         = document.getElementById('modal-ticket-mode').value;
-      const priority     = document.getElementById('modal-priority').checked ? 'urgent' : 'normal';
-      const applyChanges = document.getElementById('modal-apply-changes').checked ? 'Y' : 'N';
-      const form = document.createElement('form');
-      form.method = 'POST';
-      form.action = '/dashboard/queue';
-      const fields = [['ticketKey', key], ['mode', mode], ['priority', priority], ['applyChanges', applyChanges]];
-      if (schedVal) fields.push(['scheduledAt', schedVal]);
-      fields.forEach(([n, v]) => {
-        const i = document.createElement('input');
-        i.type = 'hidden'; i.name = n; i.value = v;
-        form.appendChild(i);
-      });
-      document.body.appendChild(form);
-      form.submit();
+      const attachments = [];
+      const fileInput = document.getElementById('modal-evidence-files');
+      if (fileInput && fileInput.files.length) {
+        for (const f of fileInput.files) {
+          try {
+            const content = await readFileAsText(f);
+            attachments.push({ name: f.name, content });
+          } catch (e) {
+            fileErr.textContent = 'Could not read ' + f.name + ': ' + e.message;
+            fileErr.style.display = '';
+            return;
+          }
+        }
+      }
+
+      const urlsRaw = (document.getElementById('modal-evidence-urls').value || '').trim();
+      const evidenceUrls = urlsRaw
+        ? urlsRaw.split(/\\n|\\r|[\\r\\n]+/).map(u => u.trim()).filter(u => u.startsWith('http'))
+        : [];
+
+      const mode         = evidenceOnly ? 'dev' : document.getElementById('modal-ticket-mode').value;
+      const priority     = evidenceOnly ? 'normal' : (document.getElementById('modal-priority').checked ? 'urgent' : 'normal');
+      const applyChanges = evidenceOnly ? 'N' : (document.getElementById('modal-apply-changes').checked ? 'Y' : 'N');
+      const extraContext = (document.getElementById('modal-extra-context').value || '').trim();
+
+      const btn = document.getElementById('modal-submit-btn');
+      btn.disabled = true;
+      btn.textContent = 'Queuing…';
+
+      const body = { ticketKey: key, mode, priority, applyChanges, extraContext, evidenceOnly };
+      if (schedVal) body.scheduledAt = schedVal;
+      if (attachments.length) body.attachments = attachments;
+      if (evidenceUrls.length) body.evidenceUrls = evidenceUrls;
+
+      try {
+        const res = await fetch('/dashboard/queue', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        if (res.ok || res.redirected) {
+          location.href = '/dashboard';
+        } else {
+          btn.disabled = false;
+          btn.textContent = 'Add to Queue';
+          fileErr.textContent = 'Server error — please try again.';
+          fileErr.style.display = '';
+        }
+      } catch (e) {
+        btn.disabled = false;
+        btn.textContent = 'Add to Queue';
+        fileErr.textContent = 'Request failed: ' + e.message;
+        fileErr.style.display = '';
+      }
     }
 
     async function toggleQueuePause() {
@@ -5385,38 +5509,90 @@ router.get('/ticket/:key/log.txt', (req, res) => {
   res.send(lines.join('\n'));
 });
 
-// Manually queue a ticket (from the Add Ticket modal on the dashboard)
-router.post('/queue', express.urlencoded({ extended: false }), (req, res) => {
-  const ticketKey = (req.body.ticketKey || '').toUpperCase().trim();
-  const mode = (req.body.mode || 'dev').toLowerCase();
-  if (!ticketKey || !VALID_MODES.has(mode)) return res.redirect(303, '/dashboard');
-
-  const priority = (req.body.priority || 'normal') === 'urgent' ? 'urgent' : 'normal';
-  // Apply-changes opt-in: when 'Y', the skill creates the feature branch and
-  // commits the proposed fix. Default 'N' = analysis-only (PDF report only).
-  // The skill honours PRX_APPLY_CHANGES=Y at Step 4c (branch) and 8d (apply fix).
-  const applyChanges = (req.body.applyChanges || 'N').toUpperCase() === 'Y';
-  const meta = { applyChanges };
-
-  const existing = getTicket(ticketKey);
-  if (existing && (existing.status === 'running' || existing.status === 'queued' || existing.status === 'scheduled')) {
-    return res.redirect(303, '/dashboard');
-  }
-
-  const rawScheduled = (req.body.scheduledAt || '').trim();
-  if (rawScheduled) {
-    const scheduledFor = new Date(rawScheduled);
-    if (!isNaN(scheduledFor) && scheduledFor > new Date()) {
-      recordScheduled(ticketKey, mode, scheduledFor, 'manual');
-      scheduleJob(ticketKey, mode, scheduledFor, meta);
-      return res.redirect(303, '/dashboard');
+// Manually queue a ticket (from the Add Ticket modal on the dashboard).
+// Accepts JSON (fetch from modal) or urlencoded (legacy form posts).
+// When ticketKey is absent the request is treated as evidence-only: a synthetic
+// key EV-YYYYMMDD-HHMMSS is generated and the runner skips the Jira skill.
+router.post('/queue',
+  (req, res, next) => {
+    const ct = req.headers['content-type'] || '';
+    if (ct.includes('application/json')) {
+      express.json({ limit: '200mb' })(req, res, next);
+    } else {
+      express.urlencoded({ extended: false, limit: '200mb' })(req, res, next);
     }
-  }
+  },
+  (req, res) => {
+    const evidenceOnly = req.body.evidenceOnly === true || req.body.evidenceOnly === 'true';
 
-  reRunTicket(ticketKey, mode, 'manual', priority);
-  enqueue(ticketKey, mode, priority, meta);
-  res.redirect(303, '/dashboard');
-});
+    let ticketKey = (req.body.ticketKey || '').toUpperCase().trim();
+    if (!ticketKey) {
+      // Generate a stable synthetic key for this evidence-only run
+      const now = new Date();
+      const stamp = [
+        now.getFullYear(),
+        String(now.getMonth() + 1).padStart(2, '0'),
+        String(now.getDate()).padStart(2, '0'),
+        '-',
+        String(now.getHours()).padStart(2, '0'),
+        String(now.getMinutes()).padStart(2, '0'),
+        String(now.getSeconds()).padStart(2, '0'),
+      ].join('');
+      ticketKey = 'EV-' + stamp;
+    }
+
+    const mode = (req.body.mode || 'dev').toLowerCase();
+    if (!VALID_MODES.has(mode)) return res.redirect(303, '/dashboard');
+
+    const priority = (req.body.priority || 'normal') === 'urgent' ? 'urgent' : 'normal';
+    // Apply-changes opt-in: when 'Y', the skill creates the feature branch and
+    // commits the proposed fix. Default 'N' = analysis-only (PDF report only).
+    // The skill honours PRX_APPLY_CHANGES=Y at Step 4c (branch) and 8d (apply fix).
+    const applyChanges = (req.body.applyChanges || 'N').toUpperCase() === 'Y';
+    const meta = { applyChanges };
+
+    if (evidenceOnly) meta.evidenceOnly = true;
+
+    const extraContext = (req.body.extraContext || '').trim();
+    if (extraContext) meta.extraContext = extraContext;
+
+    const rawAttachments = req.body.attachments;
+    if (Array.isArray(rawAttachments) && rawAttachments.length) {
+      meta.attachments = rawAttachments
+        .filter(a => a && typeof a.name === 'string' && typeof a.content === 'string')
+        .map(a => ({ name: a.name.replace(/[^A-Za-z0-9._-]/g, '_'), content: a.content }));
+    }
+
+    const rawUrls = req.body.evidenceUrls;
+    if (Array.isArray(rawUrls) && rawUrls.length) {
+      meta.evidenceUrls = rawUrls
+        .filter(u => typeof u === 'string' && /^https?:\/\//.test(u.trim()))
+        .map(u => u.trim())
+        .slice(0, 10);
+    }
+
+    const existing = getTicket(ticketKey);
+    if (existing && (existing.status === 'running' || existing.status === 'queued' || existing.status === 'scheduled')) {
+      return res.status(200).json({ ok: true, skipped: true });
+    }
+
+    if (!evidenceOnly) {
+      const rawScheduled = (req.body.scheduledAt || '').trim();
+      if (rawScheduled) {
+        const scheduledFor = new Date(rawScheduled);
+        if (!isNaN(scheduledFor) && scheduledFor > new Date()) {
+          recordScheduled(ticketKey, mode, scheduledFor, 'manual');
+          scheduleJob(ticketKey, mode, scheduledFor, meta);
+          return res.status(200).json({ ok: true, scheduled: true });
+        }
+      }
+    }
+
+    reRunTicket(ticketKey, mode, 'manual', priority);
+    enqueue(ticketKey, mode, priority, meta);
+    res.status(200).json({ ok: true, ticketKey });
+  }
+);
 
 // ── Settings ──────────────────────────────────────────────────────────────────
 
