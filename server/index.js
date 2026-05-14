@@ -395,6 +395,14 @@ app.listen(config.port, () => {
   startTicketWatcher();
   startKbFlowAnalyst();
 
+  // Config-coherence warnings — logged once at startup so they surface in logs
+  // without requiring the user to open the settings page.
+  if (process.env.PRX_REALTIME_KB_SYNC === 'Y' && (process.env.PRX_KB_MODE || 'local') !== 'distributed') {
+    console.warn('[prevoyant-server] CONFIG WARNING: PRX_REALTIME_KB_SYNC=Y has no effect when PRX_KB_MODE=local. ' +
+      'Real-time sync requires PRX_KB_MODE=distributed and Upstash credentials. ' +
+      'Either set PRX_KB_MODE=distributed or set PRX_REALTIME_KB_SYNC=N to silence this warning.');
+  }
+
   if (config.hermesEnabled) {
     // Hermes owns scheduling — run one startup sweep to catch tickets missed
     // while offline, then hand control to Hermes's cron.

@@ -57,7 +57,10 @@ function writebackMode() {
   const raw = (process.env.PRX_HERMES_KB_WRITEBACK_ENABLED || 'AUTO').trim().toUpperCase();
   if (raw === 'N')    return 'N';
   if (raw === 'Y')    return 'Y';
-  return 'AUTO'; // anything else (incl. unset) → AUTO
+  // AUTO is only active when Hermes is the front door. If PRX_HERMES_ENABLED=N
+  // the route isn't even registered, but encoding the invariant here means the
+  // business logic stays coherent even if the endpoint is ever called directly.
+  return process.env.PRX_HERMES_ENABLED === 'Y' ? 'AUTO' : 'N';
 }
 
 // Validate the incoming insight; returns { ok, errors[], cleaned? }.

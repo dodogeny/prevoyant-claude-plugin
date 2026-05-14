@@ -3732,6 +3732,13 @@ function renderSettings(vals, flash) {
           </div>
           ${fld('PRX_REALTIME_KB_SYNC','Enable Real-time Sync','select',v('PRX_REALTIME_KB_SYNC') || 'N','','Requires PRX_KB_MODE=distributed and Upstash credentials below.',
             [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
+          ${(v('PRX_REALTIME_KB_SYNC') === 'Y' && (v('PRX_KB_MODE') || 'local') !== 'distributed') ? `
+          <div class="s-field span2" style="margin-top:-.5rem">
+            <div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:.5rem .75rem;font-size:.78rem;color:#92400e">
+              <strong>Inactive setting:</strong> <code>PRX_REALTIME_KB_SYNC=Y</code> has no effect while <code>PRX_KB_MODE=local</code>.
+              Real-time sync only activates in distributed mode. Set <code>PRX_KB_MODE=distributed</code> to enable it, or set <code>PRX_REALTIME_KB_SYNC=N</code> to clear this warning.
+            </div>
+          </div>` : ''}
           ${fld('PRX_UPSTASH_REDIS_URL','Upstash REST URL','text',v('PRX_UPSTASH_REDIS_URL'),'https://your-endpoint.upstash.io','REST endpoint from console.upstash.com → Database → REST API. Free tier is sufficient.')}
           <div class="s-field">
             ${fld('PRX_UPSTASH_REDIS_TOKEN','Upstash REST Token','password',v('PRX_UPSTASH_REDIS_TOKEN'),'your-token-here','REST token from console.upstash.com. Never commit this value.')}
@@ -6670,7 +6677,7 @@ function renderHermesConfig(vals, flash) {
               </select>`;
             })()}
             <span class="s-hint">
-              Exposes <code>POST /internal/kb/insights</code>. Hermes calls it when it spots cross-ticket patterns (e.g. "5 tickets reference the same Redis bug").
+              Exposes <code>POST /internal/kb/insights</code> — <strong>only active when <code>PRX_HERMES_ENABLED=Y</code></strong>. Hermes calls it when it spots cross-ticket patterns (e.g. "5 tickets reference the same Redis bug").
               <br><br>
               <strong>AUTO mode (default):</strong> <strong>Hermes is the judge</strong> — it's already an LLM with cross-ticket context, so a separate Claude call to second-guess it would be redundant. The deployed <code>SKILL.md</code> tells Hermes to self-score every insight 0–10 on specificity / evidence / actionability / originality / clarity, and only POST when self-score ≥ 7. Prevoyant runs a cheap structural heuristic alongside as a sanity check. <strong>Both confident</strong> (self ≥ 7 AND heuristic ≥ 4) → auto-approved, re-indexed, visible to future agent runs. <strong>Hermes self-flagged junk</strong> (self ≤ 3) → auto-rejected. <strong>They disagree</strong> → kicked to <a href="/dashboard/hermes-insights" style="color:#1e40af">/dashboard/hermes-insights</a> for a human. Frontmatter records both scores for audit. No external API call, no <code>ANTHROPIC_API_KEY</code> required.
               <br><br>
