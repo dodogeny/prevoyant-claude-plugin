@@ -1,0 +1,75 @@
+## Linux systemd unit for prevoyant-server.
+##
+## Why: prevoyant-server is the long-running ambient agent that owns the queue,
+## cortex synthesis, KB sync, ticket watcher, etc.  In production you want it
+## to start at boot, restart if it crashes, log via journald, and survive the
+## laptop suspending/resuming.
+##
+## SETUP (user-level, no sudo needed — recommended for laptops):
+##   1.  Replace YOUR_USERNAME below with your actual username.
+##   2.  Copy to:   ~/.config/systemd/user/
+##         mkdir -p ~/.config/systemd/user
+##         cp scripts/prevoyant-server.service ~/.config/systemd/user/
+##   3.  Enable + start:
+##         systemctl --user daemon-reload
+##         systemctl --user enable --now prevoyant-server.service
+##   4.  Verify:
+##         systemctl --user status prevoyant-server.service
+##         journalctl --user -u prevoyant-server.service -f
+##   5.  Make it start without you logging in:
+##         sudo loginctl enable-linger YOUR_USERNAME
+##
+## SETUP (system-wide, sudo required — for shared dev boxes / homelab):
+##   1.  Adjust User=, Group=, WorkingDirectory= to your service account.
+##   2.  sudo cp scripts/prevoyant-server.service /etc/systemd/system/
+##   3.  sudo systemctl daemon-reload
+##   4.  sudo systemctl enable --now prevoyant-server.service
+##
+## To stop / disable:
+##   systemctl --user stop prevoyant-server.service
+##   systemctl --user disable prevoyant-server.service
+
+[Unit]
+Description=Prevoyant ambient agent server (queue, cortex, KB sync)
+Documentation=https://github.com/anthropics/claude-code
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+
+## UPDATE: adjust paths to your install
+WorkingDirectory=/home/YOUR_USERNAME/dev-skill
+ExecStart=/usr/bin/node /home/YOUR_USERNAME/dev-skill/server/index.js
+
+## Restart on crash, throttled
+Restart=always
+RestartSec=10s
+StartLimitIntervalSec=300
+StartLimitBurst=10
+
+## Stop signal — give workers time to flush state.json files
+KillSignal=SIGTERM
+TimeoutStopSec=5
+
+## Resource caps — protect the laptop from a leak
+MemoryHigh=512M
+MemoryMax=1G
+CPUWeight=50
+
+## Logging — journald captures stdout/stderr
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=prevoyant-server
+
+## Hardening (light — this is a local dev tool, not internet-facing)
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+
+## Allow writes to ~/.prevoyant only
+ReadWritePaths=%h/.prevoyant
+
+[Install]
+WantedBy=default.target

@@ -552,6 +552,7 @@ An optional Node.js service that runs alongside the plugin as an always-on ambie
 **Key capabilities:**
 - **Webhook receiver** — accepts Jira webhook events and auto-queues assigned tickets
 - **Pipeline dashboard** — live job queue with stop/kill, session history, cost tracking (30-day sparkline), and PDF report viewer
+- **Cortex intelligence layer** — *(new in v1.3.2)* always-on, self-updating distillation of the KB; agents read the curated facts in Step 0 instead of trawling raw KB files. **→ [docs/CORTEX.md](docs/CORTEX.md)**
 - **KB Flow Analyst** — autonomous background worker that queries Jira for recent incidents, identifies the highest-impact business flows, traces them in the codebase, and proposes Core Mental Map updates to `~/.prevoyant/knowledge-buildup/kbflow-pending.md` for team vote at Step 13j; manageable via the Knowledge Builder dashboard page
 - **Health watchdog** — polls `/health` on a configurable interval and emails on DOWN/UP transitions
 - **Ticket watcher** — monitors watched Jira tickets and sends digest alerts on status changes
@@ -560,6 +561,8 @@ An optional Node.js service that runs alongside the plugin as an always-on ambie
 - **WhatsApp notifications** — sends ticket and report events via WaSender API (zero new dependencies)
 - **Redis memory index** — dual-backend agent memory (Redis primary, JSON fallback) for KB query enrichment
 - **Session persistence** — state survives server restarts; automatic PDF report discovery
+
+**Running it 24/7:** the server is designed to run continuously. macOS launchd plist at `scripts/com.prevoyant.server.plist` and Linux systemd unit at `scripts/prevoyant-server.service` are provided for auto-start + crash restart. Sleep mode caveats and recommended setups (caffeinate / pmset / moving the server to an always-on host) are documented in **[docs/CORTEX.md § Running 24/7](docs/CORTEX.md#running-247)**.
 
 → **[Full documentation: docs/prevoyant-server.md](docs/prevoyant-server.md)**
 

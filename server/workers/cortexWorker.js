@@ -356,6 +356,34 @@ function buildIndex(state) {
 }
 
 function runSynthesis(state) {
+  // Leader-election gate — in shared mode, only one machine writes at a time
+  // so two devs synthesising on different KB heads can't clobber each other.
+  // Local-per-machine mode short-circuits to allowed=true inside the helper.
+  const claim = cortex.claimBuilder();
+  if (!claim.allowed) {
+    log('info',
+      `Skipping synthesis — cortex builder is '${claim.currentBuilder}' ` +
+      `(heartbeat ${Math.round((Date.now() - claim.lastHeartbeat) / 1000)}s ago). ` +
+      `We are a passive reader on this machine.`
+    );
+    if (parentPort) parentPort.postMessage({
+      type:           'cortex-skipped',
+      reason:         claim.reason,
+      currentBuilder: claim.currentBuilder,
+      lastHeartbeat:  claim.lastHeartbeat,
+    });
+    return;
+  }
+  // Surface takeovers so the dashboard activity log shows builder changes.
+  if (claim.reason === 'stale-takeover' || claim.reason === 'unclaimed' || claim.reason === 'force-builder') {
+    log('info', `Cortex builder claim acquired (${claim.reason}) by ${claim.currentBuilder}`);
+    if (parentPort) parentPort.postMessage({
+      type:           'cortex-builder-claimed',
+      reason:         claim.reason,
+      currentBuilder: claim.currentBuilder,
+    });
+  }
+
   log('info', 'Synthesis pass starting');
   const factsDir = cortex.factsDir();
   fs.mkdirSync(factsDir, { recursive: true });
@@ -481,10 +509,25 @@ if (parentPort) {
   }
 
   // Heartbeat loop — handles both repowise interval ticks and a periodic
-  // resync (in case fs.watch missed something).
+  // resync (in case fs.watch missed something).  We also detect wake-from-
+  // sleep here: if the actual wall-clock gap between heartbeats is much
+  // larger than what we asked setTimeout for, the laptop almost certainly
+  // suspended the process.  Add a small jitter pause so multiple workers
+  // waking together don't burst-fire git/repowise simultaneously.
+  let lastTick = Date.now();
   while (!halted) {
-    await new Promise(r => setTimeout(r, Math.min(resyncMs(), repowiseEnabled() ? repowiseIntervalMs() : resyncMs())));
+    const want = Math.min(resyncMs(), repowiseEnabled() ? repowiseIntervalMs() : resyncMs());
+    await new Promise(r => setTimeout(r, want));
     if (halted) break;
+
+    const actual = Date.now() - lastTick;
+    if (actual > want * 1.5 && actual > 5 * 60_000) {
+      // Slept (or paused) — jitter 0–30s so co-located workers spread out.
+      const jitter = Math.floor(Math.random() * 30_000);
+      log('info', `Detected wake-from-sleep (gap=${Math.round(actual/1000)}s, expected=${Math.round(want/1000)}s) — jittering ${Math.round(jitter/1000)}s before resuming`);
+      await new Promise(r => setTimeout(r, jitter));
+    }
+    lastTick = Date.now();
 
     // Repowise interval check
     if (repowiseEnabled()) {

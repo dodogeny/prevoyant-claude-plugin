@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!--
+  macOS launchd unit for prevoyant-server.
+
+  Why: prevoyant-server is the long-running ambient agent that owns the queue,
+  cortex synthesis, KB sync, ticket watcher, etc.  In production you want it
+  to:
+    - start at login
+    - restart if it crashes (KeepAlive)
+    - log to a stable path
+    - resume cleanly after the laptop wakes from sleep
+
+  Important: macOS suspends user-space processes when the laptop sleeps.  This
+  unit cannot prevent that — it ensures the process is RUNNING whenever the
+  machine is awake.  For deeper sleep-resistance see the "Running 24/7"
+  section of docs/CORTEX.md (caffeinate / pmset / external host).
+
+  SETUP:
+    1.  Replace /Users/YOUR_USERNAME below with your actual home directory.
+    2.  Copy this file to ~/Library/LaunchAgents/
+            cp scripts/com.prevoyant.server.plist ~/Library/LaunchAgents/
+    3.  Load it:
+            launchctl load -w ~/Library/LaunchAgents/com.prevoyant.server.plist
+    4.  Verify:
+            launchctl list | grep com.prevoyant.server
+            curl http://localhost:3000/health
+    5.  Unload / disable:
+            launchctl unload -w ~/Library/LaunchAgents/com.prevoyant.server.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.prevoyant.server</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/usr/local/bin/node</string>
+        <!-- UPDATE: replace /Users/YOUR_USERNAME with your actual home path -->
+        <string>/Users/YOUR_USERNAME/dev-skill/server/index.js</string>
+    </array>
+
+    <!-- Start at login, restart on crash -->
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Throttle restart attempts to avoid tight crash-loops -->
+    <key>ThrottleInterval</key>
+    <integer>30</integer>
+
+    <!-- Make sure $PATH includes brew + node when launchd starts us at boot -->
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+        <!-- Optional: override server port without editing .env -->
+        <!-- <key>WEBHOOK_PORT</key> <string>3000</string> -->
+    </dict>
+
+    <!-- UPDATE: replace /Users/YOUR_USERNAME with your actual home path -->
+    <key>WorkingDirectory</key>
+    <string>/Users/YOUR_USERNAME/dev-skill</string>
+
+    <key>StandardOutPath</key>
+    <string>/Users/YOUR_USERNAME/.prevoyant/server/prevoyant-server.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/YOUR_USERNAME/.prevoyant/server/prevoyant-server.error.log</string>
+
+    <!-- Cap memory + CPU so a leak never tanks the laptop.  Soft limits;
+         launchd will SIGTERM the process if exceeded for sustained periods. -->
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>4096</integer>
+    </dict>
+</dict>
+</plist>

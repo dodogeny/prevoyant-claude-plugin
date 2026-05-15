@@ -471,6 +471,15 @@ function stopDecisionOutcome() {
 function startCortex() {
   if (process.env.PRX_CORTEX_ENABLED !== 'Y') return;
   if (cortexWorker) return;
+
+  // If repowise is enabled and missing, kick off a background install so the
+  // worker has it available by the time the user actually wants to run it.
+  // Fire-and-forget — never blocks cortex startup.
+  const repowiseInstaller = require('./runner/repowiseInstaller');
+  if (repowiseInstaller.autoInstallEnabled() && !repowiseInstaller.isInstalled()) {
+    repowiseInstaller.ensureInstalled({ trigger: 'cortex-startup' }).catch(() => {});
+  }
+
   cortexWorker = new Worker(
     path.join(__dirname, 'workers', 'cortexWorker.js'),
     { workerData: {} }
@@ -491,6 +500,19 @@ function startCortex() {
         mode:   msg.mode || null,        // 'init' on first run, 'update' after
         reason: msg.reason || null,      // skip reason if !ok
         durationMs: msg.durationMs || 0,
+      });
+    }
+    if (msg.type === 'cortex-skipped') {
+      activityLog.record('cortex_skipped', null, 'system', {
+        reason:         msg.reason,
+        currentBuilder: msg.currentBuilder,
+        lastHeartbeat:  msg.lastHeartbeat,
+      });
+    }
+    if (msg.type === 'cortex-builder-claimed') {
+      activityLog.record('cortex_builder_claimed', null, 'system', {
+        reason:         msg.reason,
+        currentBuilder: msg.currentBuilder,
       });
     }
   });
@@ -561,6 +583,13 @@ serverEvents.on('settings-saved', () => {
   if (!decisionOutcomeOn && decisionOutcomeWorker)       stopDecisionOutcome();
   if (cortexOn && !cortexWorker)                         startCortex();
   if (!cortexOn && cortexWorker)                         stopCortex();
+
+  // Settings-saved transition: PRX_REPOWISE_ENABLED flipped to Y.  Auto-install
+  // if missing (idempotent — installer no-ops when already present).
+  const repowiseInstaller = require('./runner/repowiseInstaller');
+  if (repowiseInstaller.autoInstallEnabled() && !repowiseInstaller.isInstalled()) {
+    repowiseInstaller.ensureInstalled({ trigger: 'settings-saved' }).catch(() => {});
+  }
 
   // Hermes: skill install + gateway start/stop can happen without restart.
   // Route registration (/jira-events vs /internal/enqueue) still needs restart.

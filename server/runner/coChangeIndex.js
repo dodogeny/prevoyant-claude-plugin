@@ -186,11 +186,20 @@ function pushPeer(byFile, anchor, peer, count, anchorHits) {
 
 // ── Public API ────────────────────────────────────────────────────────────────
 
+// In-memory memo of the most recent index.  Re-validated through
+// isCacheFresh() — which checks both the TTL and the HEAD pointer — on every
+// access, so a long-running process that survives across many `git pull`s
+// never serves stale data and never holds an indefinitely-old map in RAM.
 let memo = null;
 
 function getIndex(force = false) {
   const repo = repoDir();
   if (!force && memo && isCacheFresh(memo, repo)) return memo;
+
+  // Drop the stale memo immediately so the GC can reclaim it before we
+  // allocate the replacement.  Otherwise a long-lived process can hold two
+  // full byFile maps in memory during the rebuild window.
+  memo = null;
 
   const disk = !force ? loadCache() : null;
   if (disk && isCacheFresh(disk, repo)) {

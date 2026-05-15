@@ -1990,7 +1990,12 @@ const EVENT_DISPLAY = {
   cortex_stopped:          { label: 'Cortex Stopped',         bg: '#f3f4f6', color: '#6b7280' },
   cortex_synthesized:      { label: 'Cortex Synthesised',     bg: '#fdf4ff', color: '#a21caf' },
   cortex_referenced:       { label: 'Cortex Referenced',      bg: '#fae8ff', color: '#86198f' },
+  cortex_skipped:          { label: 'Cortex Skipped (Reader)', bg: '#f3f4f6', color: '#6b7280' },
+  cortex_builder_claimed:  { label: 'Cortex Builder Claimed', bg: '#fdf4ff', color: '#a21caf' },
   repowise_ran:            { label: 'Repowise Ran',           bg: '#fef3c7', color: '#92400e' },
+  repowise_install_started:   { label: 'Repowise Install Started',   bg: '#fef3c7', color: '#92400e' },
+  repowise_install_completed: { label: 'Repowise Install Done',      bg: '#dcfce7', color: '#166534' },
+  repowise_install_failed:    { label: 'Repowise Install Failed',    bg: '#fee2e2', color: '#991b1b' },
 };
 
 const ACTOR_STYLE = {
@@ -3001,6 +3006,21 @@ function renderCortex() {
         <div class="stat-val">${distributed ? '<span class="pill pill-on">SHARED</span>' : '<span class="pill pill-off">LOCAL</span>'}</div>
         <div class="stat-sub" title="${esc(stats.dir)}">${distributed ? 'inside KB — syncs to team' : 'per-machine, never shared'}</div>
       </div>
+      ${distributed ? (() => {
+        const b = cortex.currentBuilder();
+        const ageS = b.heartbeat ? Math.round((Date.now() - b.heartbeat) / 1000) : null;
+        const ageStr = ageS == null ? 'never claimed' : (ageS < 60 ? `${ageS}s ago` : ageS < 3600 ? `${Math.round(ageS/60)}m ago` : `${Math.round(ageS/3600)}h ago`);
+        const pill = !b.machine ? '<span class="pill pill-off">UNCLAIMED</span>'
+                    : !b.fresh   ? '<span class="pill pill-warn">STALE</span>'
+                    : b.isUs     ? '<span class="pill pill-on">THIS MACHINE</span>'
+                                 : `<span class="pill" style="background:#fef3c7;color:#92400e">${esc(b.machine)}</span>`;
+        return `
+        <div class="stat-card">
+          <div class="stat-lbl">Builder</div>
+          <div class="stat-val">${pill}</div>
+          <div class="stat-sub">heartbeat ${ageStr} · only one machine writes at a time</div>
+        </div>`;
+      })() : ''}
     </div>
 
     ${enabled ? `<div class="actions">
@@ -3059,11 +3079,44 @@ function renderCortex() {
           btn.textContent = '✓ Installed via ' + (d.summary && d.summary.via || 'pip');
           setTimeout(() => location.reload(), 1500);
         } else {
-          btn.textContent = '✗ Failed — see server log';
+          btn.textContent = '✗ Failed — ' + ((d.summary && d.summary.message) || 'see server log');
+          if (d.summary && d.summary.hint) alert('Next step: ' + d.summary.hint);
         }
       } catch (_) { btn.textContent = 'Error'; }
-      setTimeout(() => { btn.disabled = false; btn.textContent = t; }, 8000);
+      setTimeout(() => { btn.disabled = false; btn.textContent = t; }, 12000);
     }
+
+    // Poll install status so a background auto-install is visible without
+    // a manual page refresh. Stops once status stabilises.
+    (function pollInstallStatus() {
+      let lastInstalling = null;
+      const tick = async () => {
+        try {
+          const r = await fetch('/dashboard/cortex/install-status');
+          const d = await r.json();
+          if (d.installing && lastInstalling !== true) {
+            // Show a transient banner.
+            let banner = document.getElementById('repowise-install-banner');
+            if (!banner) {
+              banner = document.createElement('div');
+              banner.id = 'repowise-install-banner';
+              banner.style.cssText = 'background:#fef3c7;border:1px solid #fde68a;color:#92400e;padding:.75rem 1.1rem;border-radius:8px;margin:1rem 0;font-size:.85rem;font-weight:600';
+              banner.innerHTML = '⟳ Repowise install in progress (background) — page will refresh when done.';
+              const pb = document.querySelector('.page-body');
+              if (pb) pb.insertBefore(banner, pb.children[2] || null);
+            }
+          } else if (!d.installing && lastInstalling === true) {
+            // Transitioned from installing → done. Reload to pick up the
+            // new "installed" status.
+            setTimeout(() => location.reload(), 600);
+            return;
+          }
+          lastInstalling = d.installing;
+        } catch (_) {}
+        setTimeout(tick, 4000);
+      };
+      tick();
+    })();
   </script>
   ${BASE_SCRIPT}
 </body>
@@ -4748,6 +4801,8 @@ function renderSettings(vals, flash) {
             [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
           ${fld('PRX_CORTEX_DISTRIBUTED','Distributed (share via KB)','select',v('PRX_CORTEX_DISTRIBUTED') || 'N','','Y → cortex files live inside the KB (`&lt;KB&gt;/cortex/`) and ride along with KB sync (git push or Upstash). Other devs auto-pickup. N → per-machine (~/.prevoyant/cortex/, default).',
             [{v:'N',l:'N — per-machine (default)'},{v:'Y',l:'Y — shared via KB'}])}
+          ${fld('PRX_CORTEX_FORCE_BUILDER','Force builder role','select',v('PRX_CORTEX_FORCE_BUILDER') || 'N','','Only meaningful when distributed=Y. Y forces this machine to take over the builder lock even if another machine is actively claiming it — use when the previous builder is offline and you want immediate takeover. Default: N (auto-elect; takeover happens automatically after 10min of silence).',
+            [{v:'N',l:'N — auto-elect (default)'},{v:'Y',l:'Y — force this machine as builder'}])}
           ${fld('PRX_CORTEX_DEBOUNCE_SECS','KB-change debounce (secs)','number',v('PRX_CORTEX_DEBOUNCE_SECS'),'30','How long to wait after the last KB change before re-synthesising. Default: 30.')}
           ${fld('PRX_CORTEX_RESYNC_HOURS','Heartbeat resync (hours)','text',v('PRX_CORTEX_RESYNC_HOURS'),'6','Periodic resync interval as a safety net if fs.watch misses a change. Default: 6.')}
 
@@ -5807,10 +5862,6 @@ router.post('/cortex/repowise-now', express.json(), (_req, res) => {
   res.json({ ok: true });
 });
 
-// Cross-platform repowise installer (pipx → uv → pip user — auto-detected).
-// Used by the "Install repowise" button on the Cortex page.  The hard work
-// is in plugin/install/install-repowise.js — this route just spawns Node on
-// it and streams the last JSON line back to the client.
 // Reference tracking — fire-and-forget ping from SKILL.md Step 0a when an
 // agent consumes the cortex during a session. Recorded as a `cortex_referenced`
 // activity event with actor=claude so the dashboard answers "when and who
@@ -5818,7 +5869,12 @@ router.post('/cortex/repowise-now', express.json(), (_req, res) => {
 //
 // Body shape (all optional except ticketKey):
 //   { ticketKey: "IV-1234", hits: ["architecture.md","patterns.md"],
-//     missCount: 2, machine: "javed-mac", estSavingsPct: 62 }
+//     missCount: 2, machine: "javed-mac", estSavingsPct: 62,
+//     step: "0a" | "5" | "7b-0" | "7" | … }
+// The `step` field lets the activity log distinguish broad-orientation reads
+// (Step 0a) from targeted mid-session lookups (Step 5 hotspots, Step 7b-0
+// patterns).  Defaults to "0a" so older pings without the field still record
+// meaningful data.
 router.post('/cortex/referenced', express.json(), (req, res) => {
   const b   = req.body || {};
   const key = (b.ticketKey || '').toString().toUpperCase().slice(0, 32) || null;
@@ -5826,9 +5882,14 @@ router.post('/cortex/referenced', express.json(), (req, res) => {
   const miss = typeof b.missCount === 'number' ? b.missCount : 0;
   const machine = (b.machine || '').toString().slice(0, 64) || null;
   const est = typeof b.estSavingsPct === 'number' ? Math.max(0, Math.min(100, b.estSavingsPct)) : null;
+  // Permit known step values only — anything unexpected → 'unknown' so the
+  // dashboard filter stays scannable.
+  const stepRaw = (b.step || '0a').toString().slice(0, 8);
+  const step    = /^[\w\-]{1,8}$/.test(stepRaw) ? stepRaw : 'unknown';
 
   activityLog.record('cortex_referenced', key, 'claude', {
     machine,
+    step,
     hitCount:  hits.length,
     missCount: miss,
     hits,
@@ -5837,38 +5898,36 @@ router.post('/cortex/referenced', express.json(), (req, res) => {
   res.json({ ok: true });
 });
 
-router.post('/cortex/install-repowise', express.json(), (req, res) => {
-  const { spawnSync } = require('child_process');
-  // The plugin's install script may be reachable either under CLAUDE_PLUGIN_ROOT
-  // (when invoked from a Claude Code session) or under the repo's plugin dir
-  // (when running prevoyant-server locally).  Try both.
-  const candidates = [
-    process.env.CLAUDE_PLUGIN_ROOT && path.join(process.env.CLAUDE_PLUGIN_ROOT, 'install', 'install-repowise.js'),
-    path.join(__dirname, '..', '..', 'plugin', 'install', 'install-repowise.js'),
-  ].filter(Boolean);
-
-  const script = candidates.find(p => fs.existsSync(p));
-  if (!script) {
-    return res.status(500).json({ ok: false, error: 'install-repowise.js not found — plugin layout broken?' });
+// Cross-platform repowise installer (pipx → uv → pip user — auto-detected).
+// Shares the same wrapper used by the proactive auto-install path
+// (server/runner/repowiseInstaller.js).  Concurrent-call protection: if a
+// background install is already running, this route returns the in-flight
+// promise instead of spawning a second process.  Activity events are
+// recorded by the wrapper regardless of who triggered the install.
+router.post('/cortex/install-repowise', express.json(), async (_req, res) => {
+  try {
+    const repowiseInstaller = require('../runner/repowiseInstaller');
+    const result = await repowiseInstaller.ensureInstalled({ trigger: 'manual-button', force: true });
+    return res.json({
+      ok:      result.ok,
+      summary: result.summary,
+      stdout:  (result.stdout || '').slice(-4000),
+      stderr:  (result.stderr || '').slice(-4000),
+    });
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: err.message });
   }
+});
 
-  const r = spawnSync(process.execPath, [script], {
-    encoding: 'utf8',
-    timeout: 10 * 60_000,
-    stdio:   ['ignore', 'pipe', 'pipe'],
-  });
-
-  // Last JSON line is the installer's machine-readable summary.
-  const stdout = (r.stdout || '').toString();
-  const lastLine = stdout.trim().split('\n').reverse().find(l => l.startsWith('{'));
-  let summary = null;
-  if (lastLine) { try { summary = JSON.parse(lastLine); } catch (_) {} }
-
+// Polled by the Cortex page so the UI can show install state without
+// holding open a long-running HTTP request.
+router.get('/cortex/install-status', (_req, res) => {
+  const repowiseInstaller = require('../runner/repowiseInstaller');
   res.json({
-    ok:       r.status === 0 && summary?.success,
-    summary:  summary,
-    stdout:   stdout.slice(-4000),
-    stderr:   (r.stderr || '').toString().slice(-4000),
+    installed:    repowiseInstaller.isInstalled(),
+    installing:   repowiseInstaller.isInstalling(),
+    autoEnabled:  repowiseInstaller.autoInstallEnabled(),
+    lastResult:   repowiseInstaller.getLastResult(),
   });
 });
 
@@ -6544,7 +6603,7 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'PRX_STALE_BRANCH_ENABLED', 'PRX_STALE_BRANCH_DAYS', 'PRX_STALE_BRANCH_INTERVAL_DAYS',
     'PRX_DECISION_OUTCOME_ENABLED', 'PRX_DECISION_OUTCOME_INTERVAL_DAYS', 'PRX_DECISION_OUTCOME_LOOKBACK_DAYS', 'PRX_DECISION_OUTCOME_MIN_EVIDENCE',
     'PRX_COCHANGE_WINDOW_DAYS', 'PRX_COCHANGE_CACHE_TTL_DAYS',
-    'PRX_CORTEX_ENABLED', 'PRX_CORTEX_DEBOUNCE_SECS', 'PRX_CORTEX_RESYNC_HOURS', 'PRX_CORTEX_DISTRIBUTED',
+    'PRX_CORTEX_ENABLED', 'PRX_CORTEX_DEBOUNCE_SECS', 'PRX_CORTEX_RESYNC_HOURS', 'PRX_CORTEX_DISTRIBUTED', 'PRX_CORTEX_FORCE_BUILDER',
     'PRX_REPOWISE_ENABLED', 'PRX_REPOWISE_INTERVAL_DAYS', 'PRX_REPOWISE_PATH', 'PRX_REPOWISE_AUTO_INSTALL',
     'PRX_WASENDER_ENABLED', 'PRX_WASENDER_API_KEY', 'PRX_WASENDER_TO',
     'PRX_WASENDER_PUBLIC_URL', 'PRX_WASENDER_EVENTS', 'PRX_WASENDER_PDF_PASSWORD',

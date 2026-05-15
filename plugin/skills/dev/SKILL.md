@@ -1,7 +1,7 @@
 ---
 name: dev
 description: "\"Structured Jira-driven developer workflow skill. Supports two modes — (1) Dev mode: use when a developer provides a Jira ticket URL or ticket key (e.g. PROJ-1234) and wants to start development work; handles the full workflow from reading the Jira ticket to proposing a code fix. (2) PR Review mode: use when a developer wants to review code changes for a Jira ticket; analyses the ticket context plus all code changes on the associated feature branch, then outputs findings and recommendations as a PDF report.\""
-version: 1.4.1
+version: 1.4.2
 ---
 
 # Dev Workflow Skill
@@ -25,6 +25,7 @@ Full end-to-end developer workflow for Jira tickets. Guides Claude through readi
 | SC-010 | v1.3.1 | 2026-05-15 | — | Feature | Step E2-a: Dependency graph scoring feeds Jordan's Risk dimension vote directly | ACTIVE |
 | SC-011 | v1.4.0 | 2026-05-15 | — | Feature | Step 5: Fragility score column (Muninn-style weighted composite) injected into the file map | ACTIVE |
 | SC-012 | v1.4.1 | 2026-05-15 | — | Feature | Step 0b: Layer 0 Cortex Pass — read ~/.prevoyant/cortex/facts/*.md first; emit `[CORTEX HIT/MISS]` markers; narrow Layers 1b/3 by coverage map (~50–70% Step 0 token savings when fresh) | ACTIVE |
+| SC-013 | v1.4.2 | 2026-05-15 | — | Feature | Mid-session cortex consultation — Step 5 hotspot cross-check (emits `[KB+ RISK HIGH-CONFIDENCE]` on cortex+fragility agreement), Step 7b-0 cortex-first patterns, and a generic `cortex_consult` helper any panel step can use. Telemetry pings now tag the step (0a / 5 / 7b-0 / 7c-{agent}). | ACTIVE |
 
 ## Configuration
 
@@ -1641,6 +1642,13 @@ else
   echo "[CORTEX MISS] state stale or absent — falling back to full KB walk"
   MISS_COUNT=6
 fi
+
+# 3) Export the resolved location so later mid-session steps (Step 5 hotspot
+#    lookup, Step 7b-0 pattern grep, Step 7 architecture refresh) can consult
+#    cortex on-demand without re-resolving the path or re-checking freshness.
+#    Empty string = cortex unavailable; later steps must fall back to KB.
+export PRX_CORTEX_RESOLVED_DIR="${CORTEX_FRESH:-0}"
+[ "$CORTEX_FRESH" = "1" ] && export PRX_CORTEX_RESOLVED_DIR="$CORTEX_DIR" || export PRX_CORTEX_RESOLVED_DIR=""
 ```
 
 If `[CORTEX HIT]` was emitted for a file, that file's content **replaces** the corresponding KB reads in Layers 1b–3 (mapping below). Carry the cortex content into the Prior Knowledge block under a `CORTEX` heading so the panel knows where it came from. If `[CORTEX MISS]` for any reason (state stale, file absent, or `PRX_CORTEX_ENABLED=N`), fall through to the original KB walk — cortex never blocks the workflow.
@@ -1673,7 +1681,7 @@ SERVER="http://localhost:${PRX_SERVER_PORT:-3000}"
 
 curl -s -m 2 -X POST "$SERVER/dashboard/cortex/referenced" \
   -H "Content-Type: application/json" \
-  -d "{\"ticketKey\":\"${TICKET_KEY}\",\"hits\":${HITS_JSON},\"missCount\":${MISS_COUNT:-0},\"machine\":\"${MACHINE}\",\"estSavingsPct\":${EST_PCT:-0}}" \
+  -d "{\"ticketKey\":\"${TICKET_KEY}\",\"hits\":${HITS_JSON},\"missCount\":${MISS_COUNT:-0},\"machine\":\"${MACHINE}\",\"estSavingsPct\":${EST_PCT:-0},\"step\":\"0a\"}" \
   >/dev/null 2>&1 &
 ```
 
@@ -2272,6 +2280,26 @@ Render the Fragility column as `{score} {BAND} ({1–2 dominant raw signals})`. 
 
 Emit `[KB+ RISK]` for any primary file scoring `HIGH`. Riley uses this in the **7-pre Test Suite Signal** to amplify her coverage warning — a HIGH-band file with `coverage_gap=1` is the strongest possible "danger here" signal she can give the panel.
 
+**Cortex hotspot cross-check (only when `PRX_CORTEX_RESOLVED_DIR` is set):** After computing local fragility, also grep cortex `facts/hotspots.md` for each primary file. Cortex hotspots aggregate **historical churn + repowise centrality** (when repowise is enabled) — a different signal axis from local fragility (which is point-in-time). When BOTH agree (`fragility HIGH` AND cortex flags the file), emit `[KB+ RISK HIGH-CONFIDENCE]` instead of plain `[KB+ RISK]` — the panel weights this strongest:
+
+```bash
+if [ -n "$PRX_CORTEX_RESOLVED_DIR" ] && [ -f "$PRX_CORTEX_RESOLVED_DIR/facts/hotspots.md" ]; then
+  for f in {primary_files}; do
+    if grep -qF "$f" "$PRX_CORTEX_RESOLVED_DIR/facts/hotspots.md"; then
+      echo "[CORTEX HOTSPOT] $f — confirmed by cortex/facts/hotspots.md"
+    fi
+  done
+  echo "[CORTEX HIT mid-session] step=5 source=facts/hotspots.md"
+  MACHINE=$(hostname 2>/dev/null || echo unknown)
+  curl -s -m 2 -X POST "http://localhost:${PRX_SERVER_PORT:-3000}/dashboard/cortex/referenced" \
+    -H "Content-Type: application/json" \
+    -d "{\"ticketKey\":\"${TICKET_KEY}\",\"hits\":[\"hotspots.md\"],\"missCount\":0,\"machine\":\"${MACHINE}\",\"step\":\"5\"}" \
+    >/dev/null 2>&1 &
+fi
+```
+
+If cortex is unavailable (Layer 0 missed or `PRX_CORTEX_ENABLED=N`), skip this cross-check silently — local fragility is still authoritative.
+
 **Git blame injection (primary file only):** After locating the key method via Pass 1–3, run `git blame` on the affected line range and inject it into the file map for the primary fix target. This surfaces who changed each line, when, and under which commit — giving the panel richer causal context for root cause analysis:
 
 ```bash
@@ -2577,10 +2605,29 @@ Before briefing the team, Morgan performs two mandatory pre-briefing lookups: a 
 
 ##### 7b-0. Morgan's KB Patterns Cross-Reference
 
-Before any JIRA search, Morgan reads `shared/patterns.md` (already loaded from Step 0b) and surfaces the 3 most similar past bugs relative to the current ticket's component and decision tree classification. This grounds the panel in institutional memory before they begin investigating.
+Before any JIRA search, Morgan surfaces the 3 most similar past bugs relative to the current ticket's component and decision tree classification. This grounds the panel in institutional memory before they begin investigating.
 
-```
-grep -i "{COMPONENT}\|{CLASSIFICATION_TYPE}" "$KB_WORK_DIR/shared/patterns.md" | head -30
+**Cortex-first lookup** — if `PRX_CORTEX_RESOLVED_DIR` is set (from Step 0a) AND `facts/patterns.md` was a HIT, grep cortex *instead* of the raw KB. Cortex patterns are pre-sorted by frequency (saves a sort), pre-filtered for stale entries, and typically half the size — Morgan gets the same answer faster:
+
+```bash
+SRC_LABEL="(KB)"
+if [ -n "$PRX_CORTEX_RESOLVED_DIR" ] && [ -f "$PRX_CORTEX_RESOLVED_DIR/facts/patterns.md" ]; then
+  PATTERN_SRC="$PRX_CORTEX_RESOLVED_DIR/facts/patterns.md"
+  SRC_LABEL="(cortex)"
+  echo "[CORTEX HIT mid-session] step=7b-0 source=facts/patterns.md"
+  # Fire-and-forget telemetry — the dashboard activity log will show
+  # cortex_referenced events tagged with step=7b-0 alongside the Step 0a one.
+  MACHINE=$(hostname 2>/dev/null || echo unknown)
+  curl -s -m 2 -X POST "http://localhost:${PRX_SERVER_PORT:-3000}/dashboard/cortex/referenced" \
+    -H "Content-Type: application/json" \
+    -d "{\"ticketKey\":\"${TICKET_KEY}\",\"hits\":[\"patterns.md\"],\"missCount\":0,\"machine\":\"${MACHINE}\",\"step\":\"7b-0\"}" \
+    >/dev/null 2>&1 &
+else
+  PATTERN_SRC="$KB_WORK_DIR/shared/patterns.md"
+fi
+
+grep -i "{COMPONENT}\|{CLASSIFICATION_TYPE}" "$PATTERN_SRC" | head -30
+echo "Patterns source: $PATTERN_SRC $SRC_LABEL"
 ```
 
 Extract up to 3 pattern entries with the highest frequency counter that match the current component or classification. Present them as a **Historical Pattern Context** block:
@@ -2716,6 +2763,34 @@ Each engineer has a **4-minute investigation window**, capped at **8 targeted gr
 - **No clear hypothesis after 8 ops?** Commit to the best available hypothesis, rate it Medium or Low confidence, and state explicitly what additional information would confirm it.
 - Every claim must be backed by a specific `file:line` or commit reference. Unsupported assertions will be challenged by Morgan.
 - Present findings as if briefing a tech lead: precise, brief, right.
+
+**Cortex on-demand consult (optional — counts as 1 op of the 8-op budget):** If an engineer hits a component or flow they don't immediately recognise, one targeted `grep` against `cortex/facts/architecture.md` (when available) returns the curated answer faster than walking core-mental-map files. This is a *substitute* for reading raw KB files, not an addition. Cite the cortex source in the hypothesis: `(cortex/facts/architecture.md)`.
+
+```bash
+# Drop-in helper: any panel step can use this to consult cortex on-demand.
+# Returns matching lines + 4 lines of context. Empty output = no cortex match,
+# fall back to grep on raw KB.  STEP is the step ID for telemetry (5, 7b-0, 7c, etc.).
+cortex_consult() {
+  local TERM="$1" FACT="$2" STEP="${3:-7c}"
+  [ -z "$PRX_CORTEX_RESOLVED_DIR" ] && return 1
+  [ ! -f "$PRX_CORTEX_RESOLVED_DIR/facts/$FACT" ] && return 1
+  grep -i -B 1 -A 4 "$TERM" "$PRX_CORTEX_RESOLVED_DIR/facts/$FACT" || return 1
+  echo "[CORTEX HIT mid-session] step=$STEP source=facts/$FACT term=$TERM"
+  # Telemetry — fire-and-forget.
+  local MACHINE=$(hostname 2>/dev/null || echo unknown)
+  curl -s -m 2 -X POST "http://localhost:${PRX_SERVER_PORT:-3000}/dashboard/cortex/referenced" \
+    -H "Content-Type: application/json" \
+    -d "{\"ticketKey\":\"${TICKET_KEY}\",\"hits\":[\"$FACT\"],\"missCount\":0,\"machine\":\"${MACHINE}\",\"step\":\"$STEP\"}" \
+    >/dev/null 2>&1 &
+}
+
+# Examples:
+# cortex_consult "AlertCentral" architecture.md 7c-alex
+# cortex_consult "case manager" patterns.md 7c-jordan
+# cortex_consult "session token" decisions.md 7e
+```
+
+If the consult returns nothing, the engineer falls back to a normal grep on the raw KB (still part of their 8-op budget).
 
 **Budget rules (Riley):**
 - 6 operations maximum — Riley is mapping impact, not tracing code.
