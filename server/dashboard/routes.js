@@ -1929,6 +1929,8 @@ const EVENT_DISPLAY = {
   hermes_gateway_stopped:{ label: 'Gateway Stopped',        bg: '#f3f4f6', color: '#6b7280' },
   hermes_result_sent:    { label: 'Hermes Result Sent',     bg: '#ede9fe', color: '#5b21b6' },
   hermes_jira_comment:   { label: 'Hermes Jira Comment',    bg: '#fef3c7', color: '#92400e' },
+  merge_conflict_warning:  { label: 'Merge Conflict Warning', bg: '#fee2e2', color: '#991b1b' },
+  stale_branches_scanned:  { label: 'Stale Branches Scan',    bg: '#fef3c7', color: '#92400e' },
 };
 
 const ACTOR_STYLE = {
@@ -4350,6 +4352,37 @@ function renderSettings(vals, flash) {
         </div>
       </details>
 
+      <!-- Stale Branch Detector -->
+      <details class="s-section" id="stale-branch">
+        <summary>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="3" r="3"/><circle cx="6" cy="21" r="3"/><circle cx="18" cy="12" r="3"/><path d="M6 6v12"/><path d="M18 9a9 9 0 0 0-9-9"/></svg>
+          Stale Branch Detector
+          <span class="s-opt">Optional</span>
+          <span class="s-chevron">›</span>
+        </summary>
+        <div class="s-body">
+          <div class="s-field span2">
+            <div class="s-hint" style="margin-top:0">
+              Background worker that periodically lists feature/fix branches in <code>PRX_REPO_DIR</code>,
+              cross-references each Jira ticket key against KB session records and checks Jira for any
+              linked PR. Branches whose ticket has a completed KB session but no PR (and no recent commits)
+              are flagged in <code>~/.prevoyant/knowledge-buildup/stale-branches.md</code> for review.
+              Requires <code>PRX_REPO_DIR</code> and Jira credentials.
+            </div>
+          </div>
+          ${fld('PRX_STALE_BRANCH_ENABLED','Enable Stale Branch Detector','select',v('PRX_STALE_BRANCH_ENABLED') || 'N','','Starts the Stale Branch Detector background worker.',
+            [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
+          ${fld('PRX_STALE_BRANCH_DAYS','Stale after (days quiet)','number',v('PRX_STALE_BRANCH_DAYS'),'14','Branches with no commit activity for this many days are flagged. Default: 14.')}
+          ${fld('PRX_STALE_BRANCH_INTERVAL_DAYS','Run interval (days)','text',v('PRX_STALE_BRANCH_INTERVAL_DAYS'),'1','Days between scan runs. Fractional values supported. Default: 1.')}
+          <div class="s-field span2" style="margin-top:4px">
+            <button type="button" onclick="staleBranchRunNow()"
+              style="font-size:11px;padding:3px 12px;border:1px solid #6366f1;border-radius:6px;background:#eef2ff;color:#4338ca;cursor:pointer">
+              ▶ Run now
+            </button>
+          </div>
+        </div>
+      </details>
+
       <!-- Hermes Integration -->
       <details class="s-section" id="hermes" onToggle="if(this.open) hermesCheckStatus()">
         <summary>
@@ -4556,6 +4589,25 @@ function renderSettings(vals, flash) {
       btn.disabled = true; btn.textContent = 'Queued…';
       try {
         const r = await fetch('/dashboard/settings/staleness/run-now', { method: 'POST' });
+        const d = await r.json();
+        btn.textContent = d.ok ? '✓ Queued' : (d.error || 'Error');
+        btn.style.background = d.ok ? '#dcfce7' : '#fee2e2';
+        btn.style.borderColor = d.ok ? '#86efac' : '#fca5a5';
+        btn.style.color       = d.ok ? '#166534' : '#991b1b';
+      } catch (_) {
+        btn.textContent = 'Error';
+      }
+      setTimeout(() => {
+        btn.disabled = false; btn.textContent = '▶ Run now';
+        btn.style.background = ''; btn.style.borderColor = ''; btn.style.color = '';
+      }, 4000);
+    }
+
+    async function staleBranchRunNow() {
+      const btn = event.target;
+      btn.disabled = true; btn.textContent = 'Queued…';
+      try {
+        const r = await fetch('/dashboard/settings/stale-branch/run-now', { method: 'POST' });
         const d = await r.json();
         btn.textContent = d.ok ? '✓ Queued' : (d.error || 'Error');
         btn.style.background = d.ok ? '#dcfce7' : '#fee2e2';
@@ -5905,6 +5957,7 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'PRX_KBFLOW_ENABLED', 'PRX_KBFLOW_INTERVAL_DAYS', 'PRX_KBFLOW_LOOKBACK_DAYS', 'PRX_KBFLOW_MAX_FLOWS',
     'PRX_PATTERN_MINER_ENABLED', 'PRX_PATTERN_MINER_INTERVAL_DAYS', 'PRX_PATTERN_MINER_MIN_TICKETS', 'PRX_PATTERN_MINER_MAX_PROPOSALS',
     'PRX_STALENESS_ENABLED', 'PRX_STALENESS_INTERVAL_DAYS',
+    'PRX_STALE_BRANCH_ENABLED', 'PRX_STALE_BRANCH_DAYS', 'PRX_STALE_BRANCH_INTERVAL_DAYS',
     'PRX_WASENDER_ENABLED', 'PRX_WASENDER_API_KEY', 'PRX_WASENDER_TO',
     'PRX_WASENDER_PUBLIC_URL', 'PRX_WASENDER_EVENTS', 'PRX_WASENDER_PDF_PASSWORD',
     'PRX_HERMES_ENABLED', 'PRX_HERMES_GATEWAY_URL', 'PRX_HERMES_SECRET', 'PRX_HERMES_JIRA_WRITEBACK',
@@ -7563,6 +7616,14 @@ router.post('/settings/staleness/run-now', express.json(), (_req, res) => {
     return res.status(400).json({ ok: false, error: 'Staleness Scanner is not enabled' });
   }
   serverEvents.emit('staleness-run-now');
+  res.json({ ok: true });
+});
+
+router.post('/settings/stale-branch/run-now', express.json(), (_req, res) => {
+  if (process.env.PRX_STALE_BRANCH_ENABLED !== 'Y') {
+    return res.status(400).json({ ok: false, error: 'Stale Branch Detector is not enabled' });
+  }
+  serverEvents.emit('stale-branch-run-now');
   res.json({ ok: true });
 });
 

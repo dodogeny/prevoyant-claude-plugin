@@ -1,7 +1,7 @@
 ---
 name: dev
 description: "\"Structured Jira-driven developer workflow skill. Supports two modes — (1) Dev mode: use when a developer provides a Jira ticket URL or ticket key (e.g. PROJ-1234) and wants to start development work; handles the full workflow from reading the Jira ticket to proposing a code fix. (2) PR Review mode: use when a developer wants to review code changes for a Jira ticket; analyses the ticket context plus all code changes on the associated feature branch, then outputs findings and recommendations as a PDF report.\""
-version: 1.2.2
+version: 1.3.1
 ---
 
 # Dev Workflow Skill
@@ -13,6 +13,16 @@ Full end-to-end developer workflow for Jira tickets. Guides Claude through readi
 <!-- Full details (before/after wording, revert status) are in shared/skill-changelog.md in the KB. -->
 | SC# | Version | Date | Commit | Type | Summary | Status |
 |-----|---------|------|--------|------|---------|--------|
+| SC-001 | v1.3.0 | 2026-05-15 | — | Feature | Step 0b: semantic relevance pre-score gates KB file loads by ticket keyword match | ACTIVE |
+| SC-002 | v1.3.0 | 2026-05-15 | — | Feature | Step 5: git blame injection on primary method + one-level call graph traversal | ACTIVE |
+| SC-003 | v1.3.0 | 2026-05-15 | — | Feature | Step 7-pre: Riley's test suite signal before panel convenes | ACTIVE |
+| SC-004 | v1.3.0 | 2026-05-15 | — | Feature | Step 7b-0: Morgan's KB patterns cross-reference before JIRA search | ACTIVE |
+| SC-005 | v1.3.0 | 2026-05-15 | — | Feature | Step 7e: Certainty score (1–5) + "change my mind" gate on low-confidence votes | ACTIVE |
+| SC-006 | v1.3.0 | 2026-05-15 | — | Feature | Step 7e-ii: Adversarial falsification round before cross-examination | ACTIVE |
+| SC-007 | v1.3.0 | 2026-05-15 | — | Feature | Step 14c: Hypothesis tagging on SKILL.md proposals with post-session accuracy tracking | ACTIVE |
+| SC-008 | v1.3.0 | 2026-05-15 | — | Feature | Step 14c-ii: Cross-ticket pattern synthesis pass in Bryan's retrospective | ACTIVE |
+| SC-009 | v1.3.1 | 2026-05-15 | — | Feature | Step E0-b: Jira cycle time query surfaces P50/P90 throughput anchor before Planning Poker | ACTIVE |
+| SC-010 | v1.3.1 | 2026-05-15 | — | Feature | Step E2-a: Dependency graph scoring feeds Jordan's Risk dimension vote directly | ACTIVE |
 
 ## Configuration
 
@@ -1583,6 +1593,26 @@ Once Step 1 has returned the ticket's **components** and **labels**, query in tw
 
 Execute the Memory Palace retrieval procedure (see **"How Agents Use the Palace"** in the KB Architecture section): map ticket components/labels to rooms → scan triggers → read matched entries. Always ≤ 3 read operations.
 
+**Layer 1b — Semantic Relevance Pre-Score (runs before Layers 2–4):**
+
+Before loading any `shared/*.md` or `core-mental-map/*.md` file, perform a lightweight relevance pass against the ticket's components, labels, and a 10-keyword digest of the ticket description (extract the 10 highest-signal non-stop-words from the summary + description). Score every KB file in the index without reading its full content:
+
+```
+Relevance score per file = (component keyword hits × 3) + (label keyword hits × 2) + (description keyword hits × 1)
+```
+
+Produce a score table (internal — do not display, only use to gate reads):
+
+| File | Component hits | Label hits | Desc hits | Score | Load? |
+|------|---------------|------------|-----------|-------|-------|
+| `shared/business-rules.md` | 2 | 1 | 3 | 11 | ✅ |
+| `shared/patterns.md` | 0 | 0 | 1 | 1 | ❌ |
+| `core-mental-map/architecture.md` | 3 | 2 | 4 | 17 | ✅ |
+
+**Load threshold:** Score ≥ 3 → read the file. Score < 3 → skip entirely (note as `skipped (low relevance)` in the Prior Knowledge block header). Apply to `shared/*.md` (except `process-efficiency.md` and `skill-changelog.md` — never load these) and `core-mental-map/*.md`. `shared/patterns.md` is always loaded regardless of score (Jordan needs it).
+
+Emit: `KB relevance pre-score: {N} files scored, {M} loaded, {P} skipped — saving ~{Q}% context.`
+
 **Layer 2 — Master Index fallback (if Palace yields no matches):**
 
 ```bash
@@ -1593,11 +1623,11 @@ grep -i "{TICKET_KEY}" "$KNOWLEDGE_DIR/INDEX.md"
 
 Read the 5 most recent matching ticket entries and all matching shared entries.
 
-**Layer 3 — Core Mental Map (always runs, regardless of Palace/Master Index hits):**
+**Layer 3 — Core Mental Map (always runs, relevance-gated by Layer 1b score):**
 
 Read `core-mental-map/INDEX.md` to see available topics and entry counts. Then:
 
-1. For each `core-mental-map/*.md` content file whose summary in `core-mental-map/INDEX.md` is relevant to the current ticket's components or topic, read the full file. (Files are small — compressed format; full reads are acceptable.)
+1. For each `core-mental-map/*.md` content file whose Layer 1b score is ≥ 3, read the full file. Skip files scoring < 3 (note `skipped (low relevance, score={N})`). (Files are small — compressed format; full reads are acceptable for qualifying files.)
 2. Carry all relevant CMM entries into the Prior Knowledge block under `CORE MENTAL MAP`.
 3. Increment the `confirmed:` counter for each CMM entry read — write the counter update to the file immediately (in-place sed or targeted edit) so other agents see fresh confirmation counts. If the file has not changed since last session, skip the counter update to avoid unnecessary writes.
 
@@ -2120,6 +2150,52 @@ To populate the Recent Git History column, run:
 git log --oneline -3 -- {file_path}
 ```
 
+**Git blame injection (primary file only):** After locating the key method via Pass 1–3, run `git blame` on the affected line range and inject it into the file map for the primary fix target. This surfaces who changed each line, when, and under which commit — giving the panel richer causal context for root cause analysis:
+
+```bash
+# Identify the method's line range from Pass 3 read (e.g. lines 2270–2295)
+START_LINE={method_start}
+END_LINE={method_end}
+git -C "$REPO_DIR" blame -L ${START_LINE},${END_LINE} -- {primary_file} \
+  --date=short --abbrev=8
+```
+
+Add a `## Git Blame — {primary_method}` subsection to the file map showing:
+- Each line's last-touching commit hash, author, date, and content
+- Highlight (with `← SUSPECT?`) any line modified in the last 90 days or by a commit whose message references a related ticket
+
+Only run blame on the primary fix target file. Cap at 60 lines. If the method exceeds 60 lines, blame only the first 40 lines plus the last 20 (the entry and exit are the highest-signal areas). Label: `Git blame: {file}:{START}–{END} ({N} lines, capped at 60)`.
+
+#### Call Graph Traversal (one level deep — runs after the file map is built)
+
+After Pass 3 confirms the primary affected file(s), follow import/call chains **one level outward** to identify callers of the changed functions. This dramatically improves impact analysis accuracy without the cost of a full graph traversal.
+
+**Caller discovery:**
+```bash
+# For each primary method identified in the file map (e.g. resolveCase):
+METHOD="{primary_method}"
+
+# Preferred: graphify (returns all callers in one query, transitive-aware)
+which graphify >/dev/null 2>&1 && [ -f "$REPO_DIR/graph.json" ] && \
+  graphify get-neighbors "$METHOD" --edges calls --direction incoming --depth 1 --graph "$REPO_DIR/graph.json"
+
+# Fallback: ast-grep for all call sites
+sg --pattern '$_.$METHOD($$$)' --lang java "$REPO_DIR/"
+
+# Fallback if ast-grep unavailable:
+grep -rn "\\.${METHOD}(" --include="*.java" "$REPO_DIR/"
+```
+
+Add a **Caller Map** subsection to the file map (max 8 callers; truncate with "…and N more" if exceeded):
+
+| Caller file | Method | Line | Impact if primary changes |
+|-------------|--------|------|--------------------------|
+| `fcfrontend/.../AlertCentralPanel.java` | `onResolveClicked()` | 441 | Shares the same flag — risk of flag-not-reset affecting this path too |
+
+Emit `[KB+ RISK]` for any caller in a different module or screen — cross-module callers are a regression hotspot.
+
+**Cap:** If graphify or ast-grep returns >15 callers, note `Callers: {N} — showing top 8 (sorted by module boundary distance); full list available via graphify` and stop. Do not read all caller files — this is a signal pass, not a deep investigation. Alex will dive into specific callers in Step 7c if warranted.
+
 #### Confidence Gate
 
 After building the file map, assess your certainty:
@@ -2208,6 +2284,46 @@ This step has two paths. **Choose the correct path based on the Decision Tree re
 | **ENHANCEMENT** (feature that never existed) | Direct Analysis → Step 7-ENH, then skip to Step 8 |
 
 Do not guess — verify every claim by reading code at the specific location. The Grep-First rule applies throughout this step.
+
+#### 7-pre. Riley's Test Suite Signal *(Bug tickets only — runs before the panel convenes)*
+
+Before opening the engineering panel, Riley performs a **test-first reconnaissance** against the affected files identified in Step 5. Test names and assertions are often the clearest specification of intended behaviour; coverage gaps are a leading indicator of where bugs hide.
+
+**Operations (max 4 — Riley is scouting, not deep-reading):**
+
+```bash
+# Locate test files for each primary file in the file map
+for src_file in {primary_files}; do
+  base=$(basename "$src_file" .java)
+  find "$REPO_DIR" -name "${base}Test.java" -o -name "Test${base}.java" \
+       -o -name "${base}IT.java" -o -name "${base}*Test*.java" 2>/dev/null
+done
+```
+
+For each test file found: read only the method signatures (test names) and any `@Test` annotation lines — do not read full test bodies (too expensive). Cap at 2 test files, 50 lines each.
+
+Riley produces a **Test Signal block** surfaced in Morgan's briefing:
+
+```
+┌─ Riley — Test Suite Signal (pre-panel) ──────────────────────────┐
+│ Test files located : {N} for {M} primary files                    │
+│   {TestClassName} → {file path}                                   │
+│     Test names found : {list of @Test method names}               │
+│     Intended behaviour spec'd by tests: {one-line summary}        │
+│     Coverage gaps noticed: {any obvious scenario not tested, or   │
+│                             "None apparent from test names alone"} │
+│                                                                    │
+│ No test file found for: {primary_file} ← coverage gap             │
+│                                                                    │
+│ Signal to panel: {one sentence directing the engineers — e.g.     │
+│   "The tests confirm resolveCase() must reset the flag — any      │
+│    hypothesis not addressing the reset path contradicts the spec." │
+│    or "No tests exist for this method — root cause analysis must   │
+│    rely entirely on code reading; treat with Medium confidence."}  │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+Morgan includes the Test Signal in the 7b briefing. Engineers must address any coverage gap or spec constraint identified here in their hypotheses. Riley emits `[KB+ RISK]` for every uncovered primary method.
 
 ---
 
@@ -2333,7 +2449,45 @@ Engineers (Alex, Sam, Jordan) are competing for the **Best Analysis** distinctio
 
 ---
 
-#### 7b. Morgan Opens — Historical JIRA Search + Lead Briefing
+#### 7b. Morgan Opens — KB Patterns Check + Historical JIRA Search + Lead Briefing
+
+Before briefing the team, Morgan performs two mandatory pre-briefing lookups: a KB patterns cross-reference and a JIRA historical search.
+
+##### 7b-0. Morgan's KB Patterns Cross-Reference
+
+Before any JIRA search, Morgan reads `shared/patterns.md` (already loaded from Step 0b) and surfaces the 3 most similar past bugs relative to the current ticket's component and decision tree classification. This grounds the panel in institutional memory before they begin investigating.
+
+```
+grep -i "{COMPONENT}\|{CLASSIFICATION_TYPE}" "$KB_WORK_DIR/shared/patterns.md" | head -30
+```
+
+Extract up to 3 pattern entries with the highest frequency counter that match the current component or classification. Present them as a **Historical Pattern Context** block:
+
+```
+┌─ Morgan — Historical KB Pattern Context ──────────────────────────┐
+│ Matching patterns from shared/patterns.md:                        │
+│                                                                    │
+│ [PAT-002] "flag set, never reset — boolean trap" (freq: 7)        │
+│   Component match: CaseManager, AlertCentral                      │
+│   Classification match: REGRESSION / DATA ISSUE                   │
+│   Verdict question for panel: Is this the same pattern, or a      │
+│   genuinely new failure mode?                                      │
+│                                                                    │
+│ [PAT-007] "GWT async callback lost" (freq: 3)                     │
+│   Component match: AlertCentral                                    │
+│   …                                                               │
+│                                                                    │
+│ Panel note: engineers must explicitly state in their hypothesis    │
+│ whether this is [SAME PATTERN] / [NEW PATTERN] / [UNRELATED].     │
+│ Morgan will not issue a verdict without this classification.       │
+└────────────────────────────────────────────────────────────────────┘
+```
+
+If no patterns match: state `KB Pattern Context: no matching patterns for {COMPONENT}/{CLASSIFICATION} — proceeding fresh.`
+
+Each engineer must include a `Pattern match: [SAME PAT-NNN / NEW / UNRELATED]` line in their hypothesis block (Step 7e).
+
+##### 7b-i. Morgan's JIRA Historical Search
 
 Before briefing the team, Morgan performs a mandatory JIRA historical investigation to determine whether this issue — or a closely related one — has been encountered and resolved before. Prior resolutions may contain root cause analysis, fix locations, or regression notes that the team can immediately build on.
 
@@ -2600,8 +2754,13 @@ All three engineers submit their final hypotheses. Riley submits a Testing Impac
 │                bug was always present since {first commit}"]     │
 │ Fix direction: [how the history finding informs the fix]         │
 │ Confidence   : High / Medium / Low                               │
+│ Certainty    : [1–5 — 5 = would bet my job on it; 1 = educated  │
+│                guess with thin evidence]                         │
+│ Pattern match: [SAME PAT-NNN / NEW / UNRELATED — from KB 7b-0]  │
 │ Ops used     : [N / 8]                                           │
 │ Unknowns     : [what git history alone cannot confirm]           │
+│ Change my mind: [only present if Certainty ≤ 2 — what specific  │
+│                 evidence, if found, would cause Alex to revise]  │
 └────────────────────────────────────────────────────────────────────┘
 
 ┌─ Sam — Data Flow & Logic Hypothesis ───────────────────────────┐
@@ -2610,8 +2769,11 @@ All three engineers submit their final hypotheses. Riley submits a Testing Impac
 │ Evidence     : [file:line — code snippet showing the divergence] │
 │ Fix direction: [what change at the divergence point resolves it] │
 │ Confidence   : High / Medium / Low                               │
+│ Certainty    : [1–5]                                             │
+│ Pattern match: [SAME PAT-NNN / NEW / UNRELATED]                  │
 │ Ops used     : [N / 8]                                           │
 │ Unknowns     : [what flow tracing alone cannot confirm]          │
+│ Change my mind: [only if Certainty ≤ 2]                         │
 └───────────────────────────────────────────────────────────────────┘
 
 ┌─ Jordan — Defensive Patterns Hypothesis ───────────────────────┐
@@ -2620,8 +2782,11 @@ All three engineers submit their final hypotheses. Riley submits a Testing Impac
 │ Evidence     : [file:line + one-line quote of offending code]    │
 │ Fix direction: [how eliminating the pattern resolves the issue]  │
 │ Confidence   : High / Medium / Low                               │
+│ Certainty    : [1–5]                                             │
+│ KB pattern   : [SAME PAT-NNN / NEW / UNRELATED — from KB 7b-0]  │
 │ Ops used     : [N / 8]                                           │
 │ Unknowns     : [what pattern analysis alone cannot confirm]      │
+│ Change my mind: [only if Certainty ≤ 2]                         │
 └───────────────────────────────────────────────────────────────────┘
 
 ┌─ Riley — Testing Impact Assessment ────────────────────────────┐
@@ -2646,6 +2811,50 @@ All three engineers submit their final hypotheses. Riley submits a Testing Impac
 ```
 
 Riley's assessment is **not scored** — it is advisory. However, any **High regression risk** or unanswered **Open question** must be explicitly addressed by Morgan in the verdict (7h) and Fix Review (8c).
+
+**Certainty gate:** Before proceeding to 7f, check all three Certainty scores. If any engineer rated Certainty ≤ 2, Morgan must explicitly acknowledge their `Change my mind:` statement and either: (a) direct another engineer to run the specific evidence-gathering op that would resolve it (up to 2 additional ops), or (b) accept the uncertainty and note it in the Root Cause Statement `Team note`. A Certainty ≤ 2 vote does not block the panel — it flags a known gap.
+
+---
+
+#### 7e-ii. Adversarial Falsification Round — T+4.5 minutes
+
+After all hypotheses are submitted, Morgan assigns one engineer to actively try to **falsify** each other engineer's hypothesis before the cross-examination. The goal is to surface blind spots the proposing engineer may have missed — not to win points, but to stress-test reasoning before the verdict.
+
+**Assignment (Morgan rotates to avoid self-reinforcement):**
+- Alex falsifies Sam's hypothesis
+- Sam falsifies Jordan's hypothesis
+- Jordan falsifies Alex's hypothesis
+
+Each falsifier has **2 targeted ops maximum** (grep or read — no new full-file reads) to find evidence that contradicts the assigned hypothesis. They respond with one of:
+
+```
+─── Falsification Round ───────────────────────────────────────────
+
+Alex → falsifying Sam's hypothesis:
+  Target claim: [one sentence from Sam's root cause]
+  Attempt: [what Alex looked for to disprove it — file:line or command]
+  Result: [one of the following]
+    ✅ HOLDS — could not falsify: [why the evidence supports Sam]
+    ⚠️ WEAKENED — partial counter-evidence: [what Alex found + why it doesn't fully disprove]
+    ❌ FALSIFIED — contradicting evidence: [file:line + what it shows]
+
+Sam → falsifying Jordan's hypothesis:
+  [same structure]
+
+Jordan → falsifying Alex's hypothesis:
+  [same structure]
+
+─── Morgan's Falsification Summary ────────────────────────────────
+  [Morgan reads all three results and notes:]
+  - Any hypothesis marked ❌ FALSIFIED is removed from contention (or engineer must revise)
+  - Any ⚠️ WEAKENED hypothesis is flagged in the scoring rubric (7h)
+  - ✅ HOLDS results increase the surviving hypothesis's score (+1 in Morgan's rubric)
+────────────────────────────────────────────────────────────────────
+```
+
+If all three results are ✅ HOLDS: state `Adversarial round: all hypotheses survived falsification — proceeding with full confidence.`
+
+Morgan awards **+1 point** (added to 7h scoring) for each hypothesis that survives a genuine falsification attempt. A falsified hypothesis is not automatically disqualified — the proposing engineer may revise it with up to 2 additional ops, then resubmit a corrected hypothesis block.
 
 ---
 
@@ -2750,8 +2959,10 @@ Morgan weighs all evidence — original hypotheses, responses to questions, and 
 | Survived cross-examination without needing revision | +2 |
 | Debate challenge successfully deflected with evidence | +1 |
 | Fix direction is testable and Riley raised no High regression risk against it | +1 |
+| Hypothesis survived adversarial falsification (7e-ii ✅ HOLDS) | +1 |
+| Certainty rated 4–5 and evidence justifies it | +1 |
 
-Maximum score: 15 pts. Morgan applies the rubric, declares the highest scorer the winner, then issues a personal assessment — which **must** include a response to Riley's assessment.
+Maximum score: 17 pts. Morgan applies the rubric, declares the highest scorer the winner, then issues a personal assessment — which **must** include a response to Riley's assessment.
 
 ```
 ─── Morgan's Verdict ──────────────────────────────────────────────
@@ -4092,7 +4303,7 @@ If codeburn is unavailable (npx not found or command fails): fall back to the se
 1. **Monthly budget** — use the actual codeburn monthly spend (or the manual sum as fallback). If spend > 80% of `PRX_MONTHLY_BUDGET`, flag ⚠️ and note the remaining headroom. If spend ≥ 100%, flag ❌ and state that clearly in the token audit.
 2. **Backlog** — note any HIGH-priority items. If the current session produced evidence for a HIGH item, it gets priority over new observations.
 3. **Blockers** — increment the count for any blocker that recurred this session. Auto-promote to HIGH backlog if count reaches 3.
-4. **Impact check** — if last session had an approved change, compare this session's cost against the pre-change baseline. Record the delta in the backlog row.
+4. **Impact check** — if last session had an approved change, compare this session's cost against the pre-change baseline. Record the delta in the backlog row. Also evaluate the **hypothesis accuracy**: retrieve the `Hypothesis:` field from the backlog entry for the approved change, compare the predicted saving to the actual cost delta, and record `[HYPOTHESIS: predicted ~{N}% / actual {M}% — {accurate / over-estimated / under-estimated}]` as an append to the backlog row. Over time this builds a track record of which proposal types actually deliver savings.
 5. **Compaction trigger** — if `Sessions tracked % PRX_SKILL_COMPACTION_INTERVAL == 0`, flag this as a compaction session.
 
 **C. Token spike detection — set alert flags before 14b:**
@@ -4155,6 +4366,12 @@ Bryan selects **one** change — either the top HIGH backlog item (if evidence s
   Type        : Compress / Remove / Clarify / Merge / Fast-path
   Est. saving : ~{N}% tokens / {clearer output / fewer re-reads}
   Backlog item: {NEW / HIGH-001 / MEDIUM-003}
+  Hypothesis  : "{a falsifiable prediction — e.g. 'this will reduce Step 7 token spend
+                  by ~15% by eliminating the mandatory full panel when KB confidence is
+                  High' — must be measurable against process-efficiency.md after
+                  PRX_SKILL_UPGRADE_MIN_SESSIONS sessions}"
+  Verify after: {PRX_SKILL_UPGRADE_MIN_SESSIONS} sessions — Bryan will check actual
+                cost delta in Step 14a impact check and record accuracy in backlog row.
 
   Before: "{exact current wording}"
   After : "{proposed replacement}"
@@ -4237,6 +4454,56 @@ Bryan then identifies the top 3 most expensive steps from the step breakdown and
 ```
 
 If both TOKEN_ALERT and BUDGET_ALERT are active, Bryan presents all three proposals before seeking any consensus votes — the team reviews the full picture before committing to any change.
+
+#### 14c-ii. Cross-Ticket Pattern Synthesis *(runs every PRX_SKILL_COMPACTION_INTERVAL sessions, alongside 14d; or when Bryan observes 3+ sessions sharing a component and root cause type)*
+
+Bryan performs a **pattern synthesis pass** — clustering all ticket records in `KB_WORK_DIR/tickets/*.md` by component and root cause type to surface recurring themes the team has not yet explicitly named. This is distinct from compaction (which tightens SKILL.md text) — synthesis adds new knowledge to `shared/patterns.md`.
+
+**Algorithm (Bryan reads ticket frontmatter only — no full ticket reads):**
+
+```bash
+# Extract component + root cause type from each ticket file
+for f in "$KB_WORK_DIR/tickets/"*.md; do
+  component=$(grep "^components:" "$f" | head -1 | sed 's/components: *//')
+  rootcause=$(grep "^root-cause-type:" "$f" | head -1 | sed 's/root-cause-type: *//')
+  echo "$component | $rootcause"
+done | sort | uniq -c | sort -rn | head -20
+```
+
+Clusters with **count ≥ 3** are candidate patterns. For each candidate cluster:
+1. Read the 3 most recent ticket files in that cluster (just the `## Root Cause` section, not the full file)
+2. Identify whether the pattern is already in `shared/patterns.md` — if yes, increment `frequency:` counter and add the ticket key to `occurrences:`; if no, propose a new pattern entry
+
+Present findings as a **Pattern Synthesis Report**:
+
+```
+─── Bryan — Cross-Ticket Pattern Synthesis ────────────────────────
+Sessions analysed : {N} tickets in KB
+Clusters found    : {M} with count ≥ 3
+
+Cluster 1 — AlertCentral | null-propagation (count: 5)
+  Tickets: IV-3412, IV-3556, IV-3672, IV-3801, IV-3915
+  Existing pattern: PAT-001 matches → BUMP frequency counter (6 → 11)
+
+Cluster 2 — CaseManager | state-not-refreshed (count: 3)
+  Tickets: IV-3480, IV-3701, IV-3880
+  No existing pattern covers this exactly.
+  → Proposed new pattern: PAT-021 — "case action triggers backend update
+    but frontend state not refreshed — GWT panel reload missing"
+    Frequency: 3 | first-seen: {earliest ticket date}
+
+─── Proposed actions ───────────────────────────────────────────────
+  [BUMP] PAT-001 frequency: 11 (was 10) — append IV-3915 to occurrences
+  [NEW]  PAT-021 — draft entry appended to shared/patterns.md backlog
+         Requires Morgan ✅ + Jordan ✅ to promote from backlog to active
+────────────────────────────────────────────────────────────────────
+```
+
+New pattern entries are held in a `## Pattern Backlog` section at the bottom of `shared/patterns.md` until Morgan and Jordan approve them (same consensus gate as SKILL.md changes). Bryan appends the proposed entry with `Status: PENDING APPROVAL` and presents it to the team.
+
+**Skip condition:** If the KB has fewer than 6 ticket files, state `Pattern synthesis: skipped — insufficient history ({N} tickets; minimum 6).`
+
+---
 
 #### 14d. Compaction Pass *(compaction sessions only)*
 
@@ -5262,6 +5529,67 @@ Present the Prior Knowledge block (same format as Step 0) and append an **Estima
 ─────────────────────────────────────────────────────────────────────
 ```
 
+#### E0-b. Jira Cycle Time Query *(runs after E1 — components known)*
+
+After ingesting the ticket in E1, query Jira for historical cycle time on the same components. This gives the team a throughput anchor — actual clock time it took to complete similar past work — before casting any votes.
+
+**JQL query (run via `mcp__jira__jira_search` or equivalent):**
+
+```
+project = {PROJECT_KEY}
+AND component in ("{COMPONENTS}")
+AND status in (Done, Resolved, Closed)
+AND issuetype in ({ISSUE_TYPE}, Bug, Story, Task)
+AND resolutiondate >= -{LOOKBACK_DAYS}d
+ORDER BY resolutiondate DESC
+```
+
+Use `LOOKBACK_DAYS = 180` (6 months). Limit to 30 results. Request fields: `key`, `summary`, `created`, `resolutiondate`, `story_points` (or `customfield_10016`), `issuetype`, `components`.
+
+**Cycle time computation per ticket:**
+
+```
+cycle_time_days = (resolutiondate - created).total_days
+```
+
+Exclude any ticket where `cycle_time_days > 180` (outlier — abandoned and re-opened) or `cycle_time_days < 0` (data error).
+
+**Compute percentiles from the valid set:**
+
+```
+Sort cycle times ascending.
+P50 = value at the 50th percentile (median).
+P90 = value at the 90th percentile (slowest 10%).
+N   = count of valid tickets used.
+```
+
+If fewer than 5 valid tickets are found: widen to all issue types and all time. If still fewer than 5: state `Cycle time: insufficient history ({N} tickets) — anchoring on KB estimates only.`
+
+**Surface as a Historical Throughput block** — append to the Estimation KB Findings block:
+
+```
+── Historical Throughput (Jira cycle time — same components) ─────────
+  Tickets analysed: {N} closed tickets on {COMPONENTS} (last 180 days)
+  Cycle time P50  : {X} days   ← half of similar tickets finished within this
+  Cycle time P90  : {Y} days   ← 90% finished within this; outliers took longer
+
+  Reference points for the team:
+  • Shortest recent:  {min} days  ({TICKET_KEY} — "{summary excerpt}")
+  • Longest recent:   {max} days  ({TICKET_KEY} — "{summary excerpt}")
+  • Most similar:     {TICKET_KEY} ({N}pts if set) — {one-line summary, cycle time}
+
+  Throughput note: {one sentence interpreting the data — e.g. "P50 of 4 days
+    suggests this component class typically closes in under a week; a vote of
+    8+ pts should be backed by concrete complexity evidence, not just caution."
+    or "P90 of 22 days flags this component as historically unpredictable —
+    unknowns are real; a spike or split is worth considering."}
+─────────────────────────────────────────────────────────────────────
+```
+
+Engineers **must reference the throughput anchor** in their E3 vote rationale. A vote significantly above P90's implied effort should state why this ticket is an outlier. A vote well below P50 should confirm the simplifying factors. Silence on the anchor is not allowed.
+
+If the Jira MCP call fails: log `CYCLE_TIME_WARN: Jira query unavailable — throughput anchor skipped.` and continue without it.
+
 ---
 
 ### Step E1 — Ingest Ticket
@@ -5276,6 +5604,55 @@ Same as Step 1 in Dev Mode. Fetch all standard Jira fields. Also surface:
 ### Step E2 — Scope & Dimension Analysis
 
 Before any individual votes are cast, the full Engineering Panel jointly maps the ticket against the three story point dimensions, drawing explicitly on the KB findings from E0 and each engineer's system knowledge.
+
+#### E2-a. Dependency Graph Scoring *(runs before the dimension table)*
+
+Before filling in the Risk dimension, Morgan quantifies **how many other files in the codebase import or call into the affected module(s)**. Dependent count is an objective proxy for regression surface — more dependents means a change here can silently break more callers.
+
+Identify the primary affected files from the ticket description and Step E1 context (the same files that would land in Step 5's file map in Dev Mode). Then count their dependents:
+
+```bash
+# Preferred — graphify (single query, transitive-aware)
+which graphify >/dev/null 2>&1 && [ -f "$REPO_DIR/graph.json" ] && \
+  graphify get-neighbors "{PrimaryClass}" \
+    --edges imports,calls --direction incoming --depth 1 \
+    --graph "$REPO_DIR/graph.json" | wc -l
+
+# Fallback — grep for import statements referencing the primary class
+grep -rn "import.*{PrimaryClass}\|import.*{PrimaryPackage}" \
+  --include="*.java" "$REPO_DIR/" | wc -l
+```
+
+Run for each primary affected class (cap at 3 classes; use the highest dependent count as the score).
+
+**Dependency Risk Scale:**
+
+| Dependent count | Risk contribution | Label |
+|----------------|-------------------|-------|
+| 0–2 | Negligible — isolated change | `DEP-LOW` |
+| 3–8 | Moderate — a handful of callers to smoke-test | `DEP-MED` |
+| 9–20 | High — widely-used; regression surface is real | `DEP-HIGH` |
+| 21+ | Critical — system-wide coupling; treat as architectural risk | `DEP-CRITICAL` |
+
+Surface as a **Dependency Score block** (fed directly into the dimension table):
+
+```
+── Dependency Score ──────────────────────────────────────────────────
+  Primary class   : {ClassName}  ({file path})
+  Dependent count : {N} files import or call this class
+  Risk label      : DEP-{LOW/MED/HIGH/CRITICAL}
+  Top dependents  : {up to 5 caller file names — module-level only, no line numbers}
+  Graph source    : graphify / grep fallback / unavailable
+
+  Jordan's risk multiplier: {see table above — carried into dimension table below}
+─────────────────────────────────────────────────────────────────────
+```
+
+If neither graphify nor grep is feasible (no `REPO_DIR` access): state `Dependency score: skipped — REPO_DIR unavailable; Jordan applies qualitative judgement.`
+
+Emit `[KB+ RISK]` for any class labelled `DEP-HIGH` or `DEP-CRITICAL` that is not already in `shared/regression-risks.md`.
+
+#### E2-b. Scope & Dimension Table
 
 ```
 ── Scope & Dimension Analysis ────────────────────────────────────────
@@ -5295,12 +5672,17 @@ Before any individual votes are cast, the full Engineering Panel jointly maps th
 
   Dimension drivers:
   ┌─────────────────┬──────────────┬───────────────────────────────────┐
-  │ Dimension       │ Level        │ Evidence (from KB / system knowledge) │
+  │ Dimension       │ Level        │ Evidence                          │
   ├─────────────────┼──────────────┼───────────────────────────────────┤
   │ Complexity      │ Low/Med/High │ {what makes it hard or simple — cite KB} │
-  │ Risk            │ Low/Med/High │ {unknowns, dependencies, regression surface} │
-  │ Repetition      │ Familiar/Partial/New │ {KB patterns found / past tickets / new territory} │
+  │ Risk            │ Low/Med/High │ {DEP-{LABEL} ({N} dependents) + unknowns │
+  │                 │              │  + regression surface — cite E2-a score} │
+  │ Repetition      │ Familiar/Partial/New │ {KB patterns / past tickets / new territory} │
   └─────────────────┴──────────────┴───────────────────────────────────┘
+
+  Cycle time anchor (from E0-b):
+  • P50: {X} days | P90: {Y} days | N={Z} past tickets
+  • {Throughput note — one sentence}
 
   Unknowns  : {things that, if unresolved, make any estimate unreliable}
   Dependencies: {external services, teams, or tickets that must land first}
@@ -5324,7 +5706,7 @@ Each engineer independently scores all three dimensions through their domain len
 | **Morgan** | Architectural complexity; system design decisions required | System-wide regression risk; dependency chain risk | Has the team solved a structurally similar problem before? |
 | **Alex** | Backend algorithm complexity; API surface changes; data model impact | Data migration risk; third-party API reliability | Are the affected services well-understood by the backend team? |
 | **Sam** | Business logic complexity; cross-layer integration; AC ambiguity | Stakeholder/domain rule uncertainty; acceptance criteria gaps | Has this class of feature been built before in this codebase? |
-| **Jordan** | Infrastructure/config complexity; cross-service protocol changes | Deployment risk; environment-specific behaviour; breaking changes | Is this deployment pattern routine or novel for the team? |
+| **Jordan** | Infrastructure/config complexity; cross-service protocol changes | **Dependency score from E2-a is Jordan's primary Risk input.** DEP-LOW → Risk Low; DEP-MED → Risk Medium; DEP-HIGH → Risk High; DEP-CRITICAL → Risk High + mandatory split discussion. Jordan may adjust one level up or down based on qualitative factors, but must state the reason. | Is this deployment pattern routine or novel for the team? |
 | **Henk** | Business rule complexity; known exceptions or client-specific behaviours that must be preserved | Risk of altering behaviour existing clients depend on; undocumented business rule conflicts | Has this business rule area been touched before without regression? |
 | **Riley** | Test complexity; observable edge-case surface area | Regression risk; unknown coverage gaps; flaky test likelihood | Does a test harness already exist for this area? |
 
@@ -5334,7 +5716,13 @@ Each engineer independently scores all three dimensions through their domain len
 {Name} — {N} pts
   Complexity  : {Low/Med/High} — {specific reason, citing system knowledge or KB entry}
   Risk        : {Low/Med/High} — {specific uncertainty or dependency driving this}
+               {Jordan only: "DEP-{LABEL} ({N} dependents) → base Risk {level};
+                adjusted {up/down/unchanged} because {reason}" or
+                "Dependency score unavailable — qualitative: {reason}"}
   Repetition  : {Familiar/Partial/New} — {KB pattern or past ticket reference, or "no prior art found"}
+  Throughput  : {one sentence anchoring against P50/P90 — e.g. "P50 is 4 days; my
+                 vote of 5 reflects one unknown that could push past P50" or
+                 "Cycle time data unavailable — no anchor"}
   Key unknown : {the single thing that, if resolved, would most change their vote}
 ```
 

@@ -57,6 +57,7 @@ let ticketWatcherWorker     = null;
 let kbFlowAnalystWorker     = null;
 let patternMinerWorker      = null;
 let kbStalenessWorker       = null;
+let staleBranchWorker       = null;
 let hermesNotifierActive    = false;
 
 function startWatchdog() {
@@ -380,8 +381,51 @@ function stopKbStaleness() {
   }
 }
 
-process.on('SIGTERM', () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); stopKbFlowAnalyst(); stopPatternMiner(); stopKbStaleness(); setTimeout(() => process.exit(0), 600); });
-process.on('SIGINT',  () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); stopKbFlowAnalyst(); stopPatternMiner(); stopKbStaleness(); setTimeout(() => process.exit(0), 600); });
+function startStaleBranchDetector() {
+  if (process.env.PRX_STALE_BRANCH_ENABLED !== 'Y') return;
+  if (staleBranchWorker) return;
+  staleBranchWorker = new Worker(
+    path.join(__dirname, 'workers', 'staleBranchWorker.js'),
+    { workerData: {} }
+  );
+  staleBranchWorker.on('message', msg => {
+    if (!msg) return;
+    if (msg.type === 'log') return;
+    if (msg.type === 'stale-branches-scanned') {
+      activityLog.record('stale_branches_scanned', null, 'system', {
+        branchesChecked: msg.branchesChecked,
+        staleCount:      msg.staleCount,
+        stale:           msg.stale,
+      });
+      if (msg.staleCount > 0) {
+        console.warn(
+          `[stale-branch] ⚠️  ${msg.staleCount} stale branch(es) detected ` +
+          `(KB done, no PR): ${msg.stale.map(s => s.branch).join(', ')}`
+        );
+      }
+    }
+  });
+  staleBranchWorker.on('error', err =>
+    console.error('[stale-branch] Worker error:', err.message)
+  );
+  staleBranchWorker.on('exit', code => {
+    staleBranchWorker = null;
+    if (code !== 0) console.error(`[stale-branch] Worker exited with code ${code}`);
+  });
+  const days = process.env.PRX_STALE_BRANCH_DAYS || '14';
+  const interval = process.env.PRX_STALE_BRANCH_INTERVAL_DAYS || '1';
+  console.log(`[prevoyant-server] Stale Branch Detector active — stale after ${days}d quiet, check every ${interval} day(s)`);
+}
+
+function stopStaleBranchDetector() {
+  if (staleBranchWorker) {
+    staleBranchWorker.postMessage({ type: 'graceful-stop' });
+    staleBranchWorker = null;
+  }
+}
+
+process.on('SIGTERM', () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); stopKbFlowAnalyst(); stopPatternMiner(); stopKbStaleness(); stopStaleBranchDetector(); setTimeout(() => process.exit(0), 600); });
+process.on('SIGINT',  () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); stopKbFlowAnalyst(); stopPatternMiner(); stopKbStaleness(); stopStaleBranchDetector(); setTimeout(() => process.exit(0), 600); });
 
 // Reactively start/stop workers when settings are saved from the dashboard.
 // This avoids requiring a full server restart for monitor enable/disable toggles.
@@ -394,6 +438,7 @@ serverEvents.on('settings-saved', () => {
   const kbflowEnabled      = process.env.PRX_KBFLOW_ENABLED             === 'Y';
   const patternMinerOn     = process.env.PRX_PATTERN_MINER_ENABLED      === 'Y';
   const stalenessOn        = process.env.PRX_STALENESS_ENABLED          === 'Y';
+  const staleBranchOn      = process.env.PRX_STALE_BRANCH_ENABLED       === 'Y';
 
   if (diskEnabled && !diskWorker)                         startDiskMonitor();
   if (!diskEnabled && diskWorker)                         stopDiskMonitor();
@@ -409,6 +454,8 @@ serverEvents.on('settings-saved', () => {
   if (!patternMinerOn && patternMinerWorker)              stopPatternMiner();
   if (stalenessOn && !kbStalenessWorker)                 startKbStaleness();
   if (!stalenessOn && kbStalenessWorker)                 stopKbStaleness();
+  if (staleBranchOn && !staleBranchWorker)               startStaleBranchDetector();
+  if (!staleBranchOn && staleBranchWorker)               stopStaleBranchDetector();
 
   // Hermes: skill install + gateway start/stop can happen without restart.
   // Route registration (/jira-events vs /internal/enqueue) still needs restart.
@@ -447,6 +494,10 @@ serverEvents.on('staleness-run-now', () => {
   if (kbStalenessWorker)    kbStalenessWorker.postMessage({ type: 'run-now' });
 });
 
+serverEvents.on('stale-branch-run-now', () => {
+  if (staleBranchWorker)    staleBranchWorker.postMessage({ type: 'run-now' });
+});
+
 // ── Server listen ─────────────────────────────────────────────────────────────
 
 app.listen(config.port, () => {
@@ -474,6 +525,7 @@ app.listen(config.port, () => {
   startKbFlowAnalyst();
   startPatternMiner();
   startKbStaleness();
+  startStaleBranchDetector();
 
   // Config-coherence warnings — logged once at startup so they surface in logs
   // without requiring the user to open the settings page.

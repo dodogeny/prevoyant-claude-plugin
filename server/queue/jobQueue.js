@@ -1,7 +1,9 @@
 'use strict';
 
 const { runClaudeAnalysis, killProcess } = require('../runner/claudeRunner');
-const tracker = require('../dashboard/tracker');
+const tracker      = require('../dashboard/tracker');
+const activityLog  = require('../dashboard/activityLog');
+const { checkConflicts } = require('../runner/conflictChecker');
 
 const MAX_CONCURRENT = 1;
 const queue = [];
@@ -30,6 +32,29 @@ function enqueue(ticketKey, mode = 'dev', priority = 'normal', meta = {}) {
     queue.push(job);
   }
   console.log(`[queue] Enqueued ${ticketKey} mode=${mode} priority=${priority} (depth: ${queue.length})`);
+
+  // Conflict check — compare the new ticket's KB file map against in-progress
+  // tickets.  Non-blocking: a check failure never prevents queuing.
+  try {
+    const result = checkConflicts(ticketKey);
+    if (result) {
+      for (const { ticketKey: activeKey, overlappingFiles } of result.conflicts) {
+        const msg =
+          `[conflict-checker] ⚠️  ${ticketKey} overlaps with in-progress ${activeKey} ` +
+          `on ${overlappingFiles.length} file(s): ${overlappingFiles.slice(0, 3).join(', ')}` +
+          (overlappingFiles.length > 3 ? ` …+${overlappingFiles.length - 3} more` : '');
+        console.warn(msg);
+        activityLog.record('merge_conflict_warning', ticketKey, 'system', {
+          conflictsWith:    activeKey,
+          overlappingFiles,
+          fileCount:        overlappingFiles.length,
+        });
+      }
+    }
+  } catch (err) {
+    console.warn(`[conflict-checker] Check failed for ${ticketKey}: ${err.message}`);
+  }
+
   drain();
 }
 
