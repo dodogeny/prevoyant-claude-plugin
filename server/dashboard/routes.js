@@ -2790,6 +2790,94 @@ function renderDisk(status, diskLog, flash) {
 // so a developer (or anyone reviewing how the AI is "thinking") can see every
 // piece of knowledge the system has accumulated, in one place.
 
+// ── Cortex render helpers — shared between landing and detail pages ──────────
+
+function _cortexFmtTs(ms) {
+  if (!ms) return '—';
+  return new Date(ms).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+}
+function _cortexFmtBytes(n) {
+  if (!n) return '0 B';
+  if (n < 1024) return n + ' B';
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1024 / 1024).toFixed(1) + ' MB';
+}
+function _cortexAgoStr(ms) {
+  if (!ms) return 'never';
+  const s = Math.round((Date.now() - ms) / 1000);
+  if (s < 60)    return `${s}s ago`;
+  if (s < 3600)  return `${Math.round(s/60)}m ago`;
+  if (s < 86400) return `${Math.round(s/3600)}h ago`;
+  return `${Math.round(s/86400)}d ago`;
+}
+function _slugify(s) {
+  return String(s || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '').slice(0, 60);
+}
+// Lightweight markdown renderer used by both pages.  Headings get anchor IDs
+// so the detail-page TOC can scroll-link to them.  Auto-generated HTML
+// comments from cortexWorker are stripped.
+function _cortexMd(text) {
+  return esc(text)
+    .replace(/^# (.+)$/gm,   (_, h) => `<h2 class="cortex-h2" id="${_slugify(h)}">${h}</h2>`)
+    .replace(/^## (.+)$/gm,  (_, h) => `<h3 class="cortex-h3" id="${_slugify(h)}">${h}</h3>`)
+    .replace(/^### (.+)$/gm, (_, h) => `<h4 class="cortex-h4" id="${_slugify(h)}">${h}</h4>`)
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    .replace(/(<li>.*<\/li>\n?)+/g, m => '<ul>' + m + '</ul>')
+    .replace(/&lt;!--[\s\S]*?--&gt;/g, '');
+}
+// Extract H2 headings from a fact body for preview/TOC.
+function _cortexHeadings(body) {
+  if (!body) return [];
+  const out = [];
+  const lines = body.split('\n');
+  for (const line of lines) {
+    const h2 = line.match(/^##\s+(.+?)\s*$/);
+    if (h2) { out.push({ level: 2, text: h2[1], slug: _slugify(h2[1]) }); continue; }
+    const h3 = line.match(/^###\s+(.+?)\s*$/);
+    if (h3) { out.push({ level: 3, text: h3[1], slug: _slugify(h3[1]) }); }
+  }
+  return out;
+}
+
+// CSS shared between cortex landing and detail pages — extracted so both stay
+// visually consistent.
+const _CORTEX_CSS = `
+  .breadcrumb { font-size: .78rem; color: #64748b; margin-bottom: .85rem; }
+  .breadcrumb a { color: #64748b; text-decoration: none; }
+  .breadcrumb a:hover { color: #e2e8f0; }
+  .breadcrumb-here { color: #e2e8f0; font-weight: 600; }
+
+  .pill { display: inline-block; font-size: .68rem; font-weight: 700; padding: 2px 8px; border-radius: 12px; }
+  .pill-on   { background: #dcfce7; color: #166534; }
+  .pill-off  { background: #f3f4f6; color: #6b7280; }
+  .pill-warn { background: #fef3c7; color: #92400e; }
+
+  .btn-cortex {
+    font-size: .82rem; font-weight: 600;
+    padding: .5rem 1.05rem; border-radius: var(--r-sm);
+    border: 1px solid rgba(236,72,153,.4);
+    background: rgba(236,72,153,.08);
+    color: #db2777; cursor: pointer;
+    font-family: inherit; transition: background .15s;
+  }
+  .btn-cortex:hover { background: rgba(236,72,153,.16); }
+  .btn-cortex:disabled { opacity:.5; cursor:not-allowed; }
+
+  /* Markdown rendering shared by both pages */
+  .cortex-h2 { font-size: 1.15rem; font-weight: 700; color: var(--text); margin-bottom: 1rem; letter-spacing: -.015em; scroll-margin-top: 80px; }
+  .cortex-h3 { font-size: .95rem; font-weight: 700; color: var(--text); margin: 1.1rem 0 .55rem; padding-top: .8rem; border-top: 1px solid var(--border-light); scroll-margin-top: 80px; }
+  .cortex-h3:first-of-type { border-top: none; padding-top: 0; }
+  .cortex-h4 { font-size: .85rem; font-weight: 700; color: var(--text-2); margin: .9rem 0 .4rem; scroll-margin-top: 80px; }
+  .md-body ul { margin: .5rem 0 .9rem; padding-left: 1.3rem; }
+  .md-body li { font-size: .85rem; color: var(--text-2); margin: .2rem 0; line-height: 1.5; }
+  .md-body code { background: var(--surface-2); padding: 1px 6px; border-radius: 4px; font-size: .8rem; color: #db2777; }
+  .md-body strong { color: var(--text); }
+
+  @keyframes cortex-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+`;
+
 function renderCortex() {
   const cortex = require('../runner/cortexLayer');
   const enabled   = cortex.isEnabled();
@@ -2799,33 +2887,28 @@ function renderCortex() {
   const repowiseOn  = process.env.PRX_REPOWISE_ENABLED === 'Y';
   const distributed = cortex.isDistributed();
 
-  // Pull each fact body so the page is one-stop.  Files are small (kilobytes)
-  // so the cost is negligible.
-  const factBodies = facts.map(f => ({
-    ...f,
-    body: f.exists ? require('fs').readFileSync(f.path, 'utf8') : '',
-  }));
+  // Build a *preview* per fact file — just enough metadata to render a card.
+  // We do NOT read full bodies here; the landing page must stay light no
+  // matter how big the KB grows.  Full content lives at /dashboard/cortex/facts/:id.
+  const fs = require('fs');
+  const factCards = facts.map(f => {
+    let bytes = 0, mtimeMs = 0, headings = [];
+    try {
+      const st = fs.statSync(f.path);
+      bytes = st.size;
+      mtimeMs = st.mtimeMs;
+      // Only read for heading extraction — bounded since fact files are small
+      // (synthesiser caps them at a few KB).  If they ever grew large we'd
+      // switch to a streamed parse, but headings live near the top so even
+      // then we could read just the first 8KB.
+      const body = fs.readFileSync(f.path, 'utf8');
+      headings = _cortexHeadings(body);
+    } catch (_) {}
+    return { ...f, bytes, mtimeMs, headings, sectionCount: headings.filter(h => h.level === 2).length };
+  });
 
-  function fmtTs(ms) {
-    if (!ms) return '—';
-    return new Date(ms).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
-  }
-  function fmtBytes(n) {
-    if (!n) return '0 B';
-    if (n < 1024) return n + ' B';
-    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
-    return (n / 1024 / 1024).toFixed(1) + ' MB';
-  }
-
-  const md = (text) => esc(text)
-    .replace(/^# (.+)$/gm, '<h2 class="cortex-h2">$1</h2>')
-    .replace(/^## (.+)$/gm, '<h3 class="cortex-h3">$1</h3>')
-    .replace(/^### (.+)$/gm, '<h4 class="cortex-h4">$1</h4>')
-    .replace(/`([^`]+)`/g, '<code>$1</code>')
-    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
-    .replace(/^- (.+)$/gm, '<li>$1</li>')
-    .replace(/(<li>.*<\/li>\n?)+/g, m => '<ul>' + m + '</ul>')
-    .replace(/&lt;!--[\s\S]*?--&gt;/g, '');  // strip our auto-generated comments
+  const fmtTs    = _cortexFmtTs;
+  const fmtBytes = _cortexFmtBytes;
 
   return `<!DOCTYPE html>
 <html lang="en">
@@ -2834,134 +2917,175 @@ function renderCortex() {
   <title>Cortex — Prevoyant Server</title>
   <style>
     ${BASE_CSS}
-    .breadcrumb { font-size: .78rem; color: #64748b; }
-    .breadcrumb a { color: #64748b; text-decoration: none; }
-    .breadcrumb a:hover { color: #e2e8f0; }
+    ${_CORTEX_CSS}
     .page-body { max-width: 1100px; margin: 1.75rem auto; padding: 0 1.75rem; }
 
+    /* Compact hero — no longer the focus of the page, just a header */
     .cortex-hero {
       background: linear-gradient(135deg, rgba(236,72,153,.08), rgba(168,85,247,.08));
       border: 1px solid rgba(236,72,153,.22);
       border-radius: var(--r-lg);
-      padding: 1.5rem 1.6rem;
-      margin-bottom: 1.4rem;
-      display: flex; align-items: center; gap: 1.2rem;
+      padding: 1.1rem 1.4rem;
+      margin-bottom: 1.2rem;
+      display: flex; align-items: center; gap: 1rem;
     }
     .cortex-hero-brain {
-      width: 56px; height: 56px;
+      width: 40px; height: 40px;
       color: #ec4899;
       animation: cortex-spin 5s linear infinite;
-      filter: drop-shadow(0 0 10px rgba(236,72,153,.55));
+      filter: drop-shadow(0 0 8px rgba(236,72,153,.55));
       flex-shrink: 0;
     }
     .cortex-hero h1 {
-      font-size: 1.4rem; font-weight: 800;
-      color: var(--text); margin: 0 0 .25rem;
+      font-size: 1.15rem; font-weight: 800;
+      color: var(--text); margin: 0 0 .15rem;
       letter-spacing: -.02em;
     }
     .cortex-hero .sub {
-      font-size: .9rem; color: var(--text-2);
-      max-width: 700px; line-height: 1.45;
+      font-size: .82rem; color: var(--text-2);
+      max-width: 760px; line-height: 1.4;
     }
 
     .stat-grid {
       display: grid;
       grid-template-columns: repeat(auto-fit,minmax(170px,1fr));
-      gap: .85rem; margin-bottom: 1.4rem;
+      gap: .7rem; margin-bottom: 1.2rem;
     }
     .stat-card {
       background: var(--surface); border-radius: var(--r-lg);
-      padding: 1.1rem 1.3rem; box-shadow: var(--shadow);
+      padding: .9rem 1.1rem; box-shadow: var(--shadow);
       border: 1px solid var(--border-light);
     }
-    .stat-lbl { font-size: .62rem; text-transform: uppercase; letter-spacing: .09em; color: var(--text-3); font-weight: 700; margin-bottom: .4rem; }
-    .stat-val { font-size: 1.5rem; font-weight: 700; color: var(--text); line-height: 1; letter-spacing: -.02em; }
-    .stat-sub { font-size: .72rem; color: var(--text-3); margin-top: .3rem; }
+    .stat-lbl { font-size: .6rem; text-transform: uppercase; letter-spacing: .09em; color: var(--text-3); font-weight: 700; margin-bottom: .35rem; }
+    .stat-val { font-size: 1.25rem; font-weight: 700; color: var(--text); line-height: 1; letter-spacing: -.02em; }
+    .stat-sub { font-size: .7rem; color: var(--text-3); margin-top: .3rem; }
 
-    .pill { display: inline-block; font-size: .68rem; font-weight: 700; padding: 2px 8px; border-radius: 12px; }
-    .pill-on   { background: #dcfce7; color: #166534; }
-    .pill-off  { background: #f3f4f6; color: #6b7280; }
-    .pill-warn { background: #fef3c7; color: #92400e; }
+    .actions { display: flex; gap: .5rem; margin: 0 0 1rem; flex-wrap: wrap; align-items: center; }
+    .actions .search-wrap { flex: 1; min-width: 200px; margin-left: auto; position: relative; }
+    .actions input.fact-search {
+      width: 100%; padding: .5rem .85rem .5rem 2rem;
+      font-size: .85rem; font-family: inherit;
+      border: 1px solid var(--border); border-radius: var(--r-sm);
+      background: var(--surface); color: var(--text);
+    }
+    .actions input.fact-search:focus { outline: none; border-color: rgba(236,72,153,.55); box-shadow: 0 0 0 3px rgba(236,72,153,.12); }
+    .actions .search-wrap::before {
+      content: '⌕'; position: absolute; left: .65rem; top: 50%;
+      transform: translateY(-50%); color: var(--text-3); font-size: .9rem;
+      pointer-events: none;
+    }
 
-    .actions { display: flex; gap: .55rem; margin: 1.2rem 0 1.4rem; flex-wrap: wrap; }
-    .btn-cortex {
-      font-size: .82rem; font-weight: 600;
-      padding: .5rem 1.05rem; border-radius: var(--r-sm);
-      border: 1px solid rgba(236,72,153,.4);
-      background: rgba(236,72,153,.08);
-      color: #db2777; cursor: pointer;
-      font-family: inherit; transition: background .15s;
+    /* Card grid — the main content */
+    .fact-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(290px, 1fr));
+      gap: .9rem;
     }
-    .btn-cortex:hover { background: rgba(236,72,153,.16); }
-    .btn-cortex:disabled { opacity:.5; cursor:not-allowed; }
-
-    .fact-nav {
-      position: sticky; top: 12px;
-      display: flex; flex-wrap: wrap; gap: .35rem;
-      padding: .65rem .8rem; background: var(--surface);
-      border: 1px solid var(--border-light); border-radius: var(--r-md);
-      margin-bottom: 1.2rem; box-shadow: var(--shadow);
-      z-index: 10;
+    .fact-card {
+      background: var(--surface);
+      border: 1px solid var(--border-light);
+      border-radius: var(--r-lg);
+      padding: 1.05rem 1.2rem 1rem;
+      box-shadow: var(--shadow);
+      transition: border-color .15s, transform .15s, box-shadow .15s;
+      display: flex; flex-direction: column;
+      position: relative;
+      min-height: 200px;
     }
-    .fact-nav a {
-      font-size: .76rem; font-weight: 600;
-      padding: .25rem .65rem; border-radius: 16px;
-      color: var(--text-2); text-decoration: none;
-      background: var(--surface-2); border: 1px solid var(--border-light);
-      transition: background .15s, color .15s;
+    .fact-card.has-content:hover {
+      border-color: rgba(236,72,153,.42);
+      transform: translateY(-1px);
+      box-shadow: 0 4px 14px rgba(0,0,0,0.06);
     }
-    .fact-nav a:hover { background: rgba(236,72,153,.1); color: #db2777; border-color: rgba(236,72,153,.3); }
-    .fact-nav a.missing { opacity: .45; }
-
-    .fact-section {
-      background: var(--surface); border-radius: var(--r-lg);
-      padding: 1.5rem 1.7rem; box-shadow: var(--shadow);
-      border: 1px solid var(--border-light); margin-bottom: 1.2rem;
+    .fact-card.empty { opacity: .55; }
+    .fact-card-header {
+      display: flex; align-items: flex-start; gap: .55rem;
+      margin-bottom: .5rem;
     }
-    .fact-section h2.cortex-h2 {
-      font-size: 1.15rem; font-weight: 700; color: var(--text);
-      margin-bottom: 1rem; letter-spacing: -.015em;
+    .fact-card-icon { font-size: 1.25rem; line-height: 1; flex-shrink: 0; }
+    .fact-card-title {
+      font-size: .98rem; font-weight: 700; color: var(--text);
+      margin: 0; letter-spacing: -.01em; line-height: 1.2;
     }
-    .fact-section h3.cortex-h3 {
-      font-size: .95rem; font-weight: 700; color: var(--text);
-      margin: 1.1rem 0 .55rem; padding-top: .8rem;
+    .fact-card-meta {
+      display: flex; flex-wrap: wrap; gap: .4rem .8rem;
+      font-size: .68rem; color: var(--text-3);
+      margin-bottom: .65rem;
+    }
+    .fact-card-meta b { color: var(--text-2); font-weight: 600; }
+    .fact-card-preview {
+      flex: 1;
+      font-size: .76rem; color: var(--text-2);
+      line-height: 1.45;
+      margin-bottom: .7rem;
+    }
+    .fact-card-preview ul { list-style: none; margin: 0; padding: 0; }
+    .fact-card-preview li {
+      padding: 3px 0 3px 14px;
+      position: relative;
+      border-bottom: 1px dashed var(--border-light);
+    }
+    .fact-card-preview li:last-child { border-bottom: none; }
+    .fact-card-preview li::before {
+      content: '›'; position: absolute; left: 0;
+      color: rgba(236,72,153,.5); font-weight: 700;
+    }
+    .fact-card-preview li.more {
+      color: var(--text-3); font-style: italic;
+      padding-left: 14px;
+    }
+    .fact-card-preview li.more::before { content: '+'; }
+    .fact-card-empty {
+      flex: 1;
+      font-size: .8rem; color: var(--text-3);
+      font-style: italic;
+      background: var(--surface-2);
+      padding: .65rem .8rem;
+      border-radius: var(--r-sm);
+      margin-bottom: .65rem;
+    }
+    .fact-card-footer {
+      display: flex; justify-content: space-between; align-items: center;
+      padding-top: .55rem;
       border-top: 1px solid var(--border-light);
     }
-    .fact-section h3.cortex-h3:first-of-type { border-top: none; padding-top: 0; }
-    .fact-section h4.cortex-h4 {
-      font-size: .85rem; font-weight: 700; color: var(--text-2);
-      margin: .9rem 0 .4rem;
+    .fact-card-open {
+      font-size: .76rem; font-weight: 700;
+      color: #db2777; text-decoration: none;
+      padding: 4px 10px; border-radius: 12px;
+      background: rgba(236,72,153,.08);
+      border: 1px solid rgba(236,72,153,.25);
+      transition: background .15s, border-color .15s;
     }
-    .fact-section ul { margin: .5rem 0 .9rem; padding-left: 1.3rem; }
-    .fact-section li { font-size: .85rem; color: var(--text-2); margin: .2rem 0; line-height: 1.5; }
-    .fact-section code {
-      background: var(--surface-2); padding: 1px 6px; border-radius: 4px;
-      font-size: .8rem; color: #db2777;
+    .fact-card-open:hover { background: rgba(236,72,153,.18); border-color: rgba(236,72,153,.5); }
+    .fact-card-status {
+      font-size: .65rem; font-weight: 700;
+      text-transform: uppercase; letter-spacing: .06em;
     }
-    .fact-section strong { color: var(--text); }
-    .fact-empty {
-      font-size: .85rem; color: var(--text-3); font-style: italic;
-      background: var(--surface-2); padding: .9rem 1.1rem; border-radius: var(--r-sm);
+    .fact-card-status.fresh { color: #16a34a; }
+    .fact-card-status.stale { color: #ea580c; }
+    .fact-card-status.missing { color: var(--text-3); }
+
+    .empty-message {
+      grid-column: 1 / -1;
+      text-align: center;
+      padding: 2rem;
+      color: var(--text-3);
+      font-style: italic;
     }
-    .fact-meta { font-size: .72rem; color: var(--text-3); margin-bottom: .8rem; }
-    @keyframes cortex-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
   </style>
 </head>
 <body>
-  ${enabled ? `<header>
+  <header>
     <h1><span class="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/></svg></span>Cortex</h1>
     <div class="meta"></div>
     <a href="/dashboard" class="header-btn">← Dashboard</a>
-  </header>` : `<header>
-    <h1>Cortex</h1>
-    <div class="meta"></div>
-    <a href="/dashboard" class="header-btn">← Dashboard</a>
-  </header>`}
+  </header>
 
   <div class="page-body">
-    <div class="breadcrumb" style="margin-bottom:.85rem">
+    <div class="breadcrumb">
       <a href="/dashboard">Dashboard</a> &nbsp;›&nbsp;
-      <span style="color:#e2e8f0;font-weight:600">Cortex — Intelligence Layer</span>
+      <span class="breadcrumb-here">Cortex</span>
     </div>
 
     <div class="cortex-hero">
@@ -2972,10 +3096,9 @@ function renderCortex() {
       <div>
         <h1>Always-on Intelligence Layer</h1>
         <div class="sub">
-          Cortex synthesises the KB and (optionally) repowise into a curated set of fact files
-          that AI agents reference in Step 0 of the dev skill. It updates automatically when
-          the KB changes and runs repowise on a schedule.
-          ${enabled ? '<strong style="color:#16a34a">Active — self-updating.</strong>' : '<strong style="color:#ea580c">Inactive — enable in Settings.</strong>'}
+          Curated facts synthesised from the KB${repowiseOn ? ' + repowise' : ''}.
+          Agents read these in Step 0 of the dev skill —
+          ${enabled ? '<strong style="color:#16a34a">active.</strong>' : '<strong style="color:#ea580c">inactive — enable in Settings.</strong>'}
         </div>
       </div>
     </div>
@@ -2993,7 +3116,7 @@ function renderCortex() {
       </div>
       <div class="stat-card">
         <div class="stat-lbl">Last synthesis</div>
-        <div class="stat-val" style="font-size:1rem;font-weight:600">${fmtTs(state.lastSynthesis)}</div>
+        <div class="stat-val" style="font-size:.95rem;font-weight:600">${fmtTs(state.lastSynthesis)}</div>
         <div class="stat-sub">${state.synthesisCount || 0} pass(es) total</div>
       </div>
       <div class="stat-card">
@@ -3023,71 +3146,114 @@ function renderCortex() {
       })() : ''}
     </div>
 
-    ${enabled ? `<div class="actions">
-      <button type="button" class="btn-cortex" onclick="cortexRunNow()">▶ Re-synthesise now</button>
-      ${repowiseOn ? `<button type="button" class="btn-cortex" onclick="cortexRepowiseNow()">↻ Run repowise now</button>` : ''}
-      ${repowiseOn && !state.repowiseAvailable ? `<button type="button" class="btn-cortex" style="background:#fef3c7;border-color:#fde68a;color:#92400e" onclick="installRepowise()">⬇ Install repowise</button>` : ''}
-      <a href="/dashboard/settings#cortex" class="btn-cortex" style="text-decoration:none;display:inline-block">⚙ Settings</a>
-    </div>` : `<div class="actions">
-      <a href="/dashboard/settings#cortex" class="btn-cortex" style="text-decoration:none;display:inline-block">⚙ Enable in Settings</a>
-    </div>`}
-
-    <div class="fact-nav">
-      ${factBodies.map(f => `<a href="#fact-${f.id}" class="${f.exists ? '' : 'missing'}">${f.icon} ${esc(f.name)}</a>`).join('')}
+    <div class="actions">
+      ${enabled ? `<button type="button" class="btn-cortex" data-act="resynth">▶ Re-synthesise now</button>
+      ${repowiseOn ? `<button type="button" class="btn-cortex" data-act="repowise">↻ Run repowise now</button>` : ''}
+      ${repowiseOn && !state.repowiseAvailable ? `<button type="button" class="btn-cortex" style="background:#fef3c7;border-color:#fde68a;color:#92400e" data-act="install-rw">⬇ Install repowise</button>` : ''}` : ''}
+      <a href="/dashboard/settings#cortex" class="btn-cortex" style="text-decoration:none;display:inline-flex;align-items:center">⚙ Settings</a>
+      <div class="search-wrap">
+        <input type="text" class="fact-search" id="fact-search" placeholder="Filter facts by name or heading…" autocomplete="off">
+      </div>
     </div>
 
-    ${factBodies.map(f => `
-      <div class="fact-section" id="fact-${f.id}">
-        <h2 class="cortex-h2">${f.icon} ${esc(f.name)}</h2>
-        <div class="fact-meta">Source: <code>~/.prevoyant/cortex/facts/${f.file}</code></div>
-        ${f.exists
-          ? md(f.body)
-          : `<div class="fact-empty">This fact file has not been synthesized yet. ${enabled ? 'Click "Re-synthesise now" above or wait for the next KB change.' : 'Enable Cortex in Settings to activate the worker.'}</div>`}
-      </div>
-    `).join('')}
+    <div class="fact-grid" id="fact-grid">
+      ${factCards.map(f => {
+        const stale = f.exists && state.lastSynthesis && f.mtimeMs < (Date.now() - 7 * 86400000);
+        const statusCls = !f.exists ? 'missing' : stale ? 'stale' : 'fresh';
+        const statusLbl = !f.exists ? 'NOT YET BUILT' : stale ? 'STALE >7d' : 'FRESH';
 
+        // Search index — concatenation of name + heading text for client-side filter.
+        const searchData = (f.name + ' ' + f.headings.map(h => h.text).join(' ')).toLowerCase();
+
+        const previewItems = f.headings.filter(h => h.level === 2).slice(0, 4);
+        const previewExtra = f.sectionCount - previewItems.length;
+
+        return `<div class="fact-card ${f.exists ? 'has-content' : 'empty'}" data-search="${esc(searchData)}">
+          <div class="fact-card-header">
+            <div class="fact-card-icon">${f.icon}</div>
+            <h3 class="fact-card-title">${esc(f.name)}</h3>
+          </div>
+          <div class="fact-card-meta">
+            ${f.exists ? `<span><b>${fmtBytes(f.bytes)}</b></span>
+            <span><b>${f.sectionCount}</b> section${f.sectionCount === 1 ? '' : 's'}</span>
+            <span>updated <b>${_cortexAgoStr(f.mtimeMs)}</b></span>` : `<span>—</span>`}
+          </div>
+          ${f.exists && previewItems.length > 0 ? `
+            <div class="fact-card-preview">
+              <ul>
+                ${previewItems.map(h => `<li>${esc(h.text)}</li>`).join('')}
+                ${previewExtra > 0 ? `<li class="more">…and ${previewExtra} more</li>` : ''}
+              </ul>
+            </div>
+          ` : f.exists ? `
+            <div class="fact-card-preview" style="font-style:italic;color:var(--text-3)">_(no headings yet — file may be empty)_</div>
+          ` : `
+            <div class="fact-card-empty">
+              Not synthesised yet. ${enabled ? 'It will be created on the next pass.' : 'Enable Cortex in Settings.'}
+            </div>
+          `}
+          <div class="fact-card-footer">
+            <span class="fact-card-status ${statusCls}">${statusLbl}</span>
+            ${f.exists
+              ? `<a class="fact-card-open" href="/dashboard/cortex/facts/${f.id}">Open →</a>`
+              : `<span style="font-size:.7rem;color:var(--text-3)">—</span>`}
+          </div>
+        </div>`;
+      }).join('')}
+      <div class="empty-message" id="empty-msg" style="display:none">No facts match your search.</div>
+    </div>
   </div>
 
   <script>
-    async function cortexRunNow() {
-      const btn = event.target;
-      btn.disabled = true; const t = btn.textContent; btn.textContent = 'Queued…';
+    // Action buttons (delegated handler for cleanliness).
+    document.addEventListener('click', async (ev) => {
+      const btn = ev.target.closest('button[data-act]');
+      if (!btn) return;
+      const act = btn.dataset.act;
+      const orig = btn.textContent;
+      btn.disabled = true;
       try {
-        const r = await fetch('/dashboard/cortex/run-now', { method: 'POST' });
-        const d = await r.json();
-        btn.textContent = d.ok ? '✓ Queued — reload in a moment' : (d.error || 'Error');
-      } catch (_) { btn.textContent = 'Error'; }
-      setTimeout(() => { btn.disabled = false; btn.textContent = t; }, 3500);
-    }
-    async function cortexRepowiseNow() {
-      const btn = event.target;
-      btn.disabled = true; const t = btn.textContent; btn.textContent = 'Running…';
-      try {
-        const r = await fetch('/dashboard/cortex/repowise-now', { method: 'POST' });
-        const d = await r.json();
-        btn.textContent = d.ok ? '✓ Started' : (d.error || 'Error');
-      } catch (_) { btn.textContent = 'Error'; }
-      setTimeout(() => { btn.disabled = false; btn.textContent = t; }, 5000);
-    }
-    async function installRepowise() {
-      const btn = event.target;
-      btn.disabled = true; const t = btn.textContent; btn.textContent = 'Installing… (up to ~3 min)';
-      try {
-        const r = await fetch('/dashboard/cortex/install-repowise', { method: 'POST' });
-        const d = await r.json();
-        if (d.ok) {
-          btn.textContent = '✓ Installed via ' + (d.summary && d.summary.via || 'pip');
-          setTimeout(() => location.reload(), 1500);
-        } else {
-          btn.textContent = '✗ Failed — ' + ((d.summary && d.summary.message) || 'see server log');
-          if (d.summary && d.summary.hint) alert('Next step: ' + d.summary.hint);
+        if (act === 'resynth') {
+          btn.textContent = 'Queued…';
+          const r = await fetch('/dashboard/cortex/run-now', { method: 'POST' }).then(r => r.json());
+          btn.textContent = r.ok ? '✓ Queued — reload in a moment' : (r.error || 'Error');
+        } else if (act === 'repowise') {
+          btn.textContent = 'Running…';
+          const r = await fetch('/dashboard/cortex/repowise-now', { method: 'POST' }).then(r => r.json());
+          btn.textContent = r.ok ? '✓ Started' : (r.error || 'Error');
+        } else if (act === 'install-rw') {
+          btn.textContent = 'Installing… (up to ~3 min)';
+          const r = await fetch('/dashboard/cortex/install-repowise', { method: 'POST' }).then(r => r.json());
+          if (r.ok) {
+            btn.textContent = '✓ Installed via ' + ((r.summary && r.summary.via) || 'pip');
+            setTimeout(() => location.reload(), 1500);
+          } else {
+            btn.textContent = '✗ Failed — ' + ((r.summary && r.summary.message) || 'see server log');
+            if (r.summary && r.summary.hint) alert('Next step: ' + r.summary.hint);
+          }
         }
       } catch (_) { btn.textContent = 'Error'; }
-      setTimeout(() => { btn.disabled = false; btn.textContent = t; }, 12000);
+      setTimeout(() => { btn.disabled = false; btn.textContent = orig; }, 4000);
+    });
+
+    // Client-side card filter — instant, no server round-trip.
+    const searchInput = document.getElementById('fact-search');
+    const emptyMsg = document.getElementById('empty-msg');
+    if (searchInput) {
+      searchInput.addEventListener('input', () => {
+        const q = searchInput.value.trim().toLowerCase();
+        const cards = document.querySelectorAll('.fact-card');
+        let visible = 0;
+        cards.forEach(card => {
+          const match = !q || card.dataset.search.includes(q);
+          card.style.display = match ? '' : 'none';
+          if (match) visible++;
+        });
+        emptyMsg.style.display = (q && visible === 0) ? '' : 'none';
+      });
     }
 
-    // Poll install status so a background auto-install is visible without
-    // a manual page refresh. Stops once status stabilises.
+    // Background-install poll (unchanged from previous version).
     (function pollInstallStatus() {
       let lastInstalling = null;
       const tick = async () => {
@@ -3095,7 +3261,6 @@ function renderCortex() {
           const r = await fetch('/dashboard/cortex/install-status');
           const d = await r.json();
           if (d.installing && lastInstalling !== true) {
-            // Show a transient banner.
             let banner = document.getElementById('repowise-install-banner');
             if (!banner) {
               banner = document.createElement('div');
@@ -3106,8 +3271,6 @@ function renderCortex() {
               if (pb) pb.insertBefore(banner, pb.children[2] || null);
             }
           } else if (!d.installing && lastInstalling === true) {
-            // Transitioned from installing → done. Reload to pick up the
-            // new "installed" status.
             setTimeout(() => location.reload(), 600);
             return;
           }
@@ -3121,6 +3284,247 @@ function renderCortex() {
   ${BASE_SCRIPT}
 </body>
 </html>`;
+}
+
+// ── Cortex fact detail page — one fact file, sticky TOC, in-page search ──────
+
+function renderCortexFact(id) {
+  const cortex = require('../runner/cortexLayer');
+  const fs = require('fs');
+
+  const fact = cortex.listFactFiles().find(f => f.id === id);
+  if (!fact) return { status: 404, html: renderCortexNotFound(id) };
+
+  if (!fact.exists) {
+    return { status: 200, html: renderCortexEmpty(fact) };
+  }
+
+  let body = '';
+  let bytes = 0;
+  let mtimeMs = 0;
+  try {
+    body = fs.readFileSync(fact.path, 'utf8');
+    const st = fs.statSync(fact.path);
+    bytes = st.size;
+    mtimeMs = st.mtimeMs;
+  } catch (_) {
+    return { status: 200, html: renderCortexEmpty(fact) };
+  }
+
+  const headings = _cortexHeadings(body);
+  const rendered = _cortexMd(body);
+
+  return { status: 200, html: `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>${esc(fact.name)} · Cortex — Prevoyant Server</title>
+  <style>
+    ${BASE_CSS}
+    ${_CORTEX_CSS}
+    .page-body { max-width: 1200px; margin: 1.5rem auto; padding: 0 1.5rem; }
+
+    .fact-head {
+      display: flex; align-items: center; gap: .8rem;
+      margin: .25rem 0 1rem;
+    }
+    .fact-head-icon { font-size: 1.8rem; line-height: 1; flex-shrink: 0; }
+    .fact-head h1 {
+      font-size: 1.5rem; font-weight: 800; color: var(--text);
+      margin: 0; letter-spacing: -.02em;
+    }
+    .fact-head-meta {
+      display: flex; gap: 1rem; flex-wrap: wrap;
+      font-size: .73rem; color: var(--text-3);
+      margin: .25rem 0 0;
+    }
+    .fact-head-meta b { color: var(--text-2); font-weight: 600; }
+    .fact-head-meta code {
+      background: var(--surface-2); padding: 1px 6px; border-radius: 4px;
+      font-size: .7rem; color: var(--text-2);
+    }
+
+    .fact-layout {
+      display: grid;
+      grid-template-columns: 240px 1fr;
+      gap: 1.4rem;
+      align-items: start;
+    }
+    @media (max-width: 900px) {
+      .fact-layout { grid-template-columns: 1fr; }
+      .fact-toc { position: static !important; max-height: none !important; }
+    }
+
+    .fact-toc {
+      position: sticky; top: 16px;
+      max-height: calc(100vh - 32px);
+      overflow-y: auto;
+      background: var(--surface);
+      border: 1px solid var(--border-light);
+      border-radius: var(--r-md);
+      padding: .85rem 1rem;
+      box-shadow: var(--shadow);
+    }
+    .fact-toc-title {
+      font-size: .62rem; text-transform: uppercase; letter-spacing: .09em;
+      color: var(--text-3); font-weight: 700; margin-bottom: .55rem;
+    }
+    .fact-toc ul { list-style: none; margin: 0; padding: 0; }
+    .fact-toc li { margin: 1px 0; }
+    .fact-toc a {
+      display: block; padding: 4px 8px;
+      font-size: .78rem; color: var(--text-2);
+      text-decoration: none;
+      border-radius: 4px;
+      border-left: 2px solid transparent;
+      transition: background .12s, color .12s, border-color .12s;
+    }
+    .fact-toc a.lvl-3 { padding-left: 18px; font-size: .73rem; color: var(--text-3); }
+    .fact-toc a:hover { background: rgba(236,72,153,.08); color: #db2777; }
+    .fact-toc a.active { border-left-color: #ec4899; background: rgba(236,72,153,.1); color: #db2777; font-weight: 600; }
+
+    .fact-search-wrap { position: relative; margin-bottom: .85rem; }
+    .fact-search-wrap input {
+      width: 100%; padding: .55rem .9rem .55rem 2rem;
+      font-size: .85rem; font-family: inherit;
+      border: 1px solid var(--border); border-radius: var(--r-sm);
+      background: var(--surface); color: var(--text);
+    }
+    .fact-search-wrap input:focus { outline: none; border-color: rgba(236,72,153,.55); box-shadow: 0 0 0 3px rgba(236,72,153,.12); }
+    .fact-search-wrap::before {
+      content: '⌕'; position: absolute; left: .7rem; top: 50%;
+      transform: translateY(-50%); color: var(--text-3); font-size: .9rem;
+      pointer-events: none;
+    }
+
+    .fact-body {
+      background: var(--surface); border-radius: var(--r-lg);
+      padding: 1.5rem 1.8rem; box-shadow: var(--shadow);
+      border: 1px solid var(--border-light);
+    }
+    .md-body .section { transition: opacity .12s; }
+    .md-body .section.hidden { display: none; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1><span class="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/></svg></span>Cortex</h1>
+    <div class="meta"></div>
+    <a href="/dashboard/cortex" class="header-btn">← All facts</a>
+  </header>
+
+  <div class="page-body">
+    <div class="breadcrumb">
+      <a href="/dashboard">Dashboard</a> &nbsp;›&nbsp;
+      <a href="/dashboard/cortex">Cortex</a> &nbsp;›&nbsp;
+      <span class="breadcrumb-here">${esc(fact.name)}</span>
+    </div>
+
+    <div class="fact-head">
+      <div class="fact-head-icon">${fact.icon}</div>
+      <div>
+        <h1>${esc(fact.name)}</h1>
+        <div class="fact-head-meta">
+          <span><b>${_cortexFmtBytes(bytes)}</b></span>
+          <span><b>${headings.filter(h => h.level === 2).length}</b> sections</span>
+          <span>updated <b>${_cortexAgoStr(mtimeMs)}</b></span>
+          <span>source <code>${esc(fact.file)}</code></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="fact-layout">
+      <aside class="fact-toc">
+        <div class="fact-toc-title">Contents</div>
+        <ul>
+          ${headings.length === 0
+            ? '<li style="font-size:.75rem;color:var(--text-3);font-style:italic;padding:4px 8px">No sections yet</li>'
+            : headings.map(h => `<li><a href="#${h.slug}" class="lvl-${h.level}" data-slug="${h.slug}">${esc(h.text)}</a></li>`).join('')}
+        </ul>
+      </aside>
+
+      <div>
+        <div class="fact-search-wrap">
+          <input type="text" id="section-search" placeholder="Filter sections within this fact…" autocomplete="off">
+        </div>
+        <div class="fact-body md-body" id="fact-body">${rendered}</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Wrap each H2 in a "section" div so the in-page filter can hide whole
+    // sections rather than just heading lines.  Done client-side once.
+    (function wrapSections() {
+      const body = document.getElementById('fact-body');
+      if (!body) return;
+      const children = Array.from(body.children);
+      const sections = [];
+      let current = null;
+      children.forEach(el => {
+        if (el.tagName === 'H2') {
+          if (current) sections.push(current);
+          current = { heading: el, els: [el], text: el.textContent.toLowerCase(), slug: el.id };
+        } else if (current) {
+          current.els.push(el);
+          current.text += ' ' + (el.textContent || '').toLowerCase();
+        }
+      });
+      if (current) sections.push(current);
+
+      // Replace flat children with section wrappers.
+      sections.forEach(s => {
+        const wrap = document.createElement('div');
+        wrap.className = 'section';
+        wrap.dataset.slug = s.slug;
+        wrap.dataset.search = s.text;
+        s.els.forEach(el => wrap.appendChild(el));
+        body.appendChild(wrap);
+      });
+    })();
+
+    // In-page section filter.
+    const sInput = document.getElementById('section-search');
+    if (sInput) {
+      sInput.addEventListener('input', () => {
+        const q = sInput.value.trim().toLowerCase();
+        document.querySelectorAll('#fact-body .section').forEach(s => {
+          const match = !q || s.dataset.search.includes(q);
+          s.classList.toggle('hidden', !match);
+        });
+      });
+    }
+
+    // Scroll-spy — highlight the TOC entry for the section currently in view.
+    const tocLinks = document.querySelectorAll('.fact-toc a[data-slug]');
+    const slugToLink = new Map();
+    tocLinks.forEach(a => slugToLink.set(a.dataset.slug, a));
+    if ('IntersectionObserver' in window && slugToLink.size) {
+      const io = new IntersectionObserver((entries) => {
+        entries.forEach(e => {
+          if (e.isIntersecting) {
+            tocLinks.forEach(a => a.classList.remove('active'));
+            const id = e.target.id;
+            // For H3 sub-headings, highlight the nearest H2 instead.
+            const link = slugToLink.get(id);
+            if (link) link.classList.add('active');
+          }
+        });
+      }, { rootMargin: '-80px 0px -65% 0px', threshold: 0 });
+      document.querySelectorAll('.md-body h2.cortex-h2, .md-body h3.cortex-h3').forEach(h => io.observe(h));
+    }
+  </script>
+  ${BASE_SCRIPT}
+</body>
+</html>` };
+}
+
+function renderCortexNotFound(id) {
+  return `<!DOCTYPE html><html><head><title>Not found · Cortex</title><style>${BASE_CSS}${_CORTEX_CSS}.page-body{max-width:700px;margin:4rem auto;padding:0 1.5rem;text-align:center}</style></head><body><header><h1>Cortex</h1><div class="meta"></div><a href="/dashboard/cortex" class="header-btn">← All facts</a></header><div class="page-body"><h2>Unknown fact: <code>${esc(id || '')}</code></h2><p style="color:var(--text-3)">Valid IDs: architecture, business-rules, patterns, decisions, hotspots, glossary.</p><p style="margin-top:2rem"><a href="/dashboard/cortex" class="btn-cortex" style="text-decoration:none">← Back to Cortex</a></p></div>${BASE_SCRIPT}</body></html>`;
+}
+
+function renderCortexEmpty(fact) {
+  return `<!DOCTYPE html><html><head><title>${esc(fact.name)} · Cortex</title><style>${BASE_CSS}${_CORTEX_CSS}.page-body{max-width:760px;margin:3rem auto;padding:0 1.5rem}.empty-hero{background:var(--surface);border:1px solid var(--border-light);border-radius:var(--r-lg);padding:2rem;text-align:center;box-shadow:var(--shadow)}.empty-hero .icon{font-size:3rem;margin-bottom:.5rem}</style></head><body><header><h1><span class="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/></svg></span>Cortex</h1><div class="meta"></div><a href="/dashboard/cortex" class="header-btn">← All facts</a></header><div class="page-body"><div class="breadcrumb"><a href="/dashboard">Dashboard</a> &nbsp;›&nbsp; <a href="/dashboard/cortex">Cortex</a> &nbsp;›&nbsp; <span class="breadcrumb-here">${esc(fact.name)}</span></div><div class="empty-hero"><div class="icon">${fact.icon}</div><h2>${esc(fact.name)}</h2><p style="color:var(--text-3);margin:1rem 0">This fact file has not been synthesised yet. It will be created on the next cortex pass — either when the KB changes or on the heartbeat interval.</p><p style="margin-top:1.5rem"><a href="/dashboard/cortex" class="btn-cortex" style="text-decoration:none">← Back to Cortex</a></p></div></div>${BASE_SCRIPT}</body></html>`;
 }
 
 // ── Watch page ────────────────────────────────────────────────────────────────
@@ -5841,6 +6245,16 @@ router.get('/disk', (req, res) => {
 router.get('/cortex', (_req, res) => {
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(renderCortex());
+});
+
+// Detail page for a single fact file — sticky TOC, in-page search, full content.
+// This is where the rendering actually happens; the landing page only shows
+// previews so it stays lean as the KB grows.
+router.get('/cortex/facts/:id', (req, res) => {
+  const id = (req.params.id || '').toString().toLowerCase();
+  const result = renderCortexFact(id);
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.status(result.status).send(result.html);
 });
 
 router.post('/cortex/run-now', express.json(), (_req, res) => {
