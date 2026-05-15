@@ -1,4 +1,4 @@
-# Prevoyant - Claude Code Plugin `v1.3.1`
+# Prevoyant - Claude Code Plugin `v1.3.2`
 
 **Prevoyant** is a [Claude Code](https://claude.ai/code) plugin — an AI agent team that runs a structured, end-to-end developer workflow for Jira tickets. Three modes:
 
@@ -1504,6 +1504,24 @@ rm -rf ~/.prevoyant/reports   # or the path set in CLAUDE_REPORT_DIR
 ---
 
 ## Changelog
+
+### v1.3.2 — Cortex Intelligence Layer + Fragility / Co-Change / Decision-Outcome (Muninn-inspired)
+
+- **Cortex — always-on intelligence layer (optional):** new background worker at `server/workers/cortexWorker.js` that sits on top of the KB. When `PRX_CORTEX_ENABLED=Y`, it watches the KB filesystem (debounced via `PRX_CORTEX_DEBOUNCE_SECS`) and synthesises a curated set of fact files at `~/.prevoyant/cortex/facts/*.md` — architecture, business rules, patterns, confirmed decisions, hotspots, glossary. Agents reference these in Step 0 of the dev skill instead of trawling the raw KB on every session. A new dashboard page at **`/dashboard/cortex`** renders every fact file with a "Re-synthesise now" button; the dashboard header gains an **animated revolving brain badge** while cortex is active. Cortex files are included in the backup/export ZIP via a new checkbox.
+
+- **Repowise integration (optional sub-feature of Cortex):** runs [repowise](https://github.com/repowise-dev/repowise) on a configurable cadence (`PRX_REPOWISE_INTERVAL_DAYS`, default 1d) to refresh the source repo's dependency graph + auto-generated wiki, which the cortex synthesizer then ingests into `cortex/facts/hotspots.md` and `cortex/facts/architecture.md`. Cross-platform installer at `plugin/install/install-repowise.js` (pipx → uv → pip user fallback ladder) runs from the Cortex page button or, when `PRX_REPOWISE_AUTO_INSTALL=Y`, automatically on `SessionStart`. Graceful degradation: cortex still works on KB-only sources if repowise is missing.
+
+- **Fragility score (Muninn-inspired) — Step 5 file map column:** new helper `server/runner/fragilityScore.js` produces a weighted 0.0–1.0 score per file from six signals — dependents, coverage gap, error history, change velocity, complexity, export surface. SKILL.md Step 5 (`dev` skill) now injects a `Fragility` column into the file map so the engineering panel gets a quantitative risk anchor (`HIGH/MED/LOW`) instead of relying on Riley's binary "no test file found" warning. Self-test on `server/index.js` returns `0.56 MED` — 21 commits in 90d, no test sibling. Helper is CLI-callable: `node server/runner/fragilityScore.js --repo $REPO_DIR --file <path> --json`. SKILL.md version bumped to v1.4.0; changelog entry SC-011 added.
+
+- **Co-change correlation in the conflict checker — silent conflict detection:** the existing `server/runner/conflictChecker.js` now invokes a new `server/runner/coChangeIndex.js` module that mines `git log --name-only` from `PRX_REPO_DIR` (180-day window by default; tunable via `PRX_COCHANGE_WINDOW_DAYS`) into a cached file-pair frequency map at `~/.prevoyant/server/co-change-cache.json` (TTL via `PRX_COCHANGE_CACHE_TTL_DAYS`). Surfaces the **silent conflict** case — two tickets that don't touch the same file but touch files that historically co-change with each other. Logs to a new `silent_conflict_warning` activity event. The cache rebuilds when its HEAD pointer differs from the live `git rev-parse HEAD`.
+
+- **Decision-Outcome Linker (optional worker):** new `server/workers/decisionOutcomeWorker.js` joins KB decision entries (`shared/decisions.md`, `shared/skill-changelog.md`, `lessons-learned/*.md`) against recent agent retros from `personas/memory/{agent}/*.md`, then grades each decision **CONFIRMED / CONTRADICTED / PENDING** based on a phrase-bank evidence pass. Proposals are written to `~/.prevoyant/knowledge-buildup/decision-outcomes.md` (PENDING APPROVAL — humans promote). Closes the loop the KB Flow Analyst left half-open: hypotheses get *graded* by outcomes instead of being captured and forgotten. Configurable interval (default 7d), lookback (default 90d), and min-evidence threshold (default 2).
+
+- **Stale Branch Detector (worker):** scheduled scanner that lists feature/fix branches in `PRX_REPO_DIR`, cross-references each Jira ticket key against KB session records, and checks Jira's development panel for any linked PR. Branches whose ticket has a completed KB session but no PR (and no commit activity for `PRX_STALE_BRANCH_DAYS` days) are flagged in `~/.prevoyant/knowledge-buildup/stale-branches.md`. Gracefully degrades when Jira credentials are unavailable.
+
+- **Settings UI parity:** every new env var (~16 of them across cortex, repowise, fragility, co-change, decision-outcome, stale-branch) is editable from the dashboard Settings page and persisted to `.env` via the existing FIELDS allowlist. Each new worker has a "▶ Run now" button. The hot-reload `settings-saved` handler in `server/index.js` starts/stops every new worker without a server restart.
+
+- **Six new dashboard activity events** are styled: `merge_conflict_warning`, `silent_conflict_warning`, `stale_branches_scanned`, `decisions_reviewed`, `cortex_synthesized`, and the existing `kb_staleness_scanned` / `pattern_miner_proposed` are styled for the first time too. New "Cortex" entry in the dashboard nav menu (with "active" pill when enabled).
 
 ### v1.3.1 — graphify Knowledge-Graph Augmentation
 

@@ -59,6 +59,7 @@ let patternMinerWorker      = null;
 let kbStalenessWorker       = null;
 let staleBranchWorker       = null;
 let decisionOutcomeWorker   = null;
+let cortexWorker            = null;
 let hermesNotifierActive    = false;
 
 function startWatchdog() {
@@ -467,8 +468,43 @@ function stopDecisionOutcome() {
   }
 }
 
-process.on('SIGTERM', () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); stopKbFlowAnalyst(); stopPatternMiner(); stopKbStaleness(); stopStaleBranchDetector(); stopDecisionOutcome(); setTimeout(() => process.exit(0), 600); });
-process.on('SIGINT',  () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); stopKbFlowAnalyst(); stopPatternMiner(); stopKbStaleness(); stopStaleBranchDetector(); stopDecisionOutcome(); setTimeout(() => process.exit(0), 600); });
+function startCortex() {
+  if (process.env.PRX_CORTEX_ENABLED !== 'Y') return;
+  if (cortexWorker) return;
+  cortexWorker = new Worker(
+    path.join(__dirname, 'workers', 'cortexWorker.js'),
+    { workerData: {} }
+  );
+  cortexWorker.on('message', msg => {
+    if (!msg) return;
+    if (msg.type === 'log') return;
+    if (msg.type === 'cortex-synthesized') {
+      activityLog.record('cortex_synthesized', null, 'system', {
+        factsWritten:      msg.factsWritten,
+        repowiseAvailable: msg.repowiseAvailable,
+      });
+    }
+  });
+  cortexWorker.on('error', err =>
+    console.error('[cortex] Worker error:', err.message)
+  );
+  cortexWorker.on('exit', code => {
+    cortexWorker = null;
+    if (code !== 0) console.error(`[cortex] Worker exited with code ${code}`);
+  });
+  const repowise = process.env.PRX_REPOWISE_ENABLED === 'Y' ? 'on' : 'off';
+  console.log(`[prevoyant-server] Cortex active — KB-watch + repowise=${repowise} (always-on intelligence layer)`);
+}
+
+function stopCortex() {
+  if (cortexWorker) {
+    cortexWorker.postMessage({ type: 'graceful-stop' });
+    cortexWorker = null;
+  }
+}
+
+process.on('SIGTERM', () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); stopKbFlowAnalyst(); stopPatternMiner(); stopKbStaleness(); stopStaleBranchDetector(); stopDecisionOutcome(); stopCortex(); setTimeout(() => process.exit(0), 600); });
+process.on('SIGINT',  () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); stopKbFlowAnalyst(); stopPatternMiner(); stopKbStaleness(); stopStaleBranchDetector(); stopDecisionOutcome(); stopCortex(); setTimeout(() => process.exit(0), 600); });
 
 // Reactively start/stop workers when settings are saved from the dashboard.
 // This avoids requiring a full server restart for monitor enable/disable toggles.
@@ -483,6 +519,7 @@ serverEvents.on('settings-saved', () => {
   const stalenessOn        = process.env.PRX_STALENESS_ENABLED          === 'Y';
   const staleBranchOn      = process.env.PRX_STALE_BRANCH_ENABLED       === 'Y';
   const decisionOutcomeOn  = process.env.PRX_DECISION_OUTCOME_ENABLED   === 'Y';
+  const cortexOn           = process.env.PRX_CORTEX_ENABLED             === 'Y';
 
   if (diskEnabled && !diskWorker)                         startDiskMonitor();
   if (!diskEnabled && diskWorker)                         stopDiskMonitor();
@@ -502,6 +539,8 @@ serverEvents.on('settings-saved', () => {
   if (!staleBranchOn && staleBranchWorker)               stopStaleBranchDetector();
   if (decisionOutcomeOn && !decisionOutcomeWorker)       startDecisionOutcome();
   if (!decisionOutcomeOn && decisionOutcomeWorker)       stopDecisionOutcome();
+  if (cortexOn && !cortexWorker)                         startCortex();
+  if (!cortexOn && cortexWorker)                         stopCortex();
 
   // Hermes: skill install + gateway start/stop can happen without restart.
   // Route registration (/jira-events vs /internal/enqueue) still needs restart.
@@ -548,6 +587,14 @@ serverEvents.on('decision-outcome-run-now', () => {
   if (decisionOutcomeWorker) decisionOutcomeWorker.postMessage({ type: 'run-now' });
 });
 
+serverEvents.on('cortex-run-now', () => {
+  if (cortexWorker) cortexWorker.postMessage({ type: 'run-now' });
+});
+
+serverEvents.on('cortex-repowise-now', () => {
+  if (cortexWorker) cortexWorker.postMessage({ type: 'repowise-now' });
+});
+
 // ── Server listen ─────────────────────────────────────────────────────────────
 
 app.listen(config.port, () => {
@@ -577,6 +624,7 @@ app.listen(config.port, () => {
   startKbStaleness();
   startStaleBranchDetector();
   startDecisionOutcome();
+  startCortex();
 
   // Config-coherence warnings — logged once at startup so they surface in logs
   // without requiring the user to open the settings page.

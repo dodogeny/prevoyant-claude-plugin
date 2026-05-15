@@ -376,6 +376,49 @@ const BASE_CSS = `
     to   { transform: rotate(360deg); }
   }
 
+  /* ── Cortex brain badge (always-on intelligence layer) ───────── */
+  .cortex-brain-badge {
+    display: inline-flex; align-items: center; gap: .45rem;
+    background: linear-gradient(135deg, rgba(236,72,153,.10), rgba(168,85,247,.10));
+    border: 1px solid rgba(236,72,153,.32);
+    border-radius: 20px;
+    padding: .28rem .75rem .28rem .55rem;
+    color: #f0abfc;
+    font-size: .72rem;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background .2s, border-color .2s, color .2s, box-shadow .2s;
+    position: relative;
+  }
+  .cortex-brain-badge:hover {
+    background: linear-gradient(135deg, rgba(236,72,153,.18), rgba(168,85,247,.18));
+    border-color: rgba(236,72,153,.55);
+    color: #fbcfe8;
+    box-shadow: 0 0 12px rgba(236,72,153,.25);
+  }
+  .cortex-brain-badge svg {
+    animation: cortex-spin 5s linear infinite;
+    flex-shrink: 0;
+    filter: drop-shadow(0 0 4px rgba(236,72,153,.55));
+  }
+  @keyframes cortex-spin {
+    from { transform: rotate(0deg); }
+    to   { transform: rotate(360deg); }
+  }
+  .cortex-brain-badge .cortex-pulse-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #ec4899;
+    box-shadow: 0 0 8px rgba(236,72,153,.85);
+    flex-shrink: 0;
+    animation: cortex-pulse 1.6s ease-in-out infinite;
+  }
+  @keyframes cortex-pulse {
+    0%, 100% { opacity: .55; transform: scale(.85); }
+    50%      { opacity: 1;   transform: scale(1.15); }
+  }
+
   .version-badge {
     background: rgba(255,255,255,.07);
     border: 1px solid rgba(255,255,255,.12);
@@ -1072,6 +1115,11 @@ function renderDashboard(stats, budget) {
         ? `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg> Resume`
         : `<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg> Pause Queue`}
     </button>
+    ${process.env.PRX_CORTEX_ENABLED === 'Y' ? `<a href="/dashboard/cortex" class="cortex-brain-badge" title="Cortex — always-on intelligence layer (click to view)">
+      <span class="cortex-pulse-dot"></span>
+      <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2z"/></svg>
+      <span>Cortex</span>
+    </a>` : ''}
     ${process.env.PRX_HERMES_ENABLED === 'Y' ? `<a id="dash-hermes-badge" href="/dashboard/hermes-config" class="hermes-agent-badge" title="Hermes — click to manage">
       <span id="dash-hermes-dot" class="hermes-pulse-dot"></span>
       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
@@ -1102,6 +1150,11 @@ function renderDashboard(stats, budget) {
         <a href="/dashboard/knowledge-builder" class="nav-menu-item" role="menuitem">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="15" y2="17"/></svg>
           Knowledge Builder
+        </a>
+        <a href="/dashboard/cortex" class="nav-menu-item" role="menuitem">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2z"/></svg>
+          Cortex
+          ${process.env.PRX_CORTEX_ENABLED === 'Y' ? `<span class="nav-menu-flag" style="background:rgba(236,72,153,.2);color:#fbcfe8;border-color:rgba(236,72,153,.4)">active</span>` : ''}
         </a>
         <a href="/dashboard/disk" class="nav-menu-item" role="menuitem">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
@@ -1933,6 +1986,7 @@ const EVENT_DISPLAY = {
   silent_conflict_warning: { label: 'Silent Conflict (co-change)', bg: '#fef3c7', color: '#92400e' },
   stale_branches_scanned:  { label: 'Stale Branches Scan',    bg: '#fef3c7', color: '#92400e' },
   decisions_reviewed:      { label: 'Decisions Reviewed',     bg: '#eff6ff', color: '#1d4ed8' },
+  cortex_synthesized:      { label: 'Cortex Synthesised',     bg: '#fdf4ff', color: '#a21caf' },
 };
 
 const ACTOR_STYLE = {
@@ -2369,6 +2423,7 @@ function kbStats() {
   const serverDir = path.join(os.homedir(), '.prevoyant', 'server');
   const watchLogs = path.join(os.homedir(), '.prevoyant', 'watch', 'logs');
   const memoryDir = path.join(os.homedir(), '.prevoyant', 'memory');
+  const cortexDir = path.join(os.homedir(), '.prevoyant', 'cortex');
   const basicMemDir   = basicMemoryHome();
   const basicMemInsideKb = basicMemDir.startsWith(kb + path.sep) || basicMemDir === kb;
   return {
@@ -2385,6 +2440,8 @@ function kbStats() {
     watchLogFiles: countFilesRecursive(watchLogs),
     memoryDir,
     memoryFiles:   countFilesRecursive(memoryDir),
+    cortexDir,
+    cortexFiles:   countFilesRecursive(cortexDir),
     basicMemDir,
     basicMemInsideKb,
     basicMemFiles: basicMemInsideKb ? 0 : countFilesRecursive(basicMemDir),
@@ -2703,6 +2760,290 @@ function renderDisk(status, diskLog, flash) {
     function dismissCleanup() {
       fetch('/dashboard/disk/dismiss-cleanup', { method: 'POST' })
         .then(() => location.reload());
+    }
+  </script>
+  ${BASE_SCRIPT}
+</body>
+</html>`;
+}
+
+// ── Cortex page ───────────────────────────────────────────────────────────────
+// Always-on intelligence layer.  Renders the synthesized fact files + state
+// so a developer (or anyone reviewing how the AI is "thinking") can see every
+// piece of knowledge the system has accumulated, in one place.
+
+function renderCortex() {
+  const cortex = require('../runner/cortexLayer');
+  const enabled   = cortex.isEnabled();
+  const stats     = cortex.cortexStats();
+  const state     = cortex.loadState();
+  const facts     = cortex.listFactFiles();
+  const repowiseOn = process.env.PRX_REPOWISE_ENABLED === 'Y';
+
+  // Pull each fact body so the page is one-stop.  Files are small (kilobytes)
+  // so the cost is negligible.
+  const factBodies = facts.map(f => ({
+    ...f,
+    body: f.exists ? require('fs').readFileSync(f.path, 'utf8') : '',
+  }));
+
+  function fmtTs(ms) {
+    if (!ms) return '—';
+    return new Date(ms).toLocaleString('en-GB', { dateStyle: 'medium', timeStyle: 'short' });
+  }
+  function fmtBytes(n) {
+    if (!n) return '0 B';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB';
+    return (n / 1024 / 1024).toFixed(1) + ' MB';
+  }
+
+  const md = (text) => esc(text)
+    .replace(/^# (.+)$/gm, '<h2 class="cortex-h2">$1</h2>')
+    .replace(/^## (.+)$/gm, '<h3 class="cortex-h3">$1</h3>')
+    .replace(/^### (.+)$/gm, '<h4 class="cortex-h4">$1</h4>')
+    .replace(/`([^`]+)`/g, '<code>$1</code>')
+    .replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>')
+    .replace(/^- (.+)$/gm, '<li>$1</li>')
+    .replace(/(<li>.*<\/li>\n?)+/g, m => '<ul>' + m + '</ul>')
+    .replace(/&lt;!--[\s\S]*?--&gt;/g, '');  // strip our auto-generated comments
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Cortex — Prevoyant Server</title>
+  <style>
+    ${BASE_CSS}
+    .breadcrumb { font-size: .78rem; color: #64748b; }
+    .breadcrumb a { color: #64748b; text-decoration: none; }
+    .breadcrumb a:hover { color: #e2e8f0; }
+    .page-body { max-width: 1100px; margin: 1.75rem auto; padding: 0 1.75rem; }
+
+    .cortex-hero {
+      background: linear-gradient(135deg, rgba(236,72,153,.08), rgba(168,85,247,.08));
+      border: 1px solid rgba(236,72,153,.22);
+      border-radius: var(--r-lg);
+      padding: 1.5rem 1.6rem;
+      margin-bottom: 1.4rem;
+      display: flex; align-items: center; gap: 1.2rem;
+    }
+    .cortex-hero-brain {
+      width: 56px; height: 56px;
+      color: #ec4899;
+      animation: cortex-spin 5s linear infinite;
+      filter: drop-shadow(0 0 10px rgba(236,72,153,.55));
+      flex-shrink: 0;
+    }
+    .cortex-hero h1 {
+      font-size: 1.4rem; font-weight: 800;
+      color: var(--text); margin: 0 0 .25rem;
+      letter-spacing: -.02em;
+    }
+    .cortex-hero .sub {
+      font-size: .9rem; color: var(--text-2);
+      max-width: 700px; line-height: 1.45;
+    }
+
+    .stat-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit,minmax(170px,1fr));
+      gap: .85rem; margin-bottom: 1.4rem;
+    }
+    .stat-card {
+      background: var(--surface); border-radius: var(--r-lg);
+      padding: 1.1rem 1.3rem; box-shadow: var(--shadow);
+      border: 1px solid var(--border-light);
+    }
+    .stat-lbl { font-size: .62rem; text-transform: uppercase; letter-spacing: .09em; color: var(--text-3); font-weight: 700; margin-bottom: .4rem; }
+    .stat-val { font-size: 1.5rem; font-weight: 700; color: var(--text); line-height: 1; letter-spacing: -.02em; }
+    .stat-sub { font-size: .72rem; color: var(--text-3); margin-top: .3rem; }
+
+    .pill { display: inline-block; font-size: .68rem; font-weight: 700; padding: 2px 8px; border-radius: 12px; }
+    .pill-on   { background: #dcfce7; color: #166534; }
+    .pill-off  { background: #f3f4f6; color: #6b7280; }
+    .pill-warn { background: #fef3c7; color: #92400e; }
+
+    .actions { display: flex; gap: .55rem; margin: 1.2rem 0 1.4rem; flex-wrap: wrap; }
+    .btn-cortex {
+      font-size: .82rem; font-weight: 600;
+      padding: .5rem 1.05rem; border-radius: var(--r-sm);
+      border: 1px solid rgba(236,72,153,.4);
+      background: rgba(236,72,153,.08);
+      color: #db2777; cursor: pointer;
+      font-family: inherit; transition: background .15s;
+    }
+    .btn-cortex:hover { background: rgba(236,72,153,.16); }
+    .btn-cortex:disabled { opacity:.5; cursor:not-allowed; }
+
+    .fact-nav {
+      position: sticky; top: 12px;
+      display: flex; flex-wrap: wrap; gap: .35rem;
+      padding: .65rem .8rem; background: var(--surface);
+      border: 1px solid var(--border-light); border-radius: var(--r-md);
+      margin-bottom: 1.2rem; box-shadow: var(--shadow);
+      z-index: 10;
+    }
+    .fact-nav a {
+      font-size: .76rem; font-weight: 600;
+      padding: .25rem .65rem; border-radius: 16px;
+      color: var(--text-2); text-decoration: none;
+      background: var(--surface-2); border: 1px solid var(--border-light);
+      transition: background .15s, color .15s;
+    }
+    .fact-nav a:hover { background: rgba(236,72,153,.1); color: #db2777; border-color: rgba(236,72,153,.3); }
+    .fact-nav a.missing { opacity: .45; }
+
+    .fact-section {
+      background: var(--surface); border-radius: var(--r-lg);
+      padding: 1.5rem 1.7rem; box-shadow: var(--shadow);
+      border: 1px solid var(--border-light); margin-bottom: 1.2rem;
+    }
+    .fact-section h2.cortex-h2 {
+      font-size: 1.15rem; font-weight: 700; color: var(--text);
+      margin-bottom: 1rem; letter-spacing: -.015em;
+    }
+    .fact-section h3.cortex-h3 {
+      font-size: .95rem; font-weight: 700; color: var(--text);
+      margin: 1.1rem 0 .55rem; padding-top: .8rem;
+      border-top: 1px solid var(--border-light);
+    }
+    .fact-section h3.cortex-h3:first-of-type { border-top: none; padding-top: 0; }
+    .fact-section h4.cortex-h4 {
+      font-size: .85rem; font-weight: 700; color: var(--text-2);
+      margin: .9rem 0 .4rem;
+    }
+    .fact-section ul { margin: .5rem 0 .9rem; padding-left: 1.3rem; }
+    .fact-section li { font-size: .85rem; color: var(--text-2); margin: .2rem 0; line-height: 1.5; }
+    .fact-section code {
+      background: var(--surface-2); padding: 1px 6px; border-radius: 4px;
+      font-size: .8rem; color: #db2777;
+    }
+    .fact-section strong { color: var(--text); }
+    .fact-empty {
+      font-size: .85rem; color: var(--text-3); font-style: italic;
+      background: var(--surface-2); padding: .9rem 1.1rem; border-radius: var(--r-sm);
+    }
+    .fact-meta { font-size: .72rem; color: var(--text-3); margin-bottom: .8rem; }
+    @keyframes cortex-spin { from { transform: rotate(0); } to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+  ${enabled ? `<header>
+    <h1><span class="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/></svg></span>Cortex</h1>
+    <div class="meta"></div>
+    <a href="/dashboard" class="header-btn">← Dashboard</a>
+  </header>` : `<header>
+    <h1>Cortex</h1>
+    <div class="meta"></div>
+    <a href="/dashboard" class="header-btn">← Dashboard</a>
+  </header>`}
+
+  <div class="page-body">
+    <div class="breadcrumb" style="margin-bottom:.85rem">
+      <a href="/dashboard">Dashboard</a> &nbsp;›&nbsp;
+      <span style="color:#e2e8f0;font-weight:600">Cortex — Intelligence Layer</span>
+    </div>
+
+    <div class="cortex-hero">
+      <svg class="cortex-hero-brain" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2z"/>
+        <path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2z"/>
+      </svg>
+      <div>
+        <h1>Always-on Intelligence Layer</h1>
+        <div class="sub">
+          Cortex synthesises the KB and (optionally) repowise into a curated set of fact files
+          that AI agents reference in Step 0 of the dev skill. It updates automatically when
+          the KB changes and runs repowise on a schedule.
+          ${enabled ? '<strong style="color:#16a34a">Active — self-updating.</strong>' : '<strong style="color:#ea580c">Inactive — enable in Settings.</strong>'}
+        </div>
+      </div>
+    </div>
+
+    <div class="stat-grid">
+      <div class="stat-card">
+        <div class="stat-lbl">Status</div>
+        <div class="stat-val">${enabled ? '<span class="pill pill-on">ACTIVE</span>' : '<span class="pill pill-off">INACTIVE</span>'}</div>
+        <div class="stat-sub">PRX_CORTEX_ENABLED</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-lbl">Fact files</div>
+        <div class="stat-val">${stats.factCount} / ${facts.length}</div>
+        <div class="stat-sub">${stats.exists ? fmtBytes(stats.sizeBytes) + ' on disk' : 'not yet synthesized'}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-lbl">Last synthesis</div>
+        <div class="stat-val" style="font-size:1rem;font-weight:600">${fmtTs(state.lastSynthesis)}</div>
+        <div class="stat-sub">${state.synthesisCount || 0} pass(es) total</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-lbl">Repowise</div>
+        <div class="stat-val">${repowiseOn ? (state.repowiseAvailable ? '<span class="pill pill-on">ON</span>' : '<span class="pill pill-warn">MISSING</span>') : '<span class="pill pill-off">OFF</span>'}</div>
+        <div class="stat-sub">${state.lastRepowiseRun ? 'last run ' + fmtTs(state.lastRepowiseRun) : 'never run'}</div>
+      </div>
+    </div>
+
+    ${enabled ? `<div class="actions">
+      <button type="button" class="btn-cortex" onclick="cortexRunNow()">▶ Re-synthesise now</button>
+      ${repowiseOn ? `<button type="button" class="btn-cortex" onclick="cortexRepowiseNow()">↻ Run repowise now</button>` : ''}
+      ${repowiseOn && !state.repowiseAvailable ? `<button type="button" class="btn-cortex" style="background:#fef3c7;border-color:#fde68a;color:#92400e" onclick="installRepowise()">⬇ Install repowise</button>` : ''}
+      <a href="/dashboard/settings#cortex" class="btn-cortex" style="text-decoration:none;display:inline-block">⚙ Settings</a>
+    </div>` : `<div class="actions">
+      <a href="/dashboard/settings#cortex" class="btn-cortex" style="text-decoration:none;display:inline-block">⚙ Enable in Settings</a>
+    </div>`}
+
+    <div class="fact-nav">
+      ${factBodies.map(f => `<a href="#fact-${f.id}" class="${f.exists ? '' : 'missing'}">${f.icon} ${esc(f.name)}</a>`).join('')}
+    </div>
+
+    ${factBodies.map(f => `
+      <div class="fact-section" id="fact-${f.id}">
+        <h2 class="cortex-h2">${f.icon} ${esc(f.name)}</h2>
+        <div class="fact-meta">Source: <code>~/.prevoyant/cortex/facts/${f.file}</code></div>
+        ${f.exists
+          ? md(f.body)
+          : `<div class="fact-empty">This fact file has not been synthesized yet. ${enabled ? 'Click "Re-synthesise now" above or wait for the next KB change.' : 'Enable Cortex in Settings to activate the worker.'}</div>`}
+      </div>
+    `).join('')}
+
+  </div>
+
+  <script>
+    async function cortexRunNow() {
+      const btn = event.target;
+      btn.disabled = true; const t = btn.textContent; btn.textContent = 'Queued…';
+      try {
+        const r = await fetch('/dashboard/cortex/run-now', { method: 'POST' });
+        const d = await r.json();
+        btn.textContent = d.ok ? '✓ Queued — reload in a moment' : (d.error || 'Error');
+      } catch (_) { btn.textContent = 'Error'; }
+      setTimeout(() => { btn.disabled = false; btn.textContent = t; }, 3500);
+    }
+    async function cortexRepowiseNow() {
+      const btn = event.target;
+      btn.disabled = true; const t = btn.textContent; btn.textContent = 'Running…';
+      try {
+        const r = await fetch('/dashboard/cortex/repowise-now', { method: 'POST' });
+        const d = await r.json();
+        btn.textContent = d.ok ? '✓ Started' : (d.error || 'Error');
+      } catch (_) { btn.textContent = 'Error'; }
+      setTimeout(() => { btn.disabled = false; btn.textContent = t; }, 5000);
+    }
+    async function installRepowise() {
+      const btn = event.target;
+      btn.disabled = true; const t = btn.textContent; btn.textContent = 'Installing… (up to ~3 min)';
+      try {
+        const r = await fetch('/dashboard/cortex/install-repowise', { method: 'POST' });
+        const d = await r.json();
+        if (d.ok) {
+          btn.textContent = '✓ Installed via ' + (d.summary && d.summary.via || 'pip');
+          setTimeout(() => location.reload(), 1500);
+        } else {
+          btn.textContent = '✗ Failed — see server log';
+        }
+      } catch (_) { btn.textContent = 'Error'; }
+      setTimeout(() => { btn.disabled = false; btn.textContent = t; }, 8000);
     }
   </script>
   ${BASE_SCRIPT}
@@ -3834,6 +4175,10 @@ function renderSettings(vals, flash) {
                 <input type="checkbox" id="bk-inc-agentmem" ${kb.basicMemFiles === 0 ? '' : 'checked'}>
                 Agent memory store — basic-memory MCP (${kb.basicMemFiles})
               </label>`}
+              <label class="bk-inc-lbl">
+                <input type="checkbox" id="bk-inc-cortex" ${kb.cortexFiles === 0 ? '' : 'checked'}>
+                Cortex — intelligence layer (${kb.cortexFiles})
+              </label>
             </div>
 
             <button type="button" class="btn-export" onclick="downloadKbBackup()" ${!kb.kbExists && kb.sessionFiles === 0 && kb.reportFiles === 0 && kb.serverFiles === 0 ? 'disabled' : ''}>
@@ -4354,6 +4699,70 @@ function renderSettings(vals, flash) {
         </div>
       </details>
 
+      <!-- Cortex — Intelligence Layer -->
+      <details class="s-section" id="cortex" open>
+        <summary>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2z"/></svg>
+          Cortex — Intelligence Layer
+          <span class="s-opt">Optional</span>
+          <span class="s-chevron">›</span>
+        </summary>
+        <div class="s-body">
+          <div class="s-field span2">
+            <div class="s-hint" style="margin-top:0">
+              Always-on, self-updating intelligence layer that sits on top of the KB.
+              When enabled, the cortex worker watches the KB for changes (debounced) and
+              synthesises a curated set of fact files at <code>~/.prevoyant/cortex/facts/*.md</code>
+              that AI agents reference in Step 0 of the dev skill — instead of re-reading
+              the full KB every session. Optionally augmented by
+              <a href="https://github.com/repowise-dev/repowise" target="_blank" rel="noopener">repowise</a>
+              for a codebase dependency graph + auto-generated wiki.
+              <strong>View accumulated knowledge:</strong> <a href="/dashboard/cortex">→ Cortex page</a>.
+            </div>
+          </div>
+          ${fld('PRX_CORTEX_ENABLED','Enable Cortex','select',v('PRX_CORTEX_ENABLED') || 'N','','Starts the always-on cortex worker.',
+            [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
+          ${fld('PRX_CORTEX_DEBOUNCE_SECS','KB-change debounce (secs)','number',v('PRX_CORTEX_DEBOUNCE_SECS'),'30','How long to wait after the last KB change before re-synthesising. Default: 30.')}
+          ${fld('PRX_CORTEX_RESYNC_HOURS','Heartbeat resync (hours)','text',v('PRX_CORTEX_RESYNC_HOURS'),'6','Periodic resync interval as a safety net if fs.watch misses a change. Default: 6.')}
+
+          <div class="s-field span2" style="margin-top:.6rem">
+            <div class="s-hint" style="margin-top:0;border-top:1px dashed #d1d5db;padding-top:.7rem">
+              <strong>Repowise integration</strong> — runs <code>repowise update</code> on a schedule to refresh
+              the dependency graph + wiki. Requires Python 3.11+; you can install it from the Cortex page.
+            </div>
+          </div>
+          ${fld('PRX_REPOWISE_ENABLED','Enable repowise','select',v('PRX_REPOWISE_ENABLED') || 'N','','Run repowise updates as part of cortex synthesis.',
+            [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
+          ${fld('PRX_REPOWISE_INTERVAL_DAYS','Repowise run interval (days)','text',v('PRX_REPOWISE_INTERVAL_DAYS'),'1','How often to run repowise. Fractional values supported. Default: 1.')}
+          ${fld('PRX_REPOWISE_PATH','Repowise binary path','text',v('PRX_REPOWISE_PATH'),'repowise','Override the command/path used to invoke repowise. Default: `repowise` on PATH.')}
+          ${fld('PRX_REPOWISE_AUTO_INSTALL','Auto-install on session start','select',v('PRX_REPOWISE_AUTO_INSTALL') || 'N','','If Y, the plugin SessionStart hook will run the cross-platform installer if repowise is missing.',
+            [{v:'N',l:'N — manual install (default)'},{v:'Y',l:'Y — auto-install'}])}
+        </div>
+      </details>
+
+      <!-- Conflict Checker (Co-Change Index tuning) -->
+      <details class="s-section" id="conflict-checker">
+        <summary>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12h4l3-9 4 18 3-9h4"/></svg>
+          Conflict Checker — Co-Change Tuning
+          <span class="s-opt">Optional</span>
+          <span class="s-chevron">›</span>
+        </summary>
+        <div class="s-body">
+          <div class="s-field span2">
+            <div class="s-hint" style="margin-top:0">
+              The conflict checker runs on every ticket enqueue. Direct file-overlap is always
+              checked; in addition, a co-change pass mines <code>git log</code> in <code>PRX_REPO_DIR</code>
+              to surface <strong>silent conflicts</strong> — files that don't directly overlap but
+              historically change together. The co-change index is cached at
+              <code>~/.prevoyant/server/co-change-cache.json</code>.
+            </div>
+          </div>
+          ${fld('PRX_COCHANGE_WINDOW_DAYS','History window (days)','number',v('PRX_COCHANGE_WINDOW_DAYS'),'180','How many days of git history to mine for co-change pairs. Default: 180.')}
+          ${fld('PRX_COCHANGE_CACHE_TTL_DAYS','Cache TTL (days)','number',v('PRX_COCHANGE_CACHE_TTL_DAYS'),'7','Rebuild the cache when older than this many days. Default: 7.')}
+        </div>
+      </details>
+
       <!-- Decision-Outcome Linker -->
       <details class="s-section" id="decision-outcome">
         <summary>
@@ -4710,9 +5119,12 @@ function renderSettings(vals, flash) {
       const memory    = document.getElementById('bk-inc-memory').checked    ? '1' : '0';
       const agentmemEl = document.getElementById('bk-inc-agentmem');
       const agentmem  = agentmemEl && agentmemEl.checked ? '1' : '0';
+      const cortexEl  = document.getElementById('bk-inc-cortex');
+      const cortex    = cortexEl && cortexEl.checked ? '1' : '0';
       window.location.href = '/dashboard/kb/export?sessions=' + sessions +
         '&reports=' + reports + '&server=' + server +
-        '&watchlogs=' + watchlogs + '&memory=' + memory + '&agentmem=' + agentmem;
+        '&watchlogs=' + watchlogs + '&memory=' + memory + '&agentmem=' + agentmem +
+        '&cortex=' + cortex;
     }
 
     function importKbBackup() {
@@ -5344,6 +5756,70 @@ router.get('/disk', (req, res) => {
   res.send(renderDisk(readDiskStatus(), readDiskLog(), req.query.cleaned === '1' ? 'cleaned' : null));
 });
 
+// ── Cortex — the always-on intelligence layer ────────────────────────────────
+router.get('/cortex', (_req, res) => {
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(renderCortex());
+});
+
+router.post('/cortex/run-now', express.json(), (_req, res) => {
+  if (process.env.PRX_CORTEX_ENABLED !== 'Y') {
+    return res.status(400).json({ ok: false, error: 'Cortex is not enabled' });
+  }
+  serverEvents.emit('cortex-run-now');
+  res.json({ ok: true });
+});
+
+router.post('/cortex/repowise-now', express.json(), (_req, res) => {
+  if (process.env.PRX_CORTEX_ENABLED !== 'Y') {
+    return res.status(400).json({ ok: false, error: 'Cortex is not enabled' });
+  }
+  if (process.env.PRX_REPOWISE_ENABLED !== 'Y') {
+    return res.status(400).json({ ok: false, error: 'Repowise integration is not enabled' });
+  }
+  serverEvents.emit('cortex-repowise-now');
+  res.json({ ok: true });
+});
+
+// Cross-platform repowise installer (pipx → uv → pip user — auto-detected).
+// Used by the "Install repowise" button on the Cortex page.  The hard work
+// is in plugin/install/install-repowise.js — this route just spawns Node on
+// it and streams the last JSON line back to the client.
+router.post('/cortex/install-repowise', express.json(), (req, res) => {
+  const { spawnSync } = require('child_process');
+  // The plugin's install script may be reachable either under CLAUDE_PLUGIN_ROOT
+  // (when invoked from a Claude Code session) or under the repo's plugin dir
+  // (when running prevoyant-server locally).  Try both.
+  const candidates = [
+    process.env.CLAUDE_PLUGIN_ROOT && path.join(process.env.CLAUDE_PLUGIN_ROOT, 'install', 'install-repowise.js'),
+    path.join(__dirname, '..', '..', 'plugin', 'install', 'install-repowise.js'),
+  ].filter(Boolean);
+
+  const script = candidates.find(p => fs.existsSync(p));
+  if (!script) {
+    return res.status(500).json({ ok: false, error: 'install-repowise.js not found — plugin layout broken?' });
+  }
+
+  const r = spawnSync(process.execPath, [script], {
+    encoding: 'utf8',
+    timeout: 10 * 60_000,
+    stdio:   ['ignore', 'pipe', 'pipe'],
+  });
+
+  // Last JSON line is the installer's machine-readable summary.
+  const stdout = (r.stdout || '').toString();
+  const lastLine = stdout.trim().split('\n').reverse().find(l => l.startsWith('{'));
+  let summary = null;
+  if (lastLine) { try { summary = JSON.parse(lastLine); } catch (_) {} }
+
+  res.json({
+    ok:       r.status === 0 && summary?.success,
+    summary:  summary,
+    stdout:   stdout.slice(-4000),
+    stderr:   (r.stderr || '').toString().slice(-4000),
+  });
+});
+
 router.get('/disk/json', (_req, res) => {
   res.json({ status: readDiskStatus(), log: readDiskLog().slice(-100) });
 });
@@ -5602,6 +6078,7 @@ router.get('/kb/export', (req, res) => {
   const includeWatchLogs = req.query.watchlogs === '1';
   const includeMemory    = req.query.memory    === '1';
   const includeAgentMem  = req.query.agentmem  === '1';
+  const includeCortex    = req.query.cortex    === '1';
 
   const kb = kbStats();
   const dirs = [];
@@ -5612,6 +6089,7 @@ router.get('/kb/export', (req, res) => {
   if (includeServer    && kb.serverFiles   > 0)                                 dirs.push(kb.serverDir);
   if (includeWatchLogs && kb.watchLogFiles > 0)                                 dirs.push(kb.watchLogs);
   if (includeMemory    && kb.memoryFiles   > 0)                                 dirs.push(kb.memoryDir);
+  if (includeCortex    && kb.cortexFiles   > 0)                                 dirs.push(kb.cortexDir);
 
   const validDirs = dirs.filter(d => fs.existsSync(d));
   if (validDirs.length === 0) return res.status(404).send('No files found to export.');
@@ -6014,6 +6492,8 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'PRX_STALE_BRANCH_ENABLED', 'PRX_STALE_BRANCH_DAYS', 'PRX_STALE_BRANCH_INTERVAL_DAYS',
     'PRX_DECISION_OUTCOME_ENABLED', 'PRX_DECISION_OUTCOME_INTERVAL_DAYS', 'PRX_DECISION_OUTCOME_LOOKBACK_DAYS', 'PRX_DECISION_OUTCOME_MIN_EVIDENCE',
     'PRX_COCHANGE_WINDOW_DAYS', 'PRX_COCHANGE_CACHE_TTL_DAYS',
+    'PRX_CORTEX_ENABLED', 'PRX_CORTEX_DEBOUNCE_SECS', 'PRX_CORTEX_RESYNC_HOURS',
+    'PRX_REPOWISE_ENABLED', 'PRX_REPOWISE_INTERVAL_DAYS', 'PRX_REPOWISE_PATH', 'PRX_REPOWISE_AUTO_INSTALL',
     'PRX_WASENDER_ENABLED', 'PRX_WASENDER_API_KEY', 'PRX_WASENDER_TO',
     'PRX_WASENDER_PUBLIC_URL', 'PRX_WASENDER_EVENTS', 'PRX_WASENDER_PDF_PASSWORD',
     'PRX_HERMES_ENABLED', 'PRX_HERMES_GATEWAY_URL', 'PRX_HERMES_SECRET', 'PRX_HERMES_JIRA_WRITEBACK',
