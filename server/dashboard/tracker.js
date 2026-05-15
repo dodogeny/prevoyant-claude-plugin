@@ -429,7 +429,24 @@ function getScheduledTickets() {
 function deleteTicket(ticketKey) {
   tickets.delete(ticketKey);
   try { fs.unlinkSync(path.join(sessionsDir(), `${ticketKey}-session.json`)); } catch (_) {}
-  activityLog.record('ticket_deleted', ticketKey, 'user', {});
+
+  // Also delete any PDF/HTML reports on disk.  Without this the next
+  // getStats() call rebuilds a synthetic ticket entry from scanReportsDir()
+  // and the row re-appears under "Processed Tickets" — making the delete
+  // button look broken.
+  let reportsDeleted = 0;
+  try {
+    for (const file of findReportFiles(ticketKey)) {
+      try { fs.unlinkSync(file); reportsDeleted++; } catch (_) {}
+    }
+  } catch (_) {}
+
+  // Invalidate the 15-second scan cache so the dashboard reflects the
+  // deletion immediately on the next render.
+  _scanCache    = null;
+  _scanCachedAt = 0;
+
+  activityLog.record('ticket_deleted', ticketKey, 'user', { reportsDeleted });
 }
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
