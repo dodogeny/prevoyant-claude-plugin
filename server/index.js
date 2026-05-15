@@ -58,6 +58,7 @@ let kbFlowAnalystWorker     = null;
 let patternMinerWorker      = null;
 let kbStalenessWorker       = null;
 let staleBranchWorker       = null;
+let decisionOutcomeWorker   = null;
 let hermesNotifierActive    = false;
 
 function startWatchdog() {
@@ -424,8 +425,50 @@ function stopStaleBranchDetector() {
   }
 }
 
-process.on('SIGTERM', () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); stopKbFlowAnalyst(); stopPatternMiner(); stopKbStaleness(); stopStaleBranchDetector(); setTimeout(() => process.exit(0), 600); });
-process.on('SIGINT',  () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); stopKbFlowAnalyst(); stopPatternMiner(); stopKbStaleness(); stopStaleBranchDetector(); setTimeout(() => process.exit(0), 600); });
+function startDecisionOutcome() {
+  if (process.env.PRX_DECISION_OUTCOME_ENABLED !== 'Y') return;
+  if (decisionOutcomeWorker) return;
+  decisionOutcomeWorker = new Worker(
+    path.join(__dirname, 'workers', 'decisionOutcomeWorker.js'),
+    { workerData: {} }
+  );
+  decisionOutcomeWorker.on('message', msg => {
+    if (!msg) return;
+    if (msg.type === 'log') return;
+    if (msg.type === 'decisions-reviewed') {
+      activityLog.record('decisions_reviewed', null, 'system', {
+        decisionsScanned: msg.decisionsScanned,
+        retrosScanned:    msg.retrosScanned,
+        confirmed:        msg.confirmed,
+        contradicted:     msg.contradicted,
+        pending:          msg.pending,
+      });
+      if (msg.contradicted > 0) {
+        console.warn(`[decision-outcome] ⚠️  ${msg.contradicted} decision(s) flagged CONTRADICTED — see decision-outcomes.md`);
+      }
+    }
+  });
+  decisionOutcomeWorker.on('error', err =>
+    console.error('[decision-outcome] Worker error:', err.message)
+  );
+  decisionOutcomeWorker.on('exit', code => {
+    decisionOutcomeWorker = null;
+    if (code !== 0) console.error(`[decision-outcome] Worker exited with code ${code}`);
+  });
+  const interval = process.env.PRX_DECISION_OUTCOME_INTERVAL_DAYS || '7';
+  const lookback = process.env.PRX_DECISION_OUTCOME_LOOKBACK_DAYS || '90';
+  console.log(`[prevoyant-server] Decision-Outcome Linker active — every ${interval} day(s), ${lookback}d retro lookback`);
+}
+
+function stopDecisionOutcome() {
+  if (decisionOutcomeWorker) {
+    decisionOutcomeWorker.postMessage({ type: 'graceful-stop' });
+    decisionOutcomeWorker = null;
+  }
+}
+
+process.on('SIGTERM', () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); stopKbFlowAnalyst(); stopPatternMiner(); stopKbStaleness(); stopStaleBranchDetector(); stopDecisionOutcome(); setTimeout(() => process.exit(0), 600); });
+process.on('SIGINT',  () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); stopKbFlowAnalyst(); stopPatternMiner(); stopKbStaleness(); stopStaleBranchDetector(); stopDecisionOutcome(); setTimeout(() => process.exit(0), 600); });
 
 // Reactively start/stop workers when settings are saved from the dashboard.
 // This avoids requiring a full server restart for monitor enable/disable toggles.
@@ -439,6 +482,7 @@ serverEvents.on('settings-saved', () => {
   const patternMinerOn     = process.env.PRX_PATTERN_MINER_ENABLED      === 'Y';
   const stalenessOn        = process.env.PRX_STALENESS_ENABLED          === 'Y';
   const staleBranchOn      = process.env.PRX_STALE_BRANCH_ENABLED       === 'Y';
+  const decisionOutcomeOn  = process.env.PRX_DECISION_OUTCOME_ENABLED   === 'Y';
 
   if (diskEnabled && !diskWorker)                         startDiskMonitor();
   if (!diskEnabled && diskWorker)                         stopDiskMonitor();
@@ -456,6 +500,8 @@ serverEvents.on('settings-saved', () => {
   if (!stalenessOn && kbStalenessWorker)                 stopKbStaleness();
   if (staleBranchOn && !staleBranchWorker)               startStaleBranchDetector();
   if (!staleBranchOn && staleBranchWorker)               stopStaleBranchDetector();
+  if (decisionOutcomeOn && !decisionOutcomeWorker)       startDecisionOutcome();
+  if (!decisionOutcomeOn && decisionOutcomeWorker)       stopDecisionOutcome();
 
   // Hermes: skill install + gateway start/stop can happen without restart.
   // Route registration (/jira-events vs /internal/enqueue) still needs restart.
@@ -498,6 +544,10 @@ serverEvents.on('stale-branch-run-now', () => {
   if (staleBranchWorker)    staleBranchWorker.postMessage({ type: 'run-now' });
 });
 
+serverEvents.on('decision-outcome-run-now', () => {
+  if (decisionOutcomeWorker) decisionOutcomeWorker.postMessage({ type: 'run-now' });
+});
+
 // ── Server listen ─────────────────────────────────────────────────────────────
 
 app.listen(config.port, () => {
@@ -526,6 +576,7 @@ app.listen(config.port, () => {
   startPatternMiner();
   startKbStaleness();
   startStaleBranchDetector();
+  startDecisionOutcome();
 
   // Config-coherence warnings — logged once at startup so they surface in logs
   // without requiring the user to open the settings page.

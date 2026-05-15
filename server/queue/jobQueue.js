@@ -1,5 +1,6 @@
 'use strict';
 
+const path = require('path');
 const { runClaudeAnalysis, killProcess } = require('../runner/claudeRunner');
 const tracker      = require('../dashboard/tracker');
 const activityLog  = require('../dashboard/activityLog');
@@ -38,7 +39,7 @@ function enqueue(ticketKey, mode = 'dev', priority = 'normal', meta = {}) {
   try {
     const result = checkConflicts(ticketKey);
     if (result) {
-      for (const { ticketKey: activeKey, overlappingFiles } of result.conflicts) {
+      for (const { ticketKey: activeKey, overlappingFiles } of (result.conflicts || [])) {
         const msg =
           `[conflict-checker] ⚠️  ${ticketKey} overlaps with in-progress ${activeKey} ` +
           `on ${overlappingFiles.length} file(s): ${overlappingFiles.slice(0, 3).join(', ')}` +
@@ -48,6 +49,27 @@ function enqueue(ticketKey, mode = 'dev', priority = 'normal', meta = {}) {
           conflictsWith:    activeKey,
           overlappingFiles,
           fileCount:        overlappingFiles.length,
+        });
+      }
+      // Silent / predicted conflicts — files don't directly overlap but
+      // historically co-change with the other ticket's files.
+      for (const { ticketKey: activeKey, predictedConflicts } of (result.silentConflicts || [])) {
+        const top = predictedConflicts.slice(0, 3)
+          .map(p => `${path.basename(p.newFile)}↔${path.basename(p.activeFile)} (${p.count}× / ${Math.round(p.ratio * 100)}%)`);
+        const msg =
+          `[conflict-checker] ⚠️  Silent conflict — ${ticketKey} files historically co-change with ` +
+          `in-progress ${activeKey}: ${top.join(', ')}` +
+          (predictedConflicts.length > 3 ? ` …+${predictedConflicts.length - 3} more` : '');
+        console.warn(msg);
+        activityLog.record('silent_conflict_warning', ticketKey, 'system', {
+          conflictsWith:    activeKey,
+          pairCount:        predictedConflicts.length,
+          topPairs:         predictedConflicts.slice(0, 5).map(p => ({
+            newFile:    p.newFile,
+            activeFile: p.activeFile,
+            count:      p.count,
+            ratio:      p.ratio,
+          })),
         });
       }
     }

@@ -1930,7 +1930,9 @@ const EVENT_DISPLAY = {
   hermes_result_sent:    { label: 'Hermes Result Sent',     bg: '#ede9fe', color: '#5b21b6' },
   hermes_jira_comment:   { label: 'Hermes Jira Comment',    bg: '#fef3c7', color: '#92400e' },
   merge_conflict_warning:  { label: 'Merge Conflict Warning', bg: '#fee2e2', color: '#991b1b' },
+  silent_conflict_warning: { label: 'Silent Conflict (co-change)', bg: '#fef3c7', color: '#92400e' },
   stale_branches_scanned:  { label: 'Stale Branches Scan',    bg: '#fef3c7', color: '#92400e' },
+  decisions_reviewed:      { label: 'Decisions Reviewed',     bg: '#eff6ff', color: '#1d4ed8' },
 };
 
 const ACTOR_STYLE = {
@@ -4352,6 +4354,39 @@ function renderSettings(vals, flash) {
         </div>
       </details>
 
+      <!-- Decision-Outcome Linker -->
+      <details class="s-section" id="decision-outcome">
+        <summary>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+          Decision-Outcome Linker
+          <span class="s-opt">Optional</span>
+          <span class="s-chevron">›</span>
+        </summary>
+        <div class="s-body">
+          <div class="s-field span2">
+            <div class="s-hint" style="margin-top:0">
+              Background worker that joins KB decision entries (<code>shared/decisions.md</code>,
+              <code>shared/skill-changelog.md</code>, <code>lessons-learned/*.md</code>) against
+              recent agent retros and grades each decision <code>CONFIRMED</code>,
+              <code>CONTRADICTED</code>, or <code>PENDING</code>. Proposals are written to
+              <code>~/.prevoyant/knowledge-buildup/decision-outcomes.md</code> for review —
+              nothing is written to the KB directly.
+            </div>
+          </div>
+          ${fld('PRX_DECISION_OUTCOME_ENABLED','Enable Decision-Outcome Linker','select',v('PRX_DECISION_OUTCOME_ENABLED') || 'N','','Starts the Decision-Outcome Linker background worker.',
+            [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
+          ${fld('PRX_DECISION_OUTCOME_INTERVAL_DAYS','Run interval (days)','text',v('PRX_DECISION_OUTCOME_INTERVAL_DAYS'),'7','Days between scan runs. Fractional values supported. Default: 7.')}
+          ${fld('PRX_DECISION_OUTCOME_LOOKBACK_DAYS','Retro lookback (days)','number',v('PRX_DECISION_OUTCOME_LOOKBACK_DAYS'),'90','Only consider retros modified within this many days. Default: 90.')}
+          ${fld('PRX_DECISION_OUTCOME_MIN_EVIDENCE','Min confirmations for CONFIRMED','number',v('PRX_DECISION_OUTCOME_MIN_EVIDENCE'),'2','Minimum confirmation count required to grade a decision as CONFIRMED (with zero contradictions). Default: 2.')}
+          <div class="s-field span2" style="margin-top:4px">
+            <button type="button" onclick="decisionOutcomeRunNow()"
+              style="font-size:11px;padding:3px 12px;border:1px solid #6366f1;border-radius:6px;background:#eef2ff;color:#4338ca;cursor:pointer">
+              ▶ Run now
+            </button>
+          </div>
+        </div>
+      </details>
+
       <!-- Stale Branch Detector -->
       <details class="s-section" id="stale-branch">
         <summary>
@@ -4589,6 +4624,25 @@ function renderSettings(vals, flash) {
       btn.disabled = true; btn.textContent = 'Queued…';
       try {
         const r = await fetch('/dashboard/settings/staleness/run-now', { method: 'POST' });
+        const d = await r.json();
+        btn.textContent = d.ok ? '✓ Queued' : (d.error || 'Error');
+        btn.style.background = d.ok ? '#dcfce7' : '#fee2e2';
+        btn.style.borderColor = d.ok ? '#86efac' : '#fca5a5';
+        btn.style.color       = d.ok ? '#166534' : '#991b1b';
+      } catch (_) {
+        btn.textContent = 'Error';
+      }
+      setTimeout(() => {
+        btn.disabled = false; btn.textContent = '▶ Run now';
+        btn.style.background = ''; btn.style.borderColor = ''; btn.style.color = '';
+      }, 4000);
+    }
+
+    async function decisionOutcomeRunNow() {
+      const btn = event.target;
+      btn.disabled = true; btn.textContent = 'Queued…';
+      try {
+        const r = await fetch('/dashboard/settings/decision-outcome/run-now', { method: 'POST' });
         const d = await r.json();
         btn.textContent = d.ok ? '✓ Queued' : (d.error || 'Error');
         btn.style.background = d.ok ? '#dcfce7' : '#fee2e2';
@@ -5958,6 +6012,8 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'PRX_PATTERN_MINER_ENABLED', 'PRX_PATTERN_MINER_INTERVAL_DAYS', 'PRX_PATTERN_MINER_MIN_TICKETS', 'PRX_PATTERN_MINER_MAX_PROPOSALS',
     'PRX_STALENESS_ENABLED', 'PRX_STALENESS_INTERVAL_DAYS',
     'PRX_STALE_BRANCH_ENABLED', 'PRX_STALE_BRANCH_DAYS', 'PRX_STALE_BRANCH_INTERVAL_DAYS',
+    'PRX_DECISION_OUTCOME_ENABLED', 'PRX_DECISION_OUTCOME_INTERVAL_DAYS', 'PRX_DECISION_OUTCOME_LOOKBACK_DAYS', 'PRX_DECISION_OUTCOME_MIN_EVIDENCE',
+    'PRX_COCHANGE_WINDOW_DAYS', 'PRX_COCHANGE_CACHE_TTL_DAYS',
     'PRX_WASENDER_ENABLED', 'PRX_WASENDER_API_KEY', 'PRX_WASENDER_TO',
     'PRX_WASENDER_PUBLIC_URL', 'PRX_WASENDER_EVENTS', 'PRX_WASENDER_PDF_PASSWORD',
     'PRX_HERMES_ENABLED', 'PRX_HERMES_GATEWAY_URL', 'PRX_HERMES_SECRET', 'PRX_HERMES_JIRA_WRITEBACK',
@@ -7624,6 +7680,14 @@ router.post('/settings/stale-branch/run-now', express.json(), (_req, res) => {
     return res.status(400).json({ ok: false, error: 'Stale Branch Detector is not enabled' });
   }
   serverEvents.emit('stale-branch-run-now');
+  res.json({ ok: true });
+});
+
+router.post('/settings/decision-outcome/run-now', express.json(), (_req, res) => {
+  if (process.env.PRX_DECISION_OUTCOME_ENABLED !== 'Y') {
+    return res.status(400).json({ ok: false, error: 'Decision-Outcome Linker is not enabled' });
+  }
+  serverEvents.emit('decision-outcome-run-now');
   res.json({ ok: true });
 });
 

@@ -14,6 +14,8 @@ const fs   = require('fs');
 const os   = require('os');
 const path = require('path');
 
+const { predictSilentConflicts } = require('./coChangeIndex');
+
 // ── KB directory resolution ───────────────────────────────────────────────────
 
 function kbDir() {
@@ -112,7 +114,8 @@ function checkConflicts(newTicketKey) {
     return null;
   }
 
-  const conflicts = [];
+  const conflicts       = [];
+  const silentConflicts = [];
 
   for (const activeKey of activeKeys) {
     const activeFiles = extractFilesFromKbTicket(activeKey);
@@ -122,9 +125,20 @@ function checkConflicts(newTicketKey) {
     if (overlapping.length > 0) {
       conflicts.push({ ticketKey: activeKey, overlappingFiles: overlapping });
     }
+
+    // Silent-conflict prediction: files that don't directly overlap but
+    // historically co-change with files on the other side.  Failures here are
+    // swallowed — the predictor is best-effort and must never block enqueue.
+    try {
+      const predicted = predictSilentConflicts([...newFiles], [...activeFiles]);
+      if (predicted.length > 0) {
+        silentConflicts.push({ ticketKey: activeKey, predictedConflicts: predicted });
+      }
+    } catch (_) { /* index unavailable — skip silently */ }
   }
 
-  return conflicts.length > 0 ? { conflicts } : null;
+  if (conflicts.length === 0 && silentConflicts.length === 0) return null;
+  return { conflicts, silentConflicts };
 }
 
 module.exports = { checkConflicts };

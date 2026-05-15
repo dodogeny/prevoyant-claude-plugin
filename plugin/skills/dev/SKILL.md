@@ -1,7 +1,7 @@
 ---
 name: dev
 description: "\"Structured Jira-driven developer workflow skill. Supports two modes — (1) Dev mode: use when a developer provides a Jira ticket URL or ticket key (e.g. PROJ-1234) and wants to start development work; handles the full workflow from reading the Jira ticket to proposing a code fix. (2) PR Review mode: use when a developer wants to review code changes for a Jira ticket; analyses the ticket context plus all code changes on the associated feature branch, then outputs findings and recommendations as a PDF report.\""
-version: 1.3.1
+version: 1.4.0
 ---
 
 # Dev Workflow Skill
@@ -23,6 +23,7 @@ Full end-to-end developer workflow for Jira tickets. Guides Claude through readi
 | SC-008 | v1.3.0 | 2026-05-15 | — | Feature | Step 14c-ii: Cross-ticket pattern synthesis pass in Bryan's retrospective | ACTIVE |
 | SC-009 | v1.3.1 | 2026-05-15 | — | Feature | Step E0-b: Jira cycle time query surfaces P50/P90 throughput anchor before Planning Poker | ACTIVE |
 | SC-010 | v1.3.1 | 2026-05-15 | — | Feature | Step E2-a: Dependency graph scoring feeds Jordan's Risk dimension vote directly | ACTIVE |
+| SC-011 | v1.4.0 | 2026-05-15 | — | Feature | Step 5: Fragility score column (Muninn-style weighted composite) injected into the file map | ACTIVE |
 
 ## Configuration
 
@@ -2139,16 +2140,43 @@ Use the ticket **Labels** and **Components** as hints:
 - `Plugin`/`Worker` → `fcplugin/src/main/java/com/fc/plugin/`
 - DB changes → `fcbuild/scripts/upgrades/`
 
-Present a **file map** — list each file with its role, the specific method or line range identified, and recent git history for primary files:
+Present a **file map** — list each file with its role, fragility score, the specific method or line range identified, and recent git history for primary files:
 
-| File | Role | Key Location | Recent Git History |
-|------|------|-------------|-------------------|
-| `fcfrontend/.../CaseManager.java` | Primary fix target | `resolveCase():2272` | Last modified: 3 days ago by Javed — "IV-3641 fix alert sync" |
+| File | Role | Fragility | Key Location | Recent Git History |
+|------|------|-----------|-------------|-------------------|
+| `fcfrontend/.../CaseManager.java` | Primary fix target | `0.74 HIGH` (no test, fix-commits=8, velocity=21/90d) | `resolveCase():2272` | Last modified: 3 days ago by Javed — "IV-3641 fix alert sync" |
 
 To populate the Recent Git History column, run:
 ```bash
 git log --oneline -3 -- {file_path}
 ```
+
+**Fragility score (computed per file):** A 0.00–1.00 composite borrowed from Muninn's pre-edit context model. Combines six signals with fixed weights — dependents (0.25), coverage gap (0.20), error history (0.20), change velocity (0.15), complexity (0.10), export surface (0.10). Bands: `< 0.30 LOW`, `< 0.65 MED`, `≥ 0.65 HIGH`. A score ≥ 0.65 means **the panel must treat this file with extra care** — surface the breakdown to engineers in Step 7b.
+
+Run the helper (from any cwd inside the project repo):
+
+```bash
+node "$CLAUDE_PROJECT_DIR/server/runner/fragilityScore.js" \
+  --repo "$REPO_DIR" \
+  --file "{primary_file}" \
+  --files "{secondary_file_1},{secondary_file_2}" \
+  --testRoots "fcfrontend/src/test,fcbackend/src/test" \
+  --json
+```
+
+Output JSON shape per file:
+```json
+{
+  "score": 0.74,
+  "band": "HIGH",
+  "breakdown": { "dependents": 0.6, "coverage_gap": 1, "error_history": 0.5, "velocity": 0.7, "complexity": 0.4, "exports": 0.3 },
+  "raw":       { "dependents": 12, "coverage_gap": 1, "error_history": 8, "velocity": 21, "complexity_loc": 540, "exports": 9 }
+}
+```
+
+Render the Fragility column as `{score} {BAND} ({1–2 dominant raw signals})`. Pick the two raw signals with the highest normalised contribution to keep the column scannable — full breakdown stays in the JSON for the panel's reference. If the helper is unavailable (no Node, or the repo has no `.git`), write `Fragility: n/a` and proceed; do not block on this signal.
+
+Emit `[KB+ RISK]` for any primary file scoring `HIGH`. Riley uses this in the **7-pre Test Suite Signal** to amplify her coverage warning — a HIGH-band file with `coverage_gap=1` is the strongest possible "danger here" signal she can give the panel.
 
 **Git blame injection (primary file only):** After locating the key method via Pass 1–3, run `git blame` on the affected line range and inject it into the file map for the primary fix target. This surfaces who changed each line, when, and under which commit — giving the panel richer causal context for root cause analysis:
 
