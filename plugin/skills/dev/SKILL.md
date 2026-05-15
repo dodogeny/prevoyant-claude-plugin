@@ -579,6 +579,12 @@ trigger: {5–8 word memorable trigger phrase for INDEX.md Memory Palace}
 
 ## Related Tickets
 {list of linked tickets and relevance — or "None"}
+
+## Invalidations
+{Optional — present only if a prior fix on this ticket was reported broken in a later
+comment and re-derived in a follow-up session. Each entry records the date the prior
+fix was ruled out, the source comment, and the superseding session. See Step 13b for
+the entry format. Omit this section entirely if the ticket has never been invalidated.}
 ```
 
 ### Shared Knowledge Files Format
@@ -1788,6 +1794,9 @@ Include a summary in the Prior Knowledge block:
 │   Root cause : {root cause one-liner}                            │
 │   Files      : {primary files affected}                          │
 │   Lesson     : {lesson learned}                                  │
+│   ⚠️ Invalidated: {if the entry has ## Invalidations section,    │
+│                   show latest entry: "{date} — fix reported       │
+│                   broken; root cause must be re-derived"}         │
 │                                                                   │
 │ BUSINESS RULES (🔑 memorise these)                               │
 │ ─────────────────────────────────────────────────────────────────│
@@ -1858,7 +1867,8 @@ If Bitbucket cross-check skipped: note `Bitbucket: skipped — verify file:line 
 - **Step 2:** State explicitly whether KB entries confirm, extend, or contradict the ticket's problem description. If a business rule applies, name it.
 - **Step 5:** Check Core Mental Map `ref:` entries before grepping the codebase — known `file:line` anchors must be tried first. If a CMM entry contradicts live code, flag it for Step 13g correction.
 - **Step 7:** Morgan must open the investigation by explicitly stating which KB history items (if any) inform the root cause direction. "KB prior knowledge not applicable" is a valid statement — but silence is not.
-- **Step 8:** If a KB pattern or proven fix exists for this type of problem, build on it. State why you are deviating if you choose a different approach.
+- **Step 7 — Prior fix status:** If Step 3 emitted `[KB- FIX-INVALIDATED]`, Morgan must open the briefing by naming the ruled-out hypothesis and instructing the engineers to start root cause analysis **without** anchoring to it. The invalidated fix is negative evidence (this is *not* the cause) — engineers may not propose the same mechanism again unless they produce new evidence that directly contradicts the post-fix observation that falsified it. If Step 3 emitted `[KB? FIX-UNCERTAIN]`, Morgan must state how the panel will treat the uncertainty before adopting any direction (e.g. "we will investigate as if the prior fix holds but require Sam to cross-check the post-fix counter-evidence in Step 7c") and note this in the Root Cause Statement team note.
+- **Step 8:** If a KB pattern or proven fix exists for this type of problem, build on it. State why you are deviating if you choose a different approach. **Exception:** any fix recorded in a ticket entry that has been invalidated for this ticket (per Step 3) is not a "proven fix" — do not build on it.
 - **Step 13g:** Any `[CMM+]` markers emitted during Steps 5/7/8/9 are written to the Core Mental Map. Every session must produce at minimum one `[CMM+ ... CONFIRM]` for each CMM entry read in Step 0b — confirming facts against live code is how the map stays accurate.
 
 **Compounding rule:** Each session must leave the KB and Core Mental Map in a more accurate or more complete state than it found them. A session that writes nothing — not even a confirmation — breaks the compounding chain.
@@ -2047,7 +2057,56 @@ If there are no comments, state: "No comments — proceed from description only.
 
 #### Prior Investigation Carry-Forward
 
-If any comments contain previous investigation work (root cause findings, code traces, attempted fixes, identified files, test results, or partial solutions), extract and explicitly carry these forward as **known context** for Steps 5, 7, and 8. Do not re-investigate what has already been established.
+If any comments contain previous investigation work (root cause findings, code traces, attempted fixes, identified files, test results, or partial solutions), extract and explicitly carry these forward as **known context** for Steps 5, 7, and 8. Do not re-investigate what has already been established — **unless** the carry-forward signal indicates a prior fix failed (see Fix Invalidation Detection below).
+
+##### Fix Invalidation Assessment
+
+This step runs **only when a prior ticket entry exists** at `{KNOWLEDGE_DIR}/tickets/{TICKET_KEY}.md` with a recorded `## Fix / Change Applied`. If no prior entry exists, skip the rest of this subsection and proceed directly to the Prior Investigation Summary.
+
+When a prior entry exists, the agent must make a **judgment call**: does the current state of the Jira ticket — particularly comments and status changes posted *after* the prior session's `date:` — indicate that the recorded fix did not address the issue? Do not match keywords. Read the comments, status transitions, and any attached evidence (screenshots, logs, reproduction steps in newer comments) and reason about whether the symptoms are consistent with the prior fix having worked.
+
+Apply the following reasoning procedure:
+
+1. **Locate the comparison window.** Read the `date:` field from `tickets/{TICKET_KEY}.md`. Treat every comment, status change, attachment, and Fix Version bump posted *after* that date as the post-fix evidence window. Anything before is the original investigation context.
+2. **Reconstruct the prior fix's expected outcome.** From the prior entry's `## Root Cause / Enhancement Statement` and `## Fix / Change Applied`, summarise in one sentence what behaviour the fix was supposed to produce (e.g. "after applying, resolving a case should close all linked alerts").
+3. **Read the post-fix evidence and judge.** Ask: do the post-fix comments describe behaviour that is **inconsistent** with the prior fix having worked? Look for things like:
+   - The reporter, QA, or another user reproducing the original symptom on a build that should already contain the fix
+   - The ticket being reopened, moved back to In Progress, or having its Fix Version cleared
+   - New comments describing a *variant* of the original symptom that the prior root cause statement would have predicted should not occur
+   - QA verification explicitly returning a failure or partial pass
+   - Silence is not invalidation — if the post-fix window contains no contradicting evidence, the fix is presumed to hold.
+4. **Decide.** Conclude one of:
+   - **HOLDS** — post-fix evidence is consistent with the fix working (or there is no post-fix evidence at all). Proceed with the prior fix as carry-forward.
+   - **INVALIDATED** — post-fix evidence shows the fix did not address the issue. Emit a marker (below).
+   - **AMBIGUOUS** — post-fix evidence is mixed or unclear (e.g. one comment reports the issue, another reports the fix as working). Do not auto-invalidate; instead emit an `[KB? FIX-UNCERTAIN]` marker and present both sides to the developer in interactive mode, or default to treating the prior fix as carry-forward in headless mode while explicitly flagging the ambiguity in the Prior Investigation Summary.
+
+5. **State your reasoning explicitly.** Whatever the conclusion, present a short rationale in the output — at minimum: which post-fix comment(s) drove the decision, and which specific claim in the prior fix they contradict (or fail to contradict). Do not produce a conclusion without naming the evidence behind it.
+
+When the decision is **INVALIDATED**, emit:
+
+```
+[KB- FIX-INVALIDATED] tickets/{TICKET_KEY}.md — prior fix from session dated {YYYY-MM-DD} no longer holds
+  Prior fix expected : {one-sentence expected outcome from step 2 above}
+  Contradicted by    : {comment date, author, and a brief paraphrase of what they reported}
+  Evidence reference : {comment ID or "comment N of M, posted {date}"}
+  Why this falsifies : {one sentence linking the post-fix observation to the prior root cause claim}
+  Action             : Demote — the prior root cause hypothesis is RULED OUT, not prior art.
+```
+
+When the decision is **AMBIGUOUS**, emit:
+
+```
+[KB? FIX-UNCERTAIN] tickets/{TICKET_KEY}.md — prior fix status unclear from post-fix comments
+  Supporting   : {comment(s) suggesting the fix worked}
+  Contradicting: {comment(s) suggesting the fix failed}
+  Recommendation: {one sentence — developer judgment requested in interactive mode}
+```
+
+These markers are picked up by Step 13b to record the assessment in the KB.
+
+**Crucial:** when one or more `[KB- FIX-INVALIDATED]` markers are emitted, the instruction *"Do not re-investigate what has already been established"* is **suspended for the invalidated hypothesis only**. The team must re-derive the root cause from current evidence; the previously-recorded fix is treated as a falsified hypothesis (useful negative information — "we know it is *not* this"), not as a starting point. `[KB? FIX-UNCERTAIN]` does **not** suspend the rule, but Step 7 must explicitly weigh the uncertainty when stating whether KB prior knowledge informs the root cause direction.
+
+##### Prior Investigation Summary
 
 Produce a **Prior Investigation Summary** block if applicable:
 
@@ -2057,10 +2116,18 @@ Prior Investigation Summary:
 - Files already identified: [list]
 - Attempted fixes: [what was tried and outcome]
 - Confirmed working / not working: [what was already validated]
+- Prior fix status: [one of:
+    "N/A — no prior fix recorded for this ticket."
+    "HOLDS — post-fix comments contain no contradicting evidence; prior fix presumed valid."
+    "⚠️ INVALIDATED — prior fix from {YYYY-MM-DD} session ruled out. {one-line: the contradicting
+     post-fix observation and why it falsifies the prior root cause}. Root cause must be re-derived
+     in Step 7; do not anchor to the prior hypothesis."
+    "❓ AMBIGUOUS — post-fix evidence is mixed. {one-line: what supports vs. what contradicts}.
+     Step 7 must weigh both sides; developer judgment requested in interactive mode."]
 - Remaining unknowns: [what is still unresolved]
 ```
 
-This summary must be referenced in Step 7 (Root Cause Analysis) and Step 8 (Propose the Fix) — build the solution on top of what is already known rather than starting from scratch.
+This summary must be referenced in Step 7 (Root Cause Analysis) and Step 8 (Propose the Fix) — build the solution on top of what is already known rather than starting from scratch, **except** when "Prior fix status" is INVALIDATED, in which case Step 7 must treat the prior root cause as a ruled-out hypothesis rather than carry-forward, or AMBIGUOUS, in which case Step 7 must explicitly state how the uncertainty is handled before adopting any direction.
 
 ---
 
@@ -4122,6 +4189,41 @@ If no new knowledge was found beyond what is already in the KB (e.g. this ticket
 #### 13b. Write the Ticket Entry
 
 Create or overwrite `{KNOWLEDGE_DIR}/tickets/{TICKET_KEY}.md` using the ticket entry format defined in the Knowledge Base section above. Populate every field — do not leave any section blank; use "None" if genuinely empty.
+
+**Fix invalidation handling (when `[KB-]` or `[KB?]` fix-status markers were emitted in Step 3):**
+
+The prior ticket entry on disk still has historical value (it records what was tried and why it failed) — do **not** delete its `## Root Cause / Enhancement Statement` or `## Fix / Change Applied` sections. Append (or extend) an `## Invalidations` section recording the assessment:
+
+When the marker was `[KB- FIX-INVALIDATED]`:
+
+```markdown
+## Invalidations
+- {YYYY-MM-DD} — Status: RULED OUT.
+  Prior fix expected : {expected outcome from the marker}
+  Contradicted by    : {comment date, author, paraphrased observation}
+  Why this falsifies : {one sentence from the marker}
+  Superseded by      : This session ({YYYY-MM-DD}) re-derived the root cause as {new one-liner}.
+  Files              : {new file:line if different from prior}
+```
+
+In this case, the new root cause from this session replaces `## Root Cause / Enhancement Statement` and `## Fix / Change Applied`, so the most recent block reflects current understanding. The `## Invalidations` history is preserved.
+
+When the marker was `[KB? FIX-UNCERTAIN]`:
+
+```markdown
+## Invalidations
+- {YYYY-MM-DD} — Status: AMBIGUOUS (no overwrite).
+  Supporting    : {one-line — what suggested the fix worked}
+  Contradicting : {one-line — what suggested the fix failed}
+  Resolution    : {one of: "developer confirmed prior fix holds — no changes" /
+                          "developer confirmed prior fix failed — new root cause adopted, see new
+                          INVALIDATED entry above" /
+                          "headless mode — no resolution reached; deferred to next session"}
+```
+
+In the AMBIGUOUS-without-resolution case, do **not** overwrite the prior `## Root Cause / Enhancement Statement` or `## Fix / Change Applied`. The ambiguity entry is the only KB record from this session for the fix sections — but Patterns, Risks, Architecture, etc., are still written as normal from this session's findings.
+
+If a ticket has been ruled INVALIDATED **two or more times**, Morgan must flag this in the Step 13 summary as `⚠️ RECURRENT FIX FAILURE — {TICKET_KEY}` so the team treats subsequent occurrences with elevated caution (likely a deeper architectural cause than the surface symptom suggests).
 
 #### 13c. Update Shared Files
 
