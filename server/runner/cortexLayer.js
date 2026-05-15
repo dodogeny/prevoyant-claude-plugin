@@ -17,14 +17,42 @@ const fs   = require('fs');
 const os   = require('os');
 const path = require('path');
 
-// Cortex lives outside the KB so that:
-//   - Distributed-mode KB sync (Upstash) never accidentally ships cortex files.
-//   - A user can delete and rebuild the cortex without touching the KB.
-const CORTEX_DIR    = path.join(os.homedir(), '.prevoyant', 'cortex');
-const FACTS_DIR     = path.join(CORTEX_DIR, 'facts');
-const REPOWISE_DIR  = path.join(CORTEX_DIR, 'repowise');
-const STATE_FILE    = path.join(CORTEX_DIR, 'state.json');
-const INDEX_FILE    = path.join(CORTEX_DIR, 'index.md');
+// Cortex storage modes (`PRX_CORTEX_DISTRIBUTED`):
+//
+//   N (default) — cortex lives at ~/.prevoyant/cortex/.  Per-machine, never
+//                 syncs anywhere.  Each dev's cortex is independently built.
+//
+//   Y           — cortex lives INSIDE the KB at <KB>/cortex/.  The standard
+//                 KB sync (git push or Upstash) ships cortex to other dev
+//                 machines automatically — so a new teammate's first session
+//                 sees the team's accumulated intelligence layer without
+//                 having to synthesise from scratch.  Merge conflicts are
+//                 possible if two devs synthesise on different KB heads; the
+//                 worker writes atomically (rename-after-tmp) so the loser
+//                 just overwrites, and the next KB-watch tick re-synthesises.
+//
+// Both modes preserve the same internal layout (facts/, repowise/, state.json,
+// index.md) — only the parent directory changes.
+const LOCAL_CORTEX_DIR = path.join(os.homedir(), '.prevoyant', 'cortex');
+
+function isDistributed() {
+  return (process.env.PRX_CORTEX_DISTRIBUTED || '').toUpperCase() === 'Y';
+}
+
+function kbDirForCortex() {
+  const mode = process.env.PRX_KB_MODE || 'local';
+  return mode === 'distributed'
+    ? (process.env.PRX_KB_LOCAL_CLONE || path.join(os.homedir(), '.prevoyant', 'kb'))
+    : (process.env.PRX_KNOWLEDGE_DIR  || path.join(os.homedir(), '.prevoyant', 'knowledge-base'));
+}
+
+function resolvedCortexDir() {
+  return isDistributed() ? path.join(kbDirForCortex(), 'cortex') : LOCAL_CORTEX_DIR;
+}
+
+// All paths are computed on every call so the worker, dashboard, and CLI
+// readers all respect a live toggle of PRX_CORTEX_DISTRIBUTED without
+// restart.  Cost: a couple of string joins.
 
 // Synthesised fact files — keep this list aligned with cortexWorker.js.
 const FACT_FILES = [
@@ -42,29 +70,30 @@ function isEnabled() {
   return (process.env.PRX_CORTEX_ENABLED || '').toUpperCase() === 'Y';
 }
 
-function cortexDir()   { return CORTEX_DIR; }
-function factsDir()    { return FACTS_DIR; }
-function repowiseDir() { return REPOWISE_DIR; }
-function stateFile()   { return STATE_FILE; }
-function indexFile()   { return INDEX_FILE; }
+function cortexDir()   { return resolvedCortexDir(); }
+function factsDir()    { return path.join(resolvedCortexDir(), 'facts'); }
+function repowiseDir() { return path.join(resolvedCortexDir(), 'repowise'); }
+function stateFile()   { return path.join(resolvedCortexDir(), 'state.json'); }
+function indexFile()   { return path.join(resolvedCortexDir(), 'index.md'); }
 
 function factFilePath(id) {
   const m = FACT_FILES.find(f => f.id === id);
-  return m ? path.join(FACTS_DIR, m.file) : null;
+  return m ? path.join(factsDir(), m.file) : null;
 }
 
 function listFactFiles() {
+  const dir = factsDir();
   return FACT_FILES.map(f => ({
     ...f,
-    path:    path.join(FACTS_DIR, f.file),
-    exists:  fs.existsSync(path.join(FACTS_DIR, f.file)),
+    path:    path.join(dir, f.file),
+    exists:  fs.existsSync(path.join(dir, f.file)),
   }));
 }
 
 // ── State ────────────────────────────────────────────────────────────────────
 
 function loadState() {
-  try { return JSON.parse(fs.readFileSync(STATE_FILE, 'utf8')); }
+  try { return JSON.parse(fs.readFileSync(stateFile(), 'utf8')); }
   catch (_) {
     return {
       enabled:           false,
@@ -73,23 +102,26 @@ function loadState() {
       synthesisCount:    0,
       repowiseAvailable: false,
       sources:           {},
+      distributed:       isDistributed(),
     };
   }
 }
 
 function saveState(state) {
   try {
-    fs.mkdirSync(CORTEX_DIR, { recursive: true });
-    fs.writeFileSync(STATE_FILE, JSON.stringify(state, null, 2), 'utf8');
+    fs.mkdirSync(resolvedCortexDir(), { recursive: true });
+    state.distributed = isDistributed();
+    fs.writeFileSync(stateFile(), JSON.stringify(state, null, 2), 'utf8');
   } catch (_) {}
 }
 
 // ── Stats (used by dashboard + backup route) ─────────────────────────────────
 
 function cortexStats() {
-  const exists = fs.existsSync(CORTEX_DIR);
+  const dir = resolvedCortexDir();
+  const exists = fs.existsSync(dir);
   if (!exists) {
-    return { exists: false, dir: CORTEX_DIR, fileCount: 0, sizeBytes: 0, factCount: 0 };
+    return { exists: false, dir, distributed: isDistributed(), fileCount: 0, sizeBytes: 0, factCount: 0 };
   }
 
   let fileCount = 0, sizeBytes = 0;
@@ -103,10 +135,10 @@ function cortexStats() {
         else { fileCount++; sizeBytes += st.size; }
       }
     } catch (_) {}
-  })(CORTEX_DIR);
+  })(dir);
 
   const factCount = listFactFiles().filter(f => f.exists).length;
-  return { exists: true, dir: CORTEX_DIR, fileCount, sizeBytes, factCount };
+  return { exists: true, dir, distributed: isDistributed(), fileCount, sizeBytes, factCount };
 }
 
 // ── Read helper (used by the dashboard page) ─────────────────────────────────
@@ -119,12 +151,13 @@ function readFactSafe(id) {
 }
 
 function readIndexSafe() {
-  try { return fs.readFileSync(INDEX_FILE, 'utf8'); }
+  try { return fs.readFileSync(indexFile(), 'utf8'); }
   catch (_) { return null; }
 }
 
 module.exports = {
   isEnabled,
+  isDistributed,
   cortexDir,
   factsDir,
   repowiseDir,

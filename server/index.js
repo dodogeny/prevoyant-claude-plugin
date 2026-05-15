@@ -482,6 +482,15 @@ function startCortex() {
       activityLog.record('cortex_synthesized', null, 'system', {
         factsWritten:      msg.factsWritten,
         repowiseAvailable: msg.repowiseAvailable,
+        distributed:       msg.distributed || false,
+      });
+    }
+    if (msg.type === 'repowise-ran') {
+      activityLog.record('repowise_ran', null, 'system', {
+        ok:     msg.ok,
+        mode:   msg.mode || null,        // 'init' on first run, 'update' after
+        reason: msg.reason || null,      // skip reason if !ok
+        durationMs: msg.durationMs || 0,
       });
     }
   });
@@ -490,16 +499,27 @@ function startCortex() {
   );
   cortexWorker.on('exit', code => {
     cortexWorker = null;
-    if (code !== 0) console.error(`[cortex] Worker exited with code ${code}`);
+    if (code !== 0) {
+      console.error(`[cortex] Worker exited with code ${code}`);
+      // Only log here for crashes — graceful stops are logged by stopCortex().
+      activityLog.record('cortex_stopped', null, 'system', { reason: 'crash', exitCode: code });
+    }
   });
   const repowise = process.env.PRX_REPOWISE_ENABLED === 'Y' ? 'on' : 'off';
-  console.log(`[prevoyant-server] Cortex active — KB-watch + repowise=${repowise} (always-on intelligence layer)`);
+  const distributed = process.env.PRX_CORTEX_DISTRIBUTED === 'Y';
+  console.log(`[prevoyant-server] Cortex active — KB-watch + repowise=${repowise} distributed=${distributed} (always-on intelligence layer)`);
+  activityLog.record('cortex_started', null, 'system', {
+    repowiseEnabled: process.env.PRX_REPOWISE_ENABLED === 'Y',
+    distributed,
+    debounceSecs:    parseInt(process.env.PRX_CORTEX_DEBOUNCE_SECS || '30', 10),
+  });
 }
 
 function stopCortex() {
   if (cortexWorker) {
     cortexWorker.postMessage({ type: 'graceful-stop' });
     cortexWorker = null;
+    activityLog.record('cortex_stopped', null, 'system', { reason: 'graceful' });
   }
 }
 

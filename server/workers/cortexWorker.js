@@ -105,14 +105,28 @@ function checkRepowise() {
 
 // Runs `repowise update` (or init on first run) against PRX_REPO_DIR.
 // Captures CLAUDE.md into the cortex repowise dir so downstream synthesis
-// can ingest it without depending on the source-repo tree.
+// can ingest it without depending on the source-repo tree.  Emits a
+// `repowise-ran` parent message so the dashboard activity log can track
+// when repowise actually runs (separately from synthesis passes).
 function runRepowise() {
-  if (!repowiseEnabled()) return { ok: false, skipped: 'disabled' };
+  const startedAt = Date.now();
+  const emit = (result) => {
+    if (parentPort) parentPort.postMessage({
+      type:       'repowise-ran',
+      ok:         !!result.ok,
+      mode:       result.mode || null,
+      reason:     result.skipped || result.error || null,
+      durationMs: Date.now() - startedAt,
+    });
+    return result;
+  };
+
+  if (!repowiseEnabled()) return emit({ ok: false, skipped: 'disabled' });
   if (!repoDir() || !fs.existsSync(path.join(repoDir(), '.git'))) {
-    return { ok: false, skipped: 'no-repo' };
+    return emit({ ok: false, skipped: 'no-repo' });
   }
   if (!checkRepowise()) {
-    return { ok: false, skipped: 'not-installed' };
+    return emit({ ok: false, skipped: 'not-installed' });
   }
 
   const repo = repoDir();
@@ -128,11 +142,11 @@ function runRepowise() {
       stdio:   ['ignore', 'pipe', 'pipe'],
     });
   } catch (err) {
-    return { ok: false, error: err.message };
+    return emit({ ok: false, error: err.message });
   }
 
   if (result.status !== 0) {
-    return { ok: false, error: (result.stderr || '').slice(0, 400) };
+    return emit({ ok: false, error: (result.stderr || '').slice(0, 400) });
   }
 
   // Try to regenerate CLAUDE.md and capture it.
@@ -145,7 +159,7 @@ function runRepowise() {
     }
   } catch (_) { /* best effort */ }
 
-  return { ok: true, mode: sub };
+  return emit({ ok: true, mode: sub });
 }
 
 // ── KB readers ───────────────────────────────────────────────────────────────
@@ -377,6 +391,7 @@ function runSynthesis(state) {
     type:        'cortex-synthesized',
     factsWritten: written,
     repowiseAvailable: state.repowiseAvailable,
+    distributed:  (process.env.PRX_CORTEX_DISTRIBUTED || '').toUpperCase() === 'Y',
   });
 }
 

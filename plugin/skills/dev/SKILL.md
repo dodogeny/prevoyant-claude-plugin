@@ -1,7 +1,7 @@
 ---
 name: dev
 description: "\"Structured Jira-driven developer workflow skill. Supports two modes — (1) Dev mode: use when a developer provides a Jira ticket URL or ticket key (e.g. PROJ-1234) and wants to start development work; handles the full workflow from reading the Jira ticket to proposing a code fix. (2) PR Review mode: use when a developer wants to review code changes for a Jira ticket; analyses the ticket context plus all code changes on the associated feature branch, then outputs findings and recommendations as a PDF report.\""
-version: 1.4.0
+version: 1.4.1
 ---
 
 # Dev Workflow Skill
@@ -24,6 +24,7 @@ Full end-to-end developer workflow for Jira tickets. Guides Claude through readi
 | SC-009 | v1.3.1 | 2026-05-15 | — | Feature | Step E0-b: Jira cycle time query surfaces P50/P90 throughput anchor before Planning Poker | ACTIVE |
 | SC-010 | v1.3.1 | 2026-05-15 | — | Feature | Step E2-a: Dependency graph scoring feeds Jordan's Risk dimension vote directly | ACTIVE |
 | SC-011 | v1.4.0 | 2026-05-15 | — | Feature | Step 5: Fragility score column (Muninn-style weighted composite) injected into the file map | ACTIVE |
+| SC-012 | v1.4.1 | 2026-05-15 | — | Feature | Step 0b: Layer 0 Cortex Pass — read ~/.prevoyant/cortex/facts/*.md first; emit `[CORTEX HIT/MISS]` markers; narrow Layers 1b/3 by coverage map (~50–70% Step 0 token savings when fresh) | ACTIVE |
 
 ## Configuration
 
@@ -1588,13 +1589,105 @@ This is a **standing agenda item, not optional**. Surface it at session start so
 
 #### 0b. Query (runs after Step 1 — ticket metadata available)
 
-Once Step 1 has returned the ticket's **components** and **labels**, query in two layers:
+Once Step 1 has returned the ticket's **components** and **labels**, query in layered passes — **Cortex first, then KB**.
 
-**Layer 1 — Memory Palace (primary, fast path):**
+**Layer 0 — Cortex Pass (runs first, ~600–2000 tokens total, optional):**
+
+Cortex is the **always-on intelligence layer** synthesised from the KB by the cortex worker (`server/workers/cortexWorker.js`). When enabled and fresh, it replaces the broad orientation reads of Layers 1b/2/3 for the topics it covers — saving roughly 50–70% of Step 0's tokens. Cortex is **never the source of truth** — for ticket-specific or anchor-level lookups (e.g. "what did we decide about IV-3641?") the KB layers still run.
+
+```bash
+# 1) Resolve the cortex location. Two modes:
+#    A) PRX_CORTEX_DISTRIBUTED=Y — cortex lives in <KB>/cortex/ and rides
+#       along with the KB sync (git push or Upstash distributed mode), so a
+#       fresh teammate's first session sees the team's accumulated intelligence
+#       layer without any local synthesis.
+#    B) Otherwise — cortex lives in ~/.prevoyant/cortex/ (per-machine).
+#
+# We probe the distributed location first (more authoritative when present),
+# then fall back to the local one.  Both have identical layouts.
+KB_DIR="${PRX_KNOWLEDGE_DIR:-$HOME/.prevoyant/knowledge-base}"
+[ "${PRX_KB_MODE:-local}" = "distributed" ] && KB_DIR="${PRX_KB_LOCAL_CLONE:-$HOME/.prevoyant/kb}"
+
+CORTEX_DIR=""
+for cand in "$KB_DIR/cortex" "$HOME/.prevoyant/cortex"; do
+  if [ -f "$cand/state.json" ]; then CORTEX_DIR="$cand"; break; fi
+done
+
+CORTEX_FRESH=0
+if [ -n "$CORTEX_DIR" ]; then
+  # Accept cortex if lastSynthesis is within 24h.
+  LAST=$(grep -o '"lastSynthesis"[^,}]*' "$CORTEX_DIR/state.json" | grep -o '[0-9]\+' | head -1)
+  NOW=$(date +%s%3N 2>/dev/null || date +%s000)
+  if [ -n "$LAST" ] && [ $((NOW - LAST)) -lt 86400000 ]; then
+    CORTEX_FRESH=1
+  fi
+fi
+
+# 2) Read the curated fact files when fresh. Each is small (~200–800 tokens).
+HITS=""
+MISS_COUNT=0
+if [ "$CORTEX_FRESH" = "1" ]; then
+  echo "[CORTEX SOURCE] $CORTEX_DIR (distributed=${CORTEX_DIR#$KB_DIR/cortex})"
+  for f in architecture.md business-rules.md patterns.md decisions.md hotspots.md glossary.md; do
+    if [ -f "$CORTEX_DIR/facts/$f" ]; then
+      echo "[CORTEX HIT] facts/$f"
+      HITS="${HITS:+$HITS,}$f"
+    else
+      echo "[CORTEX MISS] facts/$f"
+      MISS_COUNT=$((MISS_COUNT + 1))
+    fi
+  done
+else
+  echo "[CORTEX MISS] state stale or absent — falling back to full KB walk"
+  MISS_COUNT=6
+fi
+```
+
+If `[CORTEX HIT]` was emitted for a file, that file's content **replaces** the corresponding KB reads in Layers 1b–3 (mapping below). Carry the cortex content into the Prior Knowledge block under a `CORTEX` heading so the panel knows where it came from. If `[CORTEX MISS]` for any reason (state stale, file absent, or `PRX_CORTEX_ENABLED=N`), fall through to the original KB walk — cortex never blocks the workflow.
+
+**Cortex → KB coverage map** (so Layers 1b–3 know what to skip):
+
+| Cortex fact file | Replaces these KB reads when HIT |
+|------------------|----------------------------------|
+| `facts/architecture.md`   | `core-mental-map/architecture.md`, `shared/architecture.md` |
+| `facts/business-rules.md` | `shared/business-rules.md` |
+| `facts/patterns.md`       | `shared/patterns.md` (still required by Jordan — cortex satisfies it) |
+| `facts/decisions.md`      | `shared/decisions.md` (CONFIRMED-only — for under-review decisions still read raw) |
+| `facts/hotspots.md`       | _(cortex-only — no KB equivalent; feeds Riley's Step 7-pre signal)_ |
+| `facts/glossary.md`       | _(cortex-only — fast term lookup)_ |
+
+**What Layer 0 does NOT replace:** ticket-specific reads (`tickets/{KEY}.md`), per-ticket lessons-learned, Memory Palace trigger scans, or any anchor-style `file:line` lookup. Cortex is breadth-of-orientation; the KB remains depth-of-lookup.
+
+Emit a single roll-up after Layer 0 so the savings are measurable:
+```
+Cortex orientation: {N} HIT, {M} MISS — Layers 1b/3 narrowed to {K} files
+                   (estimated savings vs full walk: ~{P}% Step 0 tokens)
+```
+
+**Telemetry (fire-and-forget):** after Layer 0 completes, ping the dashboard so the activity log can record *when* and *which machine* referenced cortex. This is what the developer sees on `/dashboard/activity` as `cortex_referenced` (actor `claude`) — answers "did the agent actually use cortex on session X?" without any extra UI hookups. Best-effort and silent on failure; never blocks the step.
+
+```bash
+HITS_JSON=$(printf '%s' "${HITS:-}" | jq -Rcs 'split(",") | map(select(length>0))' 2>/dev/null || echo '[]')
+MACHINE=$(hostname 2>/dev/null || echo unknown)
+SERVER="http://localhost:${PRX_SERVER_PORT:-3000}"
+
+curl -s -m 2 -X POST "$SERVER/dashboard/cortex/referenced" \
+  -H "Content-Type: application/json" \
+  -d "{\"ticketKey\":\"${TICKET_KEY}\",\"hits\":${HITS_JSON},\"missCount\":${MISS_COUNT:-0},\"machine\":\"${MACHINE}\",\"estSavingsPct\":${EST_PCT:-0}}" \
+  >/dev/null 2>&1 &
+```
+
+(Where `HITS` is a comma-separated list of `[CORTEX HIT]` filenames from the read pass, and `MISS_COUNT`/`EST_PCT` come from the roll-up line above. `jq` is optional — if missing, emit `[]` for `hits` and the dashboard still records the hit count.)
+
+If `PRX_CORTEX_ENABLED=N` or the cortex directory does not exist, skip Layer 0 silently and continue with Layer 1.
+
+**Layer 1 — Memory Palace (primary, fast path — ALWAYS runs, even on CORTEX HIT):**
 
 Execute the Memory Palace retrieval procedure (see **"How Agents Use the Palace"** in the KB Architecture section): map ticket components/labels to rooms → scan triggers → read matched entries. Always ≤ 3 read operations.
 
 **Layer 1b — Semantic Relevance Pre-Score (runs before Layers 2–4):**
+
+**If Layer 0 emitted `[CORTEX HIT]` for a file's cortex equivalent (see coverage map above), exclude that KB file from the score table entirely — the cortex copy already covers it.** Skip directly to ticket-specific scoring for the remaining KB files.
 
 Before loading any `shared/*.md` or `core-mental-map/*.md` file, perform a lightweight relevance pass against the ticket's components, labels, and a 10-keyword digest of the ticket description (extract the 10 highest-signal non-stop-words from the summary + description). Score every KB file in the index without reading its full content:
 
@@ -1610,7 +1703,7 @@ Produce a score table (internal — do not display, only use to gate reads):
 | `shared/patterns.md` | 0 | 0 | 1 | 1 | ❌ |
 | `core-mental-map/architecture.md` | 3 | 2 | 4 | 17 | ✅ |
 
-**Load threshold:** Score ≥ 3 → read the file. Score < 3 → skip entirely (note as `skipped (low relevance)` in the Prior Knowledge block header). Apply to `shared/*.md` (except `process-efficiency.md` and `skill-changelog.md` — never load these) and `core-mental-map/*.md`. `shared/patterns.md` is always loaded regardless of score (Jordan needs it).
+**Load threshold:** Score ≥ 3 → read the file. Score < 3 → skip entirely (note as `skipped (low relevance)` in the Prior Knowledge block header). Apply to `shared/*.md` (except `process-efficiency.md` and `skill-changelog.md` — never load these) and `core-mental-map/*.md`. `shared/patterns.md` is always loaded regardless of score (Jordan needs it) — **unless cortex `facts/patterns.md` was a HIT, in which case the cortex copy satisfies Jordan's requirement**.
 
 Emit: `KB relevance pre-score: {N} files scored, {M} loaded, {P} skipped — saving ~{Q}% context.`
 
@@ -1624,13 +1717,14 @@ grep -i "{TICKET_KEY}" "$KNOWLEDGE_DIR/INDEX.md"
 
 Read the 5 most recent matching ticket entries and all matching shared entries.
 
-**Layer 3 — Core Mental Map (always runs, relevance-gated by Layer 1b score):**
+**Layer 3 — Core Mental Map (relevance-gated by Layer 1b score; **further** narrowed by Layer 0 cortex hits):**
 
 Read `core-mental-map/INDEX.md` to see available topics and entry counts. Then:
 
-1. For each `core-mental-map/*.md` content file whose Layer 1b score is ≥ 3, read the full file. Skip files scoring < 3 (note `skipped (low relevance, score={N})`). (Files are small — compressed format; full reads are acceptable for qualifying files.)
-2. Carry all relevant CMM entries into the Prior Knowledge block under `CORE MENTAL MAP`.
-3. Increment the `confirmed:` counter for each CMM entry read — write the counter update to the file immediately (in-place sed or targeted edit) so other agents see fresh confirmation counts. If the file has not changed since last session, skip the counter update to avoid unnecessary writes.
+1. **If Layer 0 emitted `[CORTEX HIT]` for `facts/architecture.md`, skip `core-mental-map/architecture.md` entirely** — the cortex copy already covered it. Note `skipped (cortex hit)` in the Prior Knowledge block header.
+2. For each *remaining* `core-mental-map/*.md` content file whose Layer 1b score is ≥ 3, read the full file. Skip files scoring < 3 (note `skipped (low relevance, score={N})`). (Files are small — compressed format; full reads are acceptable for qualifying files.)
+3. Carry all relevant CMM entries into the Prior Knowledge block under `CORE MENTAL MAP`.
+4. Increment the `confirmed:` counter for each CMM entry read — write the counter update to the file immediately (in-place sed or targeted edit) so other agents see fresh confirmation counts. If the file has not changed since last session, skip the counter update to avoid unnecessary writes. **Cortex-satisfied files still get their counter incremented (read from cortex still counts as a confirmation).**
 
 If `core-mental-map/INDEX.md` does not exist or all files show `0` entries: state `Core Mental Map: empty — will populate in Step 13g.`
 

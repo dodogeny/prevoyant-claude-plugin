@@ -1986,7 +1986,11 @@ const EVENT_DISPLAY = {
   silent_conflict_warning: { label: 'Silent Conflict (co-change)', bg: '#fef3c7', color: '#92400e' },
   stale_branches_scanned:  { label: 'Stale Branches Scan',    bg: '#fef3c7', color: '#92400e' },
   decisions_reviewed:      { label: 'Decisions Reviewed',     bg: '#eff6ff', color: '#1d4ed8' },
+  cortex_started:          { label: 'Cortex Started',         bg: '#fdf4ff', color: '#a21caf' },
+  cortex_stopped:          { label: 'Cortex Stopped',         bg: '#f3f4f6', color: '#6b7280' },
   cortex_synthesized:      { label: 'Cortex Synthesised',     bg: '#fdf4ff', color: '#a21caf' },
+  cortex_referenced:       { label: 'Cortex Referenced',      bg: '#fae8ff', color: '#86198f' },
+  repowise_ran:            { label: 'Repowise Ran',           bg: '#fef3c7', color: '#92400e' },
 };
 
 const ACTOR_STYLE = {
@@ -1996,6 +2000,7 @@ const ACTOR_STYLE = {
   webhook: { bg: '#fef3c7', color: '#92400e' },
   manual:  { bg: '#dcfce7', color: '#166534' },
   hermes:  { bg: '#ede9fe', color: '#5b21b6' },
+  claude:  { bg: '#fae8ff', color: '#86198f' },
 };
 
 function renderActivity(results, chartData, allTypes, allActors, actStats, filters) {
@@ -2423,7 +2428,14 @@ function kbStats() {
   const serverDir = path.join(os.homedir(), '.prevoyant', 'server');
   const watchLogs = path.join(os.homedir(), '.prevoyant', 'watch', 'logs');
   const memoryDir = path.join(os.homedir(), '.prevoyant', 'memory');
-  const cortexDir = path.join(os.homedir(), '.prevoyant', 'cortex');
+  // Use the cortex resolver so backup picks the correct path whether the user
+  // has PRX_CORTEX_DISTRIBUTED=N (per-machine ~/.prevoyant/cortex/) or
+  // =Y (in-KB <KB>/cortex/, which already rides along in the KB tar — so we
+  // intentionally skip the standalone cortex add in that case to avoid
+  // double-tarring the same files).
+  const cortexLayerMod = require('../runner/cortexLayer');
+  const cortexDir = cortexLayerMod.cortexDir();
+  const cortexInsideKb = cortexDir.startsWith(kb + path.sep) || cortexDir === kb;
   const basicMemDir   = basicMemoryHome();
   const basicMemInsideKb = basicMemDir.startsWith(kb + path.sep) || basicMemDir === kb;
   return {
@@ -2442,6 +2454,7 @@ function kbStats() {
     memoryFiles:   countFilesRecursive(memoryDir),
     cortexDir,
     cortexFiles:   countFilesRecursive(cortexDir),
+    cortexInsideKb,
     basicMemDir,
     basicMemInsideKb,
     basicMemFiles: basicMemInsideKb ? 0 : countFilesRecursive(basicMemDir),
@@ -2778,7 +2791,8 @@ function renderCortex() {
   const stats     = cortex.cortexStats();
   const state     = cortex.loadState();
   const facts     = cortex.listFactFiles();
-  const repowiseOn = process.env.PRX_REPOWISE_ENABLED === 'Y';
+  const repowiseOn  = process.env.PRX_REPOWISE_ENABLED === 'Y';
+  const distributed = cortex.isDistributed();
 
   // Pull each fact body so the page is one-stop.  Files are small (kilobytes)
   // so the cost is negligible.
@@ -2981,6 +2995,11 @@ function renderCortex() {
         <div class="stat-lbl">Repowise</div>
         <div class="stat-val">${repowiseOn ? (state.repowiseAvailable ? '<span class="pill pill-on">ON</span>' : '<span class="pill pill-warn">MISSING</span>') : '<span class="pill pill-off">OFF</span>'}</div>
         <div class="stat-sub">${state.lastRepowiseRun ? 'last run ' + fmtTs(state.lastRepowiseRun) : 'never run'}</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-lbl">Distribution</div>
+        <div class="stat-val">${distributed ? '<span class="pill pill-on">SHARED</span>' : '<span class="pill pill-off">LOCAL</span>'}</div>
+        <div class="stat-sub" title="${esc(stats.dir)}">${distributed ? 'inside KB — syncs to team' : 'per-machine, never shared'}</div>
       </div>
     </div>
 
@@ -4175,10 +4194,15 @@ function renderSettings(vals, flash) {
                 <input type="checkbox" id="bk-inc-agentmem" ${kb.basicMemFiles === 0 ? '' : 'checked'}>
                 Agent memory store — basic-memory MCP (${kb.basicMemFiles})
               </label>`}
+              ${kb.cortexInsideKb ? `
+              <label class="bk-inc-lbl" style="opacity:.7;cursor:default" title="Cortex is in-KB (distributed mode) — already included with the KB itself.">
+                <input type="checkbox" id="bk-inc-cortex" disabled checked>
+                Cortex (${kb.cortexFiles}) — bundled with KB (distributed mode)
+              </label>` : `
               <label class="bk-inc-lbl">
                 <input type="checkbox" id="bk-inc-cortex" ${kb.cortexFiles === 0 ? '' : 'checked'}>
                 Cortex — intelligence layer (${kb.cortexFiles})
-              </label>
+              </label>`}
             </div>
 
             <button type="button" class="btn-export" onclick="downloadKbBackup()" ${!kb.kbExists && kb.sessionFiles === 0 && kb.reportFiles === 0 && kb.serverFiles === 0 ? 'disabled' : ''}>
@@ -4722,6 +4746,8 @@ function renderSettings(vals, flash) {
           </div>
           ${fld('PRX_CORTEX_ENABLED','Enable Cortex','select',v('PRX_CORTEX_ENABLED') || 'N','','Starts the always-on cortex worker.',
             [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
+          ${fld('PRX_CORTEX_DISTRIBUTED','Distributed (share via KB)','select',v('PRX_CORTEX_DISTRIBUTED') || 'N','','Y → cortex files live inside the KB (`&lt;KB&gt;/cortex/`) and ride along with KB sync (git push or Upstash). Other devs auto-pickup. N → per-machine (~/.prevoyant/cortex/, default).',
+            [{v:'N',l:'N — per-machine (default)'},{v:'Y',l:'Y — shared via KB'}])}
           ${fld('PRX_CORTEX_DEBOUNCE_SECS','KB-change debounce (secs)','number',v('PRX_CORTEX_DEBOUNCE_SECS'),'30','How long to wait after the last KB change before re-synthesising. Default: 30.')}
           ${fld('PRX_CORTEX_RESYNC_HOURS','Heartbeat resync (hours)','text',v('PRX_CORTEX_RESYNC_HOURS'),'6','Periodic resync interval as a safety net if fs.watch misses a change. Default: 6.')}
 
@@ -5785,6 +5811,32 @@ router.post('/cortex/repowise-now', express.json(), (_req, res) => {
 // Used by the "Install repowise" button on the Cortex page.  The hard work
 // is in plugin/install/install-repowise.js — this route just spawns Node on
 // it and streams the last JSON line back to the client.
+// Reference tracking — fire-and-forget ping from SKILL.md Step 0a when an
+// agent consumes the cortex during a session. Recorded as a `cortex_referenced`
+// activity event with actor=claude so the dashboard answers "when and who
+// referenced cortex" without the dev skill needing to know any internals.
+//
+// Body shape (all optional except ticketKey):
+//   { ticketKey: "IV-1234", hits: ["architecture.md","patterns.md"],
+//     missCount: 2, machine: "javed-mac", estSavingsPct: 62 }
+router.post('/cortex/referenced', express.json(), (req, res) => {
+  const b   = req.body || {};
+  const key = (b.ticketKey || '').toString().toUpperCase().slice(0, 32) || null;
+  const hits = Array.isArray(b.hits) ? b.hits.filter(h => typeof h === 'string').slice(0, 20) : [];
+  const miss = typeof b.missCount === 'number' ? b.missCount : 0;
+  const machine = (b.machine || '').toString().slice(0, 64) || null;
+  const est = typeof b.estSavingsPct === 'number' ? Math.max(0, Math.min(100, b.estSavingsPct)) : null;
+
+  activityLog.record('cortex_referenced', key, 'claude', {
+    machine,
+    hitCount:  hits.length,
+    missCount: miss,
+    hits,
+    estSavingsPct: est,
+  });
+  res.json({ ok: true });
+});
+
 router.post('/cortex/install-repowise', express.json(), (req, res) => {
   const { spawnSync } = require('child_process');
   // The plugin's install script may be reachable either under CLAUDE_PLUGIN_ROOT
@@ -6089,7 +6141,7 @@ router.get('/kb/export', (req, res) => {
   if (includeServer    && kb.serverFiles   > 0)                                 dirs.push(kb.serverDir);
   if (includeWatchLogs && kb.watchLogFiles > 0)                                 dirs.push(kb.watchLogs);
   if (includeMemory    && kb.memoryFiles   > 0)                                 dirs.push(kb.memoryDir);
-  if (includeCortex    && kb.cortexFiles   > 0)                                 dirs.push(kb.cortexDir);
+  if (!kb.cortexInsideKb && includeCortex && kb.cortexFiles > 0)                dirs.push(kb.cortexDir);
 
   const validDirs = dirs.filter(d => fs.existsSync(d));
   if (validDirs.length === 0) return res.status(404).send('No files found to export.');
@@ -6492,7 +6544,7 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'PRX_STALE_BRANCH_ENABLED', 'PRX_STALE_BRANCH_DAYS', 'PRX_STALE_BRANCH_INTERVAL_DAYS',
     'PRX_DECISION_OUTCOME_ENABLED', 'PRX_DECISION_OUTCOME_INTERVAL_DAYS', 'PRX_DECISION_OUTCOME_LOOKBACK_DAYS', 'PRX_DECISION_OUTCOME_MIN_EVIDENCE',
     'PRX_COCHANGE_WINDOW_DAYS', 'PRX_COCHANGE_CACHE_TTL_DAYS',
-    'PRX_CORTEX_ENABLED', 'PRX_CORTEX_DEBOUNCE_SECS', 'PRX_CORTEX_RESYNC_HOURS',
+    'PRX_CORTEX_ENABLED', 'PRX_CORTEX_DEBOUNCE_SECS', 'PRX_CORTEX_RESYNC_HOURS', 'PRX_CORTEX_DISTRIBUTED',
     'PRX_REPOWISE_ENABLED', 'PRX_REPOWISE_INTERVAL_DAYS', 'PRX_REPOWISE_PATH', 'PRX_REPOWISE_AUTO_INSTALL',
     'PRX_WASENDER_ENABLED', 'PRX_WASENDER_API_KEY', 'PRX_WASENDER_TO',
     'PRX_WASENDER_PUBLIC_URL', 'PRX_WASENDER_EVENTS', 'PRX_WASENDER_PDF_PASSWORD',
