@@ -1990,6 +1990,7 @@ const EVENT_DISPLAY = {
   cortex_stopped:          { label: 'Cortex Stopped',         bg: '#f3f4f6', color: '#6b7280' },
   cortex_synthesized:      { label: 'Cortex Synthesised',     bg: '#fdf4ff', color: '#a21caf' },
   cortex_referenced:       { label: 'Cortex Referenced',      bg: '#fae8ff', color: '#86198f' },
+  cortex_observed:         { label: 'Cortex Observed',        bg: '#f0fdf4', color: '#15803d' },
   cortex_skipped:          { label: 'Cortex Skipped (Reader)', bg: '#f3f4f6', color: '#6b7280' },
   cortex_builder_claimed:  { label: 'Cortex Builder Claimed', bg: '#fdf4ff', color: '#a21caf' },
   repowise_ran:            { label: 'Repowise Ran',           bg: '#fef3c7', color: '#92400e' },
@@ -3145,6 +3146,84 @@ function renderCortex() {
         </div>`;
       })() : ''}
     </div>
+
+    <!-- ── Memory / LMDB health panel ──────────────────────────────────── -->
+    <div id="mem-health-panel" style="margin-bottom:1.2rem;border-radius:var(--r-lg);border:1px solid var(--border-light);background:var(--surface);box-shadow:var(--shadow);overflow:hidden">
+      <div style="padding:.6rem 1.1rem;background:rgba(168,85,247,.06);border-bottom:1px solid var(--border-light);display:flex;align-items:center;gap:.6rem">
+        <span style="font-size:.95rem">🧠</span>
+        <span style="font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-2)">CortexMemory — storage engine</span>
+        <span id="mem-health-badge" style="margin-left:auto;font-size:.7rem;padding:.15rem .55rem;border-radius:999px;background:#f3f4f6;color:#6b7280">loading…</span>
+      </div>
+      <div id="mem-health-body" style="padding:.85rem 1.1rem;display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.7rem">
+        <div class="stat-card" style="background:transparent;box-shadow:none;border:none;padding:0">
+          <div class="stat-lbl">Backend</div>
+          <div class="stat-val" id="mh-backend" style="font-size:1rem">—</div>
+        </div>
+        <div class="stat-card" style="background:transparent;box-shadow:none;border:none;padding:0">
+          <div class="stat-lbl">LMDB</div>
+          <div class="stat-val" id="mh-lmdb-status" style="font-size:1rem">—</div>
+          <div class="stat-sub" id="mh-lmdb-version" style="font-size:.72rem;color:var(--text-3)"></div>
+        </div>
+        <div class="stat-card" style="background:transparent;box-shadow:none;border:none;padding:0">
+          <div class="stat-lbl">Entries</div>
+          <div class="stat-val" id="mh-keys" style="font-size:1rem">—</div>
+          <div class="stat-sub" id="mh-size" style="font-size:.72rem;color:var(--text-3)"></div>
+        </div>
+        <div class="stat-card" style="background:transparent;box-shadow:none;border:none;padding:0">
+          <div class="stat-lbl">LRU cache</div>
+          <div class="stat-val" id="mh-lru" style="font-size:1rem">—</div>
+        </div>
+        <div class="stat-card" style="background:transparent;box-shadow:none;border:none;padding:0">
+          <div class="stat-lbl">Signals</div>
+          <div class="stat-val" id="mh-signals" style="font-size:1rem">—</div>
+        </div>
+      </div>
+      <div id="mh-warning" style="display:none;padding:.6rem 1.1rem;background:#fef9ec;border-top:1px solid #fde68a;font-size:.78rem;color:#92400e">
+        ⚠ LMDB is not installed — CortexMemory is using the JSONL fallback.
+        <strong>lmdb will be installed automatically on the next server start.</strong>
+        To install now: <code style="background:#fff3cd;padding:.1rem .3rem;border-radius:3px">cd server &amp;&amp; npm install lmdb</code>
+      </div>
+    </div>
+
+    <script>
+    (function() {
+      async function pollMemHealth() {
+        try {
+          const h = await fetch('/dashboard/cortex/memory/health').then(r => r.json());
+          const s = await fetch('/dashboard/cortex/memory/stats').then(r => r.json()).catch(() => ({}));
+
+          const badge = document.getElementById('mem-health-badge');
+          if (h.lmdbActive) {
+            badge.textContent = 'LMDB ACTIVE'; badge.style.background = '#dcfce7'; badge.style.color = '#15803d';
+          } else if (h.lmdbInstalled) {
+            badge.textContent = 'LMDB INSTALLED'; badge.style.background = '#fef9ec'; badge.style.color = '#92400e';
+          } else {
+            badge.textContent = 'JSONL FALLBACK'; badge.style.background = '#fee2e2'; badge.style.color = '#991b1b';
+          }
+
+          document.getElementById('mh-backend').textContent = h.backend || '—';
+          const lmdbEl = document.getElementById('mh-lmdb-status');
+          if (h.lmdbInstalled && h.lmdbActive)      { lmdbEl.innerHTML = '<span style="color:#15803d;font-weight:700">✓ Active</span>'; }
+          else if (h.lmdbInstalled && !h.lmdbActive) { lmdbEl.innerHTML = '<span style="color:#92400e;font-weight:700">Installed / not active</span>'; }
+          else                                       { lmdbEl.innerHTML = '<span style="color:#991b1b;font-weight:700">Not installed</span>'; }
+
+          document.getElementById('mh-lmdb-version').textContent = h.lmdbVersion ? 'v' + h.lmdbVersion : '';
+
+          if (s.stats) {
+            document.getElementById('mh-keys').textContent    = s.stats.keys ?? '—';
+            document.getElementById('mh-size').textContent    = (s.stats.totalSizeKB || 0) + ' KB on disk';
+            document.getElementById('mh-lru').textContent     = (s.stats.lruEntries || 0) + ' / ' + (s.stats.lruMax || '—');
+            document.getElementById('mh-signals').textContent = (s.stats.signalLines || 0) + ' events';
+          }
+
+          const warn = document.getElementById('mh-warning');
+          warn.style.display = h.lmdbInstalled ? 'none' : 'block';
+        } catch (_) {}
+      }
+      pollMemHealth();
+      setInterval(pollMemHealth, 15000);
+    })();
+    </script>
 
     <div class="actions">
       ${enabled ? `<button type="button" class="btn-cortex" data-act="resynth">▶ Re-synthesise now</button>
@@ -6343,6 +6422,142 @@ router.get('/cortex/install-status', (_req, res) => {
     autoEnabled:  repowiseInstaller.autoInstallEnabled(),
     lastResult:   repowiseInstaller.getLastResult(),
   });
+});
+
+// ── Cortex Memory API — agent read/write endpoints ───────────────────────────
+//
+// These HTTP endpoints let agents (Claude AI running bash) interact with the
+// CortexMemory engine without reading .md files from disk.
+//
+// Read (Step 0b Layer 0 — agent consumes fresh facts):
+//   GET  /cortex/memory/facts              → all live synthesised facts
+//   GET  /cortex/memory/get?key=<key>      → single value by key
+//   GET  /cortex/memory/tag?tag=<tag>      → all live keys carrying a tag
+//   GET  /cortex/memory/recent?n=10&tag=X  → n most-recent entries
+//   GET  /cortex/memory/signals?n=50       → recent transit events
+//   GET  /cortex/memory/stats              → storage stats (dashboard / debug)
+//
+// Write (Step 13 / mid-session — agent feeds discoveries back):
+//   POST /cortex/memory/observe   {key,value,tags,ttl,ticketKey} → store discovery
+//   POST /cortex/memory/signal    {event,data}                   → transit event
+
+function _memGuard(res) {
+  if (process.env.PRX_CORTEX_ENABLED !== 'Y') {
+    res.status(400).json({ ok: false, error: 'Cortex is not enabled (PRX_CORTEX_ENABLED=N)' });
+    return false;
+  }
+  return true;
+}
+
+router.get('/cortex/memory/facts', (_req, res) => {
+  if (!_memGuard(res)) return;
+  const cortex  = require('../runner/cortexLayer');
+  const mem     = cortex.memory();
+  const keys    = mem.byTag('fact');
+  const facts   = {};
+  for (const k of keys) facts[k] = mem.get(k);
+  res.json({ ok: true, facts, count: keys.length });
+});
+
+router.get('/cortex/memory/get', (req, res) => {
+  if (!_memGuard(res)) return;
+  const key = (req.query.key || '').toString().slice(0, 256);
+  if (!key) return res.status(400).json({ ok: false, error: 'key required' });
+  const value = require('../runner/cortexLayer').memory().get(key);
+  res.json({ ok: true, key, value, found: value !== null });
+});
+
+router.get('/cortex/memory/tag', (req, res) => {
+  if (!_memGuard(res)) return;
+  const tag = (req.query.tag || '').toString().slice(0, 64);
+  if (!tag) return res.status(400).json({ ok: false, error: 'tag required' });
+  const keys = require('../runner/cortexLayer').memory().byTag(tag);
+  res.json({ ok: true, tag, keys, count: keys.length });
+});
+
+router.get('/cortex/memory/recent', (req, res) => {
+  if (!_memGuard(res)) return;
+  const n   = Math.min(100, Math.max(1, parseInt(req.query.n   || '10', 10)));
+  const tag = (req.query.tag || '').toString().slice(0, 64) || undefined;
+  const entries = require('../runner/cortexLayer').memory().recent(n, tag ? { tag } : {});
+  res.json({ ok: true, entries, count: entries.length });
+});
+
+router.get('/cortex/memory/signals', (req, res) => {
+  if (!_memGuard(res)) return;
+  const n = Math.min(200, Math.max(1, parseInt(req.query.n || '50', 10)));
+  res.json({ ok: true, signals: require('../runner/cortexLayer').memory().signals(n) });
+});
+
+router.get('/cortex/memory/stats', (_req, res) => {
+  if (!_memGuard(res)) return;
+  res.json({ ok: true, stats: require('../runner/cortexLayer').memory().stats() });
+});
+
+// Health endpoint — polled by the Cortex dashboard panel and by the
+// PRX_CORTEX_ENABLED=Y startup check.  Returns backend name, LMDB version,
+// and install status regardless of whether Cortex is enabled so the dashboard
+// can always show install guidance.
+router.get('/cortex/memory/health', (_req, res) => {
+  const cortexMem = require('../runner/cortexMemory');
+  const cortex    = require('../runner/cortexLayer');
+  let health;
+  if (cortex.isEnabled()) {
+    health = cortex.memory().health();
+  } else {
+    // Cortex not running — report install status without a live instance.
+    const installed = cortexMem.lmdbAvailable();
+    let version = null;
+    if (installed) {
+      try { version = require(path.join(__dirname, '..', 'node_modules', 'lmdb', 'package.json')).version; } catch (_) {}
+    }
+    health = {
+      ok:              true,
+      backend:         installed ? 'lmdb (not running)' : 'jsonl (not running)',
+      lmdbInstalled:   installed,
+      lmdbActive:      false,
+      lmdbVersion:     version,
+      lmdbInstallError: cortexMem.lmdbAvailable ? null : 'lmdb module not found',
+      fallbackReason:  installed ? null : 'lmdb not installed — run: cd server && npm install lmdb',
+    };
+  }
+  res.json(health);
+});
+
+// Agent discovery write — the primary feedback path from agents into the memory
+// layer between synthesis cycles.  Validates inputs, records an activity event,
+// and fires a debounced re-synthesis via serverEvents so discoveries don't sit
+// idle until the next 6-hour heartbeat.
+router.post('/cortex/memory/observe', express.json(), (req, res) => {
+  if (!_memGuard(res)) return;
+  const b   = req.body || {};
+  const key = (b.key || '').toString().trim().slice(0, 256);
+  const { value } = b;
+  const tags      = Array.isArray(b.tags) ? b.tags.filter(t => typeof t === 'string').slice(0, 20) : [];
+  const ttl       = (typeof b.ttl === 'number' && b.ttl > 0) ? b.ttl : 0;
+  const ticketKey = (b.ticketKey || '').toString().toUpperCase().slice(0, 32) || null;
+
+  if (!key)              return res.status(400).json({ ok: false, error: 'key required' });
+  if (value === undefined) return res.status(400).json({ ok: false, error: 'value required' });
+
+  if (!tags.includes('agent-observed')) tags.push('agent-observed');
+
+  const cortex = require('../runner/cortexLayer');
+  const seq    = cortex.memory().put(key, value, { tags, ttl });
+
+  activityLog.record('cortex_observed', ticketKey, 'claude', { key, tags, seq });
+  serverEvents.emit('cortex-observation-written', { key, tags });
+  res.json({ ok: true, seq });
+});
+
+router.post('/cortex/memory/signal', express.json(), (req, res) => {
+  if (!_memGuard(res)) return;
+  const b     = req.body || {};
+  const event = (b.event || '').toString().slice(0, 128);
+  const data  = (b.data && typeof b.data === 'object') ? b.data : {};
+  if (!event) return res.status(400).json({ ok: false, error: 'event required' });
+  require('../runner/cortexLayer').memory().signal(event, data);
+  res.json({ ok: true });
 });
 
 router.get('/disk/json', (_req, res) => {

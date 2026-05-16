@@ -13,9 +13,10 @@
 // This module is the shared resolver used by the worker, the dashboard, and
 // the backup/export route so every consumer agrees on file locations.
 
-const fs   = require('fs');
-const os   = require('os');
-const path = require('path');
+const fs           = require('fs');
+const os           = require('os');
+const path         = require('path');
+const cortexMemory = require('./cortexMemory');
 
 // Cortex storage modes (`PRX_CORTEX_DISTRIBUTED`):
 //
@@ -222,6 +223,16 @@ function cortexStats() {
   return { exists: true, dir, distributed: isDistributed(), fileCount, sizeBytes, factCount };
 }
 
+// ── Memory API (CortexMemory facade) ─────────────────────────────────────────
+//
+// All consumers (worker, dashboard, CLI) should access the memory store
+// through this facade so they share the same singleton instance and agree
+// on the base directory regardless of PRX_CORTEX_DISTRIBUTED.
+
+function memory() {
+  return cortexMemory.getInstance(resolvedCortexDir());
+}
+
 // ── Read helper (used by the dashboard page) ─────────────────────────────────
 
 function readFactSafe(id) {
@@ -251,6 +262,8 @@ module.exports = {
   cortexStats,
   readFactSafe,
   readIndexSafe,
+  // Memory engine
+  memory,
   // Builder-lock API
   machineName,
   isForceBuilder,

@@ -388,6 +388,7 @@ function runSynthesis(state) {
   const factsDir = cortex.factsDir();
   fs.mkdirSync(factsDir, { recursive: true });
 
+  const mem = cortex.memory();
   let written = 0;
   const sources = {};
   for (const f of cortex.listFactFiles()) {
@@ -398,6 +399,9 @@ function runSynthesis(state) {
       writeAtomic(path.join(factsDir, f.file), content);
       sources[f.id] = { bytes: content.length, generatedAt: Date.now() };
       written++;
+      // Mirror synthesized fact into the memory engine so agents can retrieve
+      // it via mem.get('fact:<id>') without reading the .md file from disk.
+      mem.put(`fact:${f.id}`, content, { tags: ['fact', 'synthesis', f.id], ttl: 0 });
     } catch (err) {
       log('warn', `Synthesis ${f.id} failed: ${err.message}`);
     }
@@ -409,6 +413,9 @@ function runSynthesis(state) {
   state.sources        = sources;
   state.repowiseAvailable = checkRepowise();
   cortex.saveState(state);
+
+  // Emit a synthesis signal into the memory transit stream.
+  mem.signal('cortex:synthesis', { factsWritten: written, synthesisCount: state.synthesisCount });
 
   // Rebuild the index after state is fresh.
   try { writeAtomic(cortex.indexFile(), buildIndex(state)); } catch (_) {}
@@ -471,6 +478,13 @@ if (parentPort) {
         log('info', `Repowise run-now result: ${JSON.stringify(r)}`);
         runSynthesis(cortex.loadState());
       } catch (e) { log('error', e.message); }
+    }
+    // An agent wrote a discovery via POST /cortex/memory/observe.
+    // Trigger a debounced synthesis so the observation flows into fact files
+    // quickly rather than waiting for the next heartbeat cycle.
+    if (msg?.type === 'observe-written') {
+      log('info', `Observation written (key=${msg.detail?.key}) — scheduling debounced synthesis`);
+      debouncedSynth();
     }
   });
 }

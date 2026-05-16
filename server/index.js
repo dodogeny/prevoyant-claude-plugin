@@ -480,6 +480,22 @@ function startCortex() {
     repowiseInstaller.ensureInstalled({ trigger: 'cortex-startup' }).catch(() => {});
   }
 
+  // Ensure lmdb is installed when Cortex is active.  If it's missing the
+  // CortexMemory module already falls back to JSONL transparently, but we
+  // kick off a background install so the upgrade happens automatically.
+  // The server must restart after install for LMDB to take effect.
+  const { lmdbAvailable } = require('./runner/cortexMemory');
+  if (!lmdbAvailable()) {
+    const { spawnSync } = require('child_process');
+    const lmdbEnsure    = path.join(__dirname, 'scripts', 'ensure-lmdb.js');
+    console.log('[prevoyant-server] lmdb not found — installing in background (CortexMemory using JSONL fallback)');
+    // Spawn detached so it doesn't block the server event loop.
+    require('child_process').spawn(process.execPath, [lmdbEnsure], {
+      detached: true,
+      stdio:    'ignore',
+    }).unref();
+  }
+
   cortexWorker = new Worker(
     path.join(__dirname, 'workers', 'cortexWorker.js'),
     { workerData: {} }
@@ -642,6 +658,14 @@ serverEvents.on('cortex-run-now', () => {
 
 serverEvents.on('cortex-repowise-now', () => {
   if (cortexWorker) cortexWorker.postMessage({ type: 'repowise-now' });
+});
+
+// When an agent writes a discovery via POST /cortex/memory/observe, forward
+// the event to the cortex worker so it can trigger a debounced re-synthesis.
+// This closes the feedback loop: agent observation → fresh facts in seconds,
+// not at the next 6-hour heartbeat.
+serverEvents.on('cortex-observation-written', (detail) => {
+  if (cortexWorker) cortexWorker.postMessage({ type: 'observe-written', detail });
 });
 
 // ── Server listen ─────────────────────────────────────────────────────────────
