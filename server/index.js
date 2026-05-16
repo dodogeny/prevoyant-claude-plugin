@@ -705,6 +705,14 @@ app.listen(config.port, () => {
   startDecisionOutcome();
   startCortex();
 
+  // Wire up CPU / RAM spike logging into the activity log.
+  // cpuMonitor runs in the main thread from first require(); spikes fire at most
+  // once every 5 minutes per resource type to avoid log spam.
+  require('./runner/cpuMonitor').registerSpikeCallback(({ type, value, threshold, ...details }) => {
+    activityLog.record(type === 'cpu' ? 'cpu_spike' : 'ram_spike', null, 'system',
+      { value, threshold, ...details });
+  });
+
   // Config-coherence warnings — logged once at startup so they surface in logs
   // without requiring the user to open the settings page.
   if (process.env.PRX_REALTIME_KB_SYNC === 'Y' && (process.env.PRX_KB_MODE || 'local') !== 'distributed') {

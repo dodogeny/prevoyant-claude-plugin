@@ -2002,25 +2002,28 @@ function renderDashboard(stats, budget) {
         fetch('/dashboard/cpu/stats').then(r => r.json()).then(d => {
           if (!d.ok) return;
           const pct = d.current.toFixed(1);
-          val.textContent = pct + '% · ' + d.memMb + ' MB';
-          sub.textContent = 'avg ' + d.avg1m + '% · peak ' + d.peak + '%';
+          val.textContent = pct + '% CPU · ' + d.ramPct + '% RAM';
+          sub.textContent = 'avg ' + d.avg1m + '% · peak ' + d.peak + '% · ' + d.ramMb + ' MB used';
 
-          const hot = d.current > d.threshold;
-          const warm = d.current > d.threshold * 0.7;
+          const hot  = d.current > d.threshold || d.ramAlert;
+          const warm = d.current > d.threshold * 0.7 || d.ramPct > d.ramThreshold * 0.85;
           val.style.color = hot ? '#dc2626' : warm ? '#ea580c' : '#16a34a';
           item.style.background = hot ? '#fef2f2' : '';
 
-          if (d.alert && !alertBanner) {
+          if ((d.alert || d.ramAlert) && !alertBanner) {
             alertBanner = document.createElement('div');
             alertBanner.id = 'cpu-alert-banner';
             alertBanner.style.cssText = 'background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:.55rem 1rem;margin-bottom:.75rem;display:flex;align-items:center;gap:.6rem;font-size:.83rem;color:#991b1b';
+            const msgs = [];
+            if (d.alert)    msgs.push('CPU is at ' + pct + '% (threshold ' + d.threshold + '%)');
+            if (d.ramAlert) msgs.push('RAM is at ' + d.ramPct + '% used (threshold ' + d.ramThreshold + '%)');
             alertBanner.innerHTML =
               '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' +
-              '<span><strong>CPU alert</strong> — server CPU is at ' + pct + '% (threshold ' + d.threshold + '%). Check the activity log for runaway jobs or reduce worker concurrency.</span>' +
+              '<span><strong>Resource alert</strong> — ' + msgs.join('; ') + '. Check the activity log for runaway jobs.</span>' +
               '<button onclick="this.parentElement.remove()" style="margin-left:auto;padding:.2rem .6rem;background:transparent;border:1px solid #fca5a5;border-radius:4px;font-size:.75rem;cursor:pointer;color:#991b1b">Dismiss</button>';
             const anchor = document.querySelector('.card') || document.querySelector('.info-strip');
             if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(alertBanner, anchor);
-          } else if (!d.alert && alertBanner) {
+          } else if (!d.alert && !d.ramAlert && alertBanner) {
             alertBanner.remove();
             alertBanner = null;
           }
@@ -2086,6 +2089,8 @@ const EVENT_DISPLAY = {
   repowise_install_started:   { label: 'Repowise Install Started',   bg: '#fef3c7', color: '#92400e' },
   repowise_install_completed: { label: 'Repowise Install Done',      bg: '#dcfce7', color: '#166534' },
   repowise_install_failed:    { label: 'Repowise Install Failed',    bg: '#fee2e2', color: '#991b1b' },
+  cpu_spike:                  { label: 'CPU Spike',                  bg: '#fee2e2', color: '#991b1b' },
+  ram_spike:                  { label: 'RAM Spike',                  bg: '#fff7ed', color: '#9a3412' },
 };
 
 const ACTOR_STYLE = {
@@ -5314,6 +5319,8 @@ function renderSettings(vals, flash) {
             ${fld('PRX_PREVOYANT_MAX_SIZE_MB','Size quota for ~/.prevoyant/ (MB)','number',v('PRX_PREVOYANT_MAX_SIZE_MB'),'500','Maximum allowed size of the ~/.prevoyant/ folder. The alert threshold is a percentage of this value. Default: 500 MB.')}
             ${fld('PRX_DISK_CAPACITY_ALERT_PCT','Alert threshold (% of quota)','number',v('PRX_DISK_CAPACITY_ALERT_PCT'),'80','Send an email alert when ~/.prevoyant/ reaches this percentage of the size quota. E.g. 80% of 500 MB = alert at 400 MB. Default: 80.')}
             ${fld('PRX_DISK_CLEANUP_INTERVAL_DAYS','Cleanup interval (days)','number',v('PRX_DISK_CLEANUP_INTERVAL_DAYS'),'7','How many days between scheduled house-cleaning prompts. Set 0 to disable auto-cleanup prompts. Default: 7.')}
+            ${fld('PRX_CPU_ALERT_PCT','CPU spike threshold (%)','number',v('PRX_CPU_ALERT_PCT'),'80','Log a cpu_spike to the activity log when per-process CPU stays above this % for ~6s (3 consecutive samples). Also shows a dashboard alert banner. Default: 80.')}
+            ${fld('PRX_RAM_ALERT_PCT','RAM spike threshold (%)','number',v('PRX_RAM_ALERT_PCT'),'85','Log a ram_spike to the activity log when system RAM usage stays above this % for ~6s (3 consecutive samples). Default: 85.')}
           </div>
         </div>
       </details>
@@ -7580,6 +7587,7 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'PRX_BASIC_MEMORY_ENABLED', 'BASIC_MEMORY_HOME',
     'PRX_WATCHDOG_ENABLED', 'PRX_WATCHDOG_INTERVAL_SECS', 'PRX_WATCHDOG_FAIL_THRESHOLD',
     'PRX_DISK_MONITOR_ENABLED', 'PRX_DISK_MONITOR_INTERVAL_MINS', 'PRX_PREVOYANT_MAX_SIZE_MB', 'PRX_DISK_CAPACITY_ALERT_PCT', 'PRX_DISK_CLEANUP_INTERVAL_DAYS',
+    'PRX_CPU_ALERT_PCT', 'PRX_RAM_ALERT_PCT',
     'PRX_WATCH_ENABLED', 'PRX_WATCH_POLL_INTERVAL', 'PRX_WATCH_MAX_POLLS',
     'PRX_WATCH_LOG_KEEP_DAYS', 'PRX_WATCH_LOG_KEEP_PER_TICKET',
     'PRX_KBFLOW_ENABLED', 'PRX_KBFLOW_INTERVAL_DAYS', 'PRX_KBFLOW_LOOKBACK_DAYS', 'PRX_KBFLOW_MAX_FLOWS',
