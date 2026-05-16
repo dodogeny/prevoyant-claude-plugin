@@ -35,10 +35,10 @@ function intervalDays(){ return Math.max(1, parseFloat(process.env.PRX_KBFLOW_IN
 function intervalMs()  { return intervalDays() * 24 * 60 * 60 * 1000; }
 
 // How many days of Jira history to scan when identifying high-frequency flows.
-function lookbackDays(){ return parseInt(process.env.PRX_KBFLOW_LOOKBACK_DAYS || '30', 10); }
+function lookbackDays(){ return parseInt(process.env.PRX_KBFLOW_LOOKBACK_DAYS || '14', 10); }
 
 // Maximum number of flows to analyse in one scan. Keeps runs focused.
-function maxFlows()    { return parseInt(process.env.PRX_KBFLOW_MAX_FLOWS || '3', 10); }
+function maxFlows()    { return parseInt(process.env.PRX_KBFLOW_MAX_FLOWS || '1', 10); }
 
 // Maximum hours the Claude process is allowed to run before being killed.
 function timeoutHours(){ return Math.max(0.25, parseFloat(process.env.PRX_KBFLOW_TIMEOUT_HOURS || '2')); }

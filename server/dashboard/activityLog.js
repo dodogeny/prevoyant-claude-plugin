@@ -9,10 +9,12 @@ const { spawn }      = require('child_process');
 const wa             = require('../notifications/whatsapp');
 const tg             = require('../notifications/telegram');
 
-const MAX_EVENTS = 5000;
-let events  = [];
-let nextId  = 1;
-let _dirty  = false;
+const MAX_EVENTS     = 5000;
+const SAVE_DEBOUNCE  = 2000;   // batch writes within a 2s window
+let events     = [];
+let nextId     = 1;
+let _dirty     = false;
+let _saveTimer = null;
 
 // ── Storage ───────────────────────────────────────────────────────────────────
 
@@ -25,11 +27,29 @@ function logPath() {
 }
 
 function saveLog() {
+  _dirty     = false;
+  _saveTimer = null;
+  const snapshot = JSON.stringify(events);
+  fs.mkdirSync(serverDir(), { recursive: true });
+  fs.writeFile(logPath(), snapshot, err => {
+    if (err) console.warn('[activity] save failed:', err.message);
+  });
+}
+
+// Synchronous save — only for process-exit handlers where async won't complete.
+function saveLogSync() {
   _dirty = false;
+  if (_saveTimer) { clearTimeout(_saveTimer); _saveTimer = null; }
   try {
     fs.mkdirSync(serverDir(), { recursive: true });
     fs.writeFileSync(logPath(), JSON.stringify(events));
   } catch (_) { /* best-effort */ }
+}
+
+function _scheduleSave() {
+  if (_saveTimer) return;                 // timer already pending — will capture latest events
+  _dirty     = true;
+  _saveTimer = setTimeout(saveLog, SAVE_DEBOUNCE);
 }
 
 function loadLog() {
@@ -243,11 +263,7 @@ function record(type, ticketKey = null, actor = 'system', details = {}) {
   events.push(event);
   if (events.length > MAX_EVENTS) events.splice(0, events.length - MAX_EVENTS);
   _chartCache = null; // invalidate cached chart data on each new event
-  // Deferred save: batches rapid back-to-back writes into a single disk flush
-  if (!_dirty) {
-    _dirty = true;
-    setImmediate(saveLog);
-  }
+  _scheduleSave();    // debounced async write — batches bursts into one disk flush
   fireWebhook(event);
   fireWhatsApp(event);
   fireTelegram(event);
@@ -382,9 +398,9 @@ function getAllActors() { return [...new Set(events.map(e => e.actor))].sort(); 
 
 // ── Bootstrap ─────────────────────────────────────────────────────────────────
 loadLog();
-// Flush on process exit so nothing is lost on clean shutdown or signals
-process.on('exit',    () => { if (_dirty) saveLog(); });
-process.on('SIGINT',  () => { if (_dirty) saveLog(); process.exit(0); });
-process.on('SIGTERM', () => { if (_dirty) saveLog(); process.exit(0); });
+// Flush synchronously on exit so nothing is lost during clean shutdown.
+process.on('exit',    () => { if (_dirty || _saveTimer) saveLogSync(); });
+process.on('SIGINT',  () => { if (_dirty || _saveTimer) saveLogSync(); process.exit(0); });
+process.on('SIGTERM', () => { if (_dirty || _saveTimer) saveLogSync(); process.exit(0); });
 
 module.exports = { record, getFiltered, getStats, getChartData, getAllTypes, getAllActors, saveLog };
