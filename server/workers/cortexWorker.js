@@ -320,6 +320,49 @@ function synthesizeGlossary() {
   return withHeader(`# Cortex — Glossary\n\n_Auto-extracted from \`shared/*.md\` headings._\n\n${body}\n`);
 }
 
+function synthesizeObservations() {
+  const mem  = cortex.memory();
+  const keys = mem.byTag('agent-observed');
+  if (!keys.length)
+    return withHeader('# Cortex — Agent Observations\n\n_(no agent observations yet)_\n');
+
+  const VALID_TYPES = new Set(['pattern', 'decision', 'business-rule', 'anomaly', 'hotspot', 'context']);
+
+  const items = keys
+    .map(k => ({ key: k, value: mem.get(k) }))
+    .filter(e => e.value !== null)
+    .sort((a, b) => {
+      const ta = (a.value && typeof a.value === 'object' && a.value.ts) ? a.value.ts : 0;
+      const tb = (b.value && typeof b.value === 'object' && b.value.ts) ? b.value.ts : 0;
+      return tb - ta;
+    });
+
+  const lines = [
+    '# Cortex — Agent Observations\n',
+    '_Real-time discoveries written by AI agents during active sessions.',
+    'Updated within 30s of each observe call. Synced via git in distributed mode._\n',
+  ];
+
+  for (const { key, value } of items) {
+    const v       = (value && typeof value === 'object') ? value : { summary: String(value) };
+    const type    = VALID_TYPES.has(v.type) ? v.type : 'context';
+    const summary = v.summary || (v.raw != null ? JSON.stringify(v.raw) : JSON.stringify(v));
+    const ticket  = v.ticket || null;
+    const ts      = v.ts ? new Date(v.ts).toISOString() : null;
+
+    lines.push(`## ${key}\n`);
+    const meta = [`**Type:** \`${type}\``];
+    if (ticket) meta.push(`**Ticket:** ${ticket}`);
+    if (ts)     meta.push(`**At:** ${ts}`);
+    lines.push(meta.join('  |  '));
+    lines.push('');
+    lines.push(summary);
+    lines.push('');
+  }
+
+  return withHeader(lines.join('\n'));
+}
+
 const SYNTHESIZERS = {
   'architecture':   synthesizeArchitecture,
   'business-rules': synthesizeBusinessRules,
@@ -327,6 +370,7 @@ const SYNTHESIZERS = {
   'decisions':      synthesizeDecisions,
   'hotspots':       synthesizeHotspots,
   'glossary':       synthesizeGlossary,
+  'observations':   synthesizeObservations,
 };
 
 function buildIndex(state) {

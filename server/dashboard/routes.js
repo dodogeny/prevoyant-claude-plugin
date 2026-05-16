@@ -6489,6 +6489,31 @@ router.get('/cortex/memory/signals', (req, res) => {
   res.json({ ok: true, signals: require('../runner/cortexLayer').memory().signals(n) });
 });
 
+// Single Step-0 context call — returns synthesised facts + recent agent observations.
+// Agents call this once instead of assembling from /facts + /recent separately.
+//   GET /cortex/memory/context?ticket=PRX-123&n=20
+router.get('/cortex/memory/context', (req, res) => {
+  if (!_memGuard(res)) return;
+  const ticket = (req.query.ticket || '').toString().toUpperCase().slice(0, 32) || null;
+  const n      = Math.min(50, Math.max(1, parseInt(req.query.n || '20', 10)));
+
+  const cortex = require('../runner/cortexLayer');
+  const mem    = cortex.memory();
+
+  const facts = {};
+  for (const k of mem.byTag('fact')) {
+    const v = mem.get(k);
+    if (v !== null) facts[k] = v;
+  }
+
+  const allObs = mem.recent(n, { tag: 'agent-observed' });
+  const ticketObs = ticket
+    ? allObs.filter(e => e.value && typeof e.value === 'object' && e.value.ticket === ticket)
+    : [];
+
+  res.json({ ok: true, facts, factCount: Object.keys(facts).length, recentObservations: allObs, ticketObservations: ticketObs, ticket });
+});
+
 router.get('/cortex/memory/stats', (_req, res) => {
   if (!_memGuard(res)) return;
   res.json({ ok: true, stats: require('../runner/cortexLayer').memory().stats() });
@@ -6528,24 +6553,44 @@ router.get('/cortex/memory/health', (_req, res) => {
 // layer between synthesis cycles.  Validates inputs, records an activity event,
 // and fires a debounced re-synthesis via serverEvents so discoveries don't sit
 // idle until the next 6-hour heartbeat.
+//
+// Body fields:
+//   key        (required) — unique identifier, e.g. "pattern:cache-invalidation"
+//   summary    (required) — human-readable description of the discovery (max 4000 chars)
+//   type       (optional) — one of: pattern | decision | business-rule | anomaly | hotspot | context (default: context)
+//   ticketKey  (optional) — Jira ticket this observation belongs to, e.g. "PRX-123"
+//   tags       (optional) — additional tag strings
+//   ttl        (optional) — milliseconds before this observation expires (0 = permanent)
+//   value      (optional) — raw machine-readable payload stored alongside summary
 router.post('/cortex/memory/observe', express.json(), (req, res) => {
   if (!_memGuard(res)) return;
   const b   = req.body || {};
   const key = (b.key || '').toString().trim().slice(0, 256);
-  const { value } = b;
   const tags      = Array.isArray(b.tags) ? b.tags.filter(t => typeof t === 'string').slice(0, 20) : [];
   const ttl       = (typeof b.ttl === 'number' && b.ttl > 0) ? b.ttl : 0;
   const ticketKey = (b.ticketKey || '').toString().toUpperCase().slice(0, 32) || null;
 
-  if (!key)              return res.status(400).json({ ok: false, error: 'key required' });
-  if (value === undefined) return res.status(400).json({ ok: false, error: 'value required' });
+  const VALID_TYPES = new Set(['pattern', 'decision', 'business-rule', 'anomaly', 'hotspot', 'context']);
+  const type    = VALID_TYPES.has(b.type) ? b.type : 'context';
+  // Accept summary directly, or fall back to a stringified value for backward compat.
+  const summary = (
+    b.summary ||
+    (typeof b.value === 'string' ? b.value : '') ||
+    (b.value != null ? JSON.stringify(b.value) : '')
+  ).toString().slice(0, 4000);
+
+  if (!key)     return res.status(400).json({ ok: false, error: 'key required' });
+  if (!summary) return res.status(400).json({ ok: false, error: 'summary (or value) required' });
 
   if (!tags.includes('agent-observed')) tags.push('agent-observed');
+  if (!tags.includes(type))             tags.push(type);
+
+  const value = { type, summary, ticket: ticketKey, ts: Date.now(), raw: b.value ?? null };
 
   const cortex = require('../runner/cortexLayer');
   const seq    = cortex.memory().put(key, value, { tags, ttl });
 
-  activityLog.record('cortex_observed', ticketKey, 'claude', { key, tags, seq });
+  activityLog.record('cortex_observed', ticketKey, 'claude', { key, type, tags, seq });
   serverEvents.emit('cortex-observation-written', { key, tags });
   res.json({ ok: true, seq });
 });

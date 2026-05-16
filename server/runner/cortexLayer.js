@@ -57,12 +57,13 @@ function resolvedCortexDir() {
 
 // Synthesised fact files — keep this list aligned with cortexWorker.js.
 const FACT_FILES = [
-  { id: 'architecture',    name: 'Architecture',     file: 'architecture.md',     icon: '🏗️' },
-  { id: 'business-rules',  name: 'Business Rules',   file: 'business-rules.md',   icon: '📜' },
-  { id: 'patterns',        name: 'Patterns',         file: 'patterns.md',         icon: '🧩' },
-  { id: 'decisions',       name: 'Confirmed Decisions', file: 'decisions.md',     icon: '✅' },
-  { id: 'hotspots',        name: 'Hotspots',         file: 'hotspots.md',         icon: '🔥' },
-  { id: 'glossary',        name: 'Glossary',         file: 'glossary.md',         icon: '📖' },
+  { id: 'architecture',    name: 'Architecture',        file: 'architecture.md',    icon: '🏗️' },
+  { id: 'business-rules',  name: 'Business Rules',      file: 'business-rules.md',  icon: '📜' },
+  { id: 'patterns',        name: 'Patterns',            file: 'patterns.md',        icon: '🧩' },
+  { id: 'decisions',       name: 'Confirmed Decisions', file: 'decisions.md',       icon: '✅' },
+  { id: 'hotspots',        name: 'Hotspots',            file: 'hotspots.md',        icon: '🔥' },
+  { id: 'glossary',        name: 'Glossary',            file: 'glossary.md',        icon: '📖' },
+  { id: 'observations',    name: 'Agent Observations',  file: 'observations.md',    icon: '🔭' },
 ];
 
 // ── Resolvers ─────────────────────────────────────────────────────────────────
