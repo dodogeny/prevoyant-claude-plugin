@@ -350,10 +350,12 @@ function synthesizeObservations() {
     const ticket  = v.ticket || null;
     const ts      = v.ts ? new Date(v.ts).toISOString() : null;
 
-    lines.push(`## ${key}\n`);
+    const heading = v.promoted ? `## ${key} ✓ promoted` : `## ${key}`;
+    lines.push(`${heading}\n`);
     const meta = [`**Type:** \`${type}\``];
-    if (ticket) meta.push(`**Ticket:** ${ticket}`);
-    if (ts)     meta.push(`**At:** ${ts}`);
+    if (ticket)      meta.push(`**Ticket:** ${ticket}`);
+    if (ts)          meta.push(`**At:** ${ts}`);
+    if (v.promoted)  meta.push(`**Promoted →** \`${v.promotedTo}\``);
     lines.push(meta.join('  |  '));
     lines.push('');
     lines.push(summary);

@@ -6605,6 +6605,81 @@ router.post('/cortex/memory/signal', express.json(), (req, res) => {
   res.json({ ok: true });
 });
 
+// Graduate an LMDB observation into the permanent KB so it survives beyond the
+// cortex layer and influences future synthesis from the source KB files.
+//
+//   POST /cortex/memory/promote   { key }
+//
+// The observation is appended to the appropriate shared/*.md file based on its
+// type, then re-tagged as 'promoted' in LMDB so observations.md shows status.
+// The KB file change is picked up by fs.watch → triggers a new synthesis pass.
+//
+// Type → KB file mapping:
+//   pattern       → shared/patterns.md
+//   business-rule → shared/business-rules.md
+//   decision      → shared/decisions.md
+//   hotspot       → shared/architecture.md
+//   anomaly       → shared/patterns.md
+//   context       → shared/architecture.md
+const _PROMOTE_TARGETS = {
+  'pattern':       'shared/patterns.md',
+  'business-rule': 'shared/business-rules.md',
+  'decision':      'shared/decisions.md',
+  'hotspot':       'shared/architecture.md',
+  'anomaly':       'shared/patterns.md',
+  'context':       'shared/architecture.md',
+};
+
+router.post('/cortex/memory/promote', express.json(), (req, res) => {
+  if (!_memGuard(res)) return;
+  const b   = req.body || {};
+  const key = (b.key || '').toString().trim().slice(0, 256);
+  if (!key) return res.status(400).json({ ok: false, error: 'key required' });
+
+  const cortex = require('../runner/cortexLayer');
+  const mem    = cortex.memory();
+  const raw    = mem.get(key);
+  if (raw === null) return res.status(404).json({ ok: false, error: `observation '${key}' not found` });
+
+  const v       = (raw && typeof raw === 'object') ? raw : { type: 'context', summary: String(raw) };
+  const type    = v.type || 'context';
+  const summary = v.summary || (v.raw != null ? JSON.stringify(v.raw) : JSON.stringify(v));
+  const ticket  = v.ticket || null;
+
+  const kbFile = _PROMOTE_TARGETS[type];
+  if (!kbFile) return res.status(400).json({ ok: false, error: `no KB target for type '${type}'` });
+
+  const kbBase = cortex.kbDir();
+  const target = path.join(kbBase, kbFile);
+  try { fs.mkdirSync(path.dirname(target), { recursive: true }); } catch (_) {}
+
+  const date  = new Date().toISOString().slice(0, 10);
+  const block = [
+    '',
+    `## ${key}`,
+    `<!-- promoted from Cortex on ${date}${ticket ? ' · ticket: ' + ticket : ''} -->`,
+    '',
+    summary,
+    '',
+  ].join('\n');
+
+  try {
+    fs.appendFileSync(target, block, 'utf8');
+  } catch (err) {
+    return res.status(500).json({ ok: false, error: `could not write to KB: ${err.message}` });
+  }
+
+  // Re-tag the observation as promoted — observations.md will surface the status marker.
+  mem.put(key, { ...v, promoted: true, promotedAt: Date.now(), promotedTo: kbFile }, {
+    tags: ['agent-observed', type, 'promoted'],
+    ttl: 0,
+  });
+
+  activityLog.record('cortex_observed', ticket, 'claude', { key, type, promoted: true, kbFile });
+  serverEvents.emit('cortex-observation-written', { key, tags: ['agent-observed', type, 'promoted'] });
+  res.json({ ok: true, key, type, kbFile, target });
+});
+
 router.get('/disk/json', (_req, res) => {
   res.json({ status: readDiskStatus(), log: readDiskLog().slice(-100) });
 });

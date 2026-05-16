@@ -263,6 +263,8 @@ module.exports = {
   cortexStats,
   readFactSafe,
   readIndexSafe,
+  // KB directory (used by promote endpoint to locate shared/*.md files)
+  kbDir: kbDirForCortex,
   // Memory engine
   memory,
   // Builder-lock API
