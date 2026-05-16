@@ -119,13 +119,27 @@ function emit(result) {
   say('');
 
   // ─── Step 1: already installed? ────────────────────────────────────────────
-  if (which('repowise')) {
-    const v = spawnSync('repowise', ['--version'], { encoding: 'utf8' });
-    summary.success = true;
-    summary.via     = 'already-installed';
-    summary.message = (v.stdout || v.stderr || '').trim() || 'repowise is on PATH';
+  // Check PATH first, then uv's tool bin dir (which may not be on the server's
+  // PATH even though it's on the user's interactive shell PATH).
+  let rwAbsPath = which('repowise');
+  if (!rwAbsPath && which('uv')) {
+    try {
+      const uvBin = spawnSync('uv', ['tool', 'dir', '--bin'], { encoding: 'utf8', timeout: 5_000 });
+      if (uvBin.status === 0 && uvBin.stdout.trim()) {
+        const candidate = path.join(uvBin.stdout.trim(), 'repowise' + (process.platform === 'win32' ? '.exe' : ''));
+        if (fs.existsSync(candidate)) rwAbsPath = candidate;
+      }
+    } catch (_) {}
+  }
+  if (rwAbsPath) {
+    const v = spawnSync(rwAbsPath, ['--version'], { encoding: 'utf8' });
+    summary.success  = true;
+    summary.via      = 'already-installed';
+    summary.message  = (v.stdout || v.stderr || '').trim() || 'repowise found';
+    summary.absPath  = rwAbsPath;
     summary.pythonInstalled = true;
     say('✓ repowise is already installed — ' + summary.message);
+    if (rwAbsPath !== 'repowise') say(`  path: ${rwAbsPath} (set PRX_REPOWISE_PATH if not on server PATH)`);
     return emit(summary);
   }
 
@@ -187,10 +201,20 @@ function emit(result) {
   if (which('uv')) {
     const r = tryCmd('uv', ['tool', 'install', 'repowise']);
     if (r.ok) {
+      // Resolve the absolute path so the caller can set PRX_REPOWISE_PATH if needed.
+      let absPath = which('repowise');
+      if (!absPath) {
+        try {
+          const uvBin = spawnSync('uv', ['tool', 'dir', '--bin'], { encoding: 'utf8', timeout: 5_000 });
+          if (uvBin.status === 0) absPath = path.join(uvBin.stdout.trim(), 'repowise');
+        } catch (_) {}
+      }
       summary.success = true;
       summary.via     = 'uv';
-      summary.message = 'Installed via uv tool';
+      summary.absPath = absPath || null;
+      summary.message = `Installed via uv tool${absPath ? ' (' + absPath + ')' : ''}`;
       say('\n✓ Installed via uv tool');
+      if (absPath && absPath !== 'repowise') say(`  path: ${absPath} — set PRX_REPOWISE_PATH if not on server PATH`);
       return emit(summary);
     }
   }
@@ -212,5 +236,7 @@ function emit(result) {
   summary.hint    = `Try running manually: ${py.cmd} -m pip install --user repowise`;
   say('\n✗ ' + summary.message);
   emit(summary);
-  process.exit(1);
+  // Use process.exitCode instead of process.exit() so the event loop drains
+  // naturally and stdout is fully flushed before the process terminates.
+  process.exitCode = 1;
 })();

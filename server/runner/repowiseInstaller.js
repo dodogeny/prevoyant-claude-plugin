@@ -127,7 +127,12 @@ function ensureInstalled(opts = {}) {
       try { child.kill('SIGTERM'); } catch (_) {}
     }, 15 * 60_000);
 
-    child.on('exit', (code) => {
+    // Use 'close' (not 'exit') so we wait for all stdio streams to drain before
+    // parsing stdout.  'exit' fires when the process exits; 'close' fires after
+    // all piped I/O has been fully read.  The difference matters when the child
+    // calls console.log() and then exits immediately — the pipe buffer may not
+    // have been flushed to the parent by the time 'exit' fires.
+    child.on('close', (code) => {
       clearTimeout(timer);
       pendingPromise = null;
 

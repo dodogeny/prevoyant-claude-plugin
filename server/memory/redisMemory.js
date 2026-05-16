@@ -71,6 +71,12 @@ function getClient() {
     });
 
     _client.on('error', err => {
+      // Auth failures won't resolve on retry — disconnect immediately to stop the spam.
+      if (err.message && /WRONGPASS|NOAUTH|ERR invalid password/i.test(err.message)) {
+        console.warn(`[redis-memory] Auth failed — stopping reconnection attempts. Fix PRX_REDIS_URL or set PRX_REDIS_ENABLED=N.`);
+        setImmediate(() => resetClient());
+        return;
+      }
       // Suppress noisy connection-refused spam; log everything else.
       if (!['ECONNREFUSED', 'ENOTFOUND', 'ETIMEDOUT', 'ECONNRESET'].includes(err.code)) {
         console.warn(`[redis-memory] ${err.message}`);

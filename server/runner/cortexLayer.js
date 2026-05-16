@@ -64,6 +64,8 @@ const FACT_FILES = [
   { id: 'hotspots',        name: 'Hotspots',            file: 'hotspots.md',        icon: '🔥' },
   { id: 'glossary',        name: 'Glossary',            file: 'glossary.md',        icon: '📖' },
   { id: 'observations',    name: 'Agent Observations',  file: 'observations.md',    icon: '🔭' },
+  { id: 'autonomy-queue', name: 'Autonomy Queue',      file: 'autonomy-queue.md',  icon: '⏳' },
+  { id: 'session-memory', name: 'Session Memory',      file: 'session-memory.md',  icon: '🧩' },
 ];
 
 // ── Resolvers ─────────────────────────────────────────────────────────────────

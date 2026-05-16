@@ -551,6 +551,11 @@ function startCortex() {
     distributed,
     debounceSecs:    parseInt(process.env.PRX_CORTEX_DEBOUNCE_SECS || '30', 10),
   });
+
+  // Start the autonomy scheduler — confidence-gated auto-promotion of observations.
+  const autonomyScheduler = require('./runner/autonomyScheduler');
+  const cortexLayer       = require('./runner/cortexLayer');
+  autonomyScheduler.start(cortexLayer);
 }
 
 function stopCortex() {
@@ -559,6 +564,7 @@ function stopCortex() {
     cortexWorker = null;
     activityLog.record('cortex_stopped', null, 'system', { reason: 'graceful' });
   }
+  try { require('./runner/autonomyScheduler').stop(); } catch (_) {}
 }
 
 process.on('SIGTERM', () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); stopKbFlowAnalyst(); stopPatternMiner(); stopKbStaleness(); stopStaleBranchDetector(); stopDecisionOutcome(); stopCortex(); setTimeout(() => process.exit(0), 600); });

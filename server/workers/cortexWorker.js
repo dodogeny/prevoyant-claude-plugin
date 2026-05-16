@@ -365,6 +365,85 @@ function synthesizeObservations() {
   return withHeader(lines.join('\n'));
 }
 
+function synthesizeAutonomyQueue() {
+  const mem  = cortex.memory();
+  const keys = mem.byTag('pending-promotion');
+  const level = Math.min(3, Math.max(0, parseInt(process.env.PRX_CORTEX_AUTONOMY_LEVEL || '0', 10)));
+
+  const lines = [
+    '# Cortex — Autonomy Queue\n',
+    `_Autonomy level: **${level}**_ (0=manual · 1=memory · 2=confidence-gated · 3=full-trust)\n`,
+  ];
+
+  if (!keys.length) {
+    lines.push('_(no observations pending auto-promotion)_\n');
+    return withHeader(lines.join('\n'));
+  }
+
+  const items = keys
+    .map(k => ({ key: k, value: mem.get(k) }))
+    .filter(e => e.value !== null && typeof e.value === 'object')
+    .sort((a, b) => (b.value.queuedForPromotionAt || 0) - (a.value.queuedForPromotionAt || 0));
+
+  for (const { key, value: v } of items) {
+    const status = v.rejected ? '❌ rejected' : v.promoted ? '✅ promoted' : '⏳ pending';
+    const queuedAt = v.queuedForPromotionAt ? new Date(v.queuedForPromotionAt).toISOString() : null;
+    const promotedAt = v.promotedAt ? new Date(v.promotedAt).toISOString() : null;
+    lines.push(`## ${key}  ${status}\n`);
+    const meta = [`**Type:** \`${v.type || 'context'}\``, `**Confirms:** ${v.confirmCount || 1}`];
+    if (queuedAt)   meta.push(`**Queued:** ${queuedAt}`);
+    if (promotedAt) meta.push(`**Promoted:** ${promotedAt}`);
+    if (v.promotedTo) meta.push(`**→** \`${v.promotedTo}\``);
+    lines.push(meta.join('  |  '));
+    lines.push('');
+    lines.push(v.summary || '');
+    lines.push('');
+  }
+
+  return withHeader(lines.join('\n'));
+}
+
+function synthesizeSessionMemory() {
+  const mem  = cortex.memory();
+  const keys = mem.byTag('session-memory');
+
+  if (!keys.length)
+    return withHeader('# Cortex — Session Memory\n\n_(no session summaries recorded yet)_\n');
+
+  const items = keys
+    .map(k => ({ key: k, value: mem.get(k) }))
+    .filter(e => e.value !== null)
+    .sort((a, b) => {
+      const ta = (a.value && typeof a.value === 'object' && a.value.ts) ? a.value.ts : 0;
+      const tb = (b.value && typeof b.value === 'object' && b.value.ts) ? b.value.ts : 0;
+      return tb - ta;
+    });
+
+  const lines = [
+    '# Cortex — Session Memory\n',
+    '_Per-agent session summaries. Agents write these at session end with type=session-summary.',
+    'Used by agents at session start to recall what they worked on previously._\n',
+  ];
+
+  for (const { key, value } of items) {
+    const v       = (value && typeof value === 'object') ? value : { summary: String(value) };
+    const persona = v.persona || 'unknown';
+    const ts      = v.ts ? new Date(v.ts).toISOString() : null;
+    const ticket  = v.ticket || null;
+
+    lines.push(`## ${key}\n`);
+    const meta = [`**Agent:** ${persona}`];
+    if (ticket) meta.push(`**Ticket:** ${ticket}`);
+    if (ts)     meta.push(`**At:** ${ts}`);
+    lines.push(meta.join('  |  '));
+    lines.push('');
+    lines.push(v.summary || '');
+    lines.push('');
+  }
+
+  return withHeader(lines.join('\n'));
+}
+
 const SYNTHESIZERS = {
   'architecture':   synthesizeArchitecture,
   'business-rules': synthesizeBusinessRules,
@@ -373,6 +452,8 @@ const SYNTHESIZERS = {
   'hotspots':       synthesizeHotspots,
   'glossary':       synthesizeGlossary,
   'observations':   synthesizeObservations,
+  'autonomy-queue': synthesizeAutonomyQueue,
+  'session-memory': synthesizeSessionMemory,
 };
 
 function buildIndex(state) {

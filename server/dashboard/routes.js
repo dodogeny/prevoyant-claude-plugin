@@ -303,6 +303,40 @@ const BASE_CSS = `
     top: 0;
     z-index: 100;
   }
+  header.autonomous-mode {
+    background: linear-gradient(90deg, #78350f, #92400e, #78350f);
+    background-size: 200% 100%;
+    animation: autonomy-sweep 6s ease-in-out infinite;
+    border-bottom-color: rgba(251,191,36,.25);
+  }
+  @keyframes autonomy-sweep {
+    0%, 100% { background-position: 0% 0%; }
+    50% { background-position: 100% 0%; }
+  }
+  .autonomous-badge {
+    display: flex;
+    align-items: center;
+    gap: .35rem;
+    background: rgba(255,255,255,.1);
+    border: 1px solid rgba(251,191,36,.35);
+    border-radius: 20px;
+    padding: 3px 10px 3px 7px;
+    font-size: .72rem;
+    font-weight: 700;
+    color: #fef3c7;
+    letter-spacing: .05em;
+    text-transform: uppercase;
+    flex-shrink: 0;
+  }
+  .autonomous-icon {
+    display: flex;
+    align-items: center;
+    animation: autonomous-pulse 2s ease-in-out infinite;
+  }
+  @keyframes autonomous-pulse {
+    0%, 100% { opacity: 1; transform: scale(1); }
+    50% { opacity: .65; transform: scale(1.2); }
+  }
 
   header h1 {
     font-size: 1rem;
@@ -1099,9 +1133,13 @@ function renderDashboard(stats, budget) {
   </style>
 </head>
 <body>
-  <header>
+  <header${parseInt(process.env.PRX_CORTEX_AUTONOMY_LEVEL || '0', 10) === 3 ? ' class="autonomous-mode"' : ''}>
     <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg></span>Prevoyant Server</h1>
     <span class="version-badge">v${pluginVersion}</span>
+    ${parseInt(process.env.PRX_CORTEX_AUTONOMY_LEVEL || '0', 10) === 3 ? `<span class="autonomous-badge" title="Agents can promote observations directly to the KB without human review. Change in Settings → Cortex.">
+      <span class="autonomous-icon"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="10" x="3" y="11" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg></span>
+      Full Autonomy
+    </span>` : ''}
     <div class="meta"></div>
     <button type="button" class="header-btn" onclick="openModal('add-ticket-modal')">
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
@@ -3276,6 +3314,91 @@ function renderCortex() {
     })();
     </script>
 
+    <!-- ── Autonomy queue panel ───────────────────────────────────────────── -->
+    ${(() => {
+      const autonomy = require('../runner/autonomyScheduler');
+      const level    = autonomy.autonomyLevel();
+      const threshold = autonomy.promoteThreshold();
+      const levelLabels = ['manual', 'cross-session memory', 'confidence-gated', 'full-trust'];
+      const levelColors = ['#6b7280','#3b82f6','#f59e0b','#10b981'];
+      return `
+    <div id="autonomy-panel" style="margin-bottom:1.2rem;border-radius:var(--r-lg);border:1px solid var(--border-light);background:var(--surface);box-shadow:var(--shadow);overflow:hidden">
+      <div style="padding:.6rem 1.1rem;background:rgba(16,185,129,.06);border-bottom:1px solid var(--border-light);display:flex;align-items:center;gap:.6rem">
+        <span style="font-size:.95rem">🤖</span>
+        <span style="font-size:.78rem;font-weight:700;text-transform:uppercase;letter-spacing:.07em;color:var(--text-2)">Autonomy</span>
+        <span style="margin-left:auto;font-size:.7rem;padding:.15rem .6rem;border-radius:999px;background:${levelColors[level]}20;color:${levelColors[level]};font-weight:700">LEVEL ${level} — ${(levelLabels[level] || '').toUpperCase()}</span>
+      </div>
+      <div style="padding:.85rem 1.1rem">
+        <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:.7rem;margin-bottom:.8rem">
+          <div class="stat-card" style="background:transparent;box-shadow:none;border:none;padding:0">
+            <div class="stat-lbl">Autonomy Level</div>
+            <div class="stat-val" style="font-size:1.1rem;color:${levelColors[level]}">${level} / 3</div>
+            <div class="stat-sub">${levelLabels[level]}</div>
+          </div>
+          <div class="stat-card" style="background:transparent;box-shadow:none;border:none;padding:0">
+            <div class="stat-lbl">Confirm Threshold</div>
+            <div class="stat-val" style="font-size:1.1rem">${threshold}×</div>
+            <div class="stat-sub">re-observations before queuing</div>
+          </div>
+          <div class="stat-card" style="background:transparent;box-shadow:none;border:none;padding:0">
+            <div class="stat-lbl">Review Window</div>
+            <div class="stat-val" style="font-size:1.1rem">${process.env.PRX_CORTEX_AUTO_PROMOTE_DELAY_HOURS || 24}h</div>
+            <div class="stat-sub">${level >= 2 ? 'before auto-promotion' : 'not active at this level'}</div>
+          </div>
+          <div class="stat-card" style="background:transparent;box-shadow:none;border:none;padding:0">
+            <div class="stat-lbl">Pending Queue</div>
+            <div class="stat-val" id="aq-pending" style="font-size:1.1rem">—</div>
+            <div class="stat-sub">observations awaiting promotion</div>
+          </div>
+        </div>
+        <div id="aq-list" style="display:none"></div>
+        <div style="font-size:.75rem;color:var(--text-3);margin-top:.4rem">
+          ${level === 0 ? '⚙ Level 0: all promotions are manual via <code>POST /cortex/memory/promote</code>.' : ''}
+          ${level === 1 ? '⚙ Level 1: confirmCount tracked across sessions. No auto-promotion — upgrade to Level 2 to enable.' : ''}
+          ${level === 2 ? '⚙ Level 2: observations with ${threshold}+ confirms queue for promotion after ${process.env.PRX_CORTEX_AUTO_PROMOTE_DELAY_HOURS || 24}h review window.' : ''}
+          ${level === 3 ? '⚙ Level 3: observations with ${threshold}+ confirms promote immediately to KB — no review window.' : ''}
+          Change via <code>PRX_CORTEX_AUTONOMY_LEVEL</code> in <a href="/dashboard/settings#cortex" style="color:var(--accent)">Settings</a>.
+        </div>
+      </div>
+    </div>
+    <script>
+    (function() {
+      async function pollAutonomy() {
+        try {
+          const r = await fetch('/dashboard/cortex/memory/pending-promotions').then(x => x.json()).catch(() => null);
+          if (!r) return;
+          const el = document.getElementById('aq-pending');
+          if (el) { el.textContent = r.count; el.style.color = r.count > 0 ? '#f59e0b' : 'inherit'; }
+          const list = document.getElementById('aq-list');
+          if (!list) return;
+          if (!r.count) { list.style.display = 'none'; return; }
+          list.style.display = 'block';
+          list.innerHTML = r.entries.slice(0, 10).map(e => {
+            const v = e.value || {};
+            const qAt = v.queuedForPromotionAt ? new Date(v.queuedForPromotionAt).toLocaleString() : '—';
+            return \`<div style="display:flex;align-items:center;gap:.6rem;padding:.35rem 0;border-bottom:1px solid var(--border-light);font-size:.78rem">
+              <span style="flex:1;font-weight:600;color:var(--text-1)">\${e.key}</span>
+              <span style="color:var(--text-3)">\${v.type || 'context'} · \${v.confirmCount || 1}× · queued \${qAt}</span>
+              <button onclick="rejectPromotion('\${e.key}')" style="padding:.15rem .5rem;font-size:.72rem;background:#fee2e2;border:1px solid #fca5a5;border-radius:4px;cursor:pointer;color:#991b1b">Reject</button>
+              <button onclick="approvePromotion('\${e.key}')" style="padding:.15rem .5rem;font-size:.72rem;background:#dcfce7;border:1px solid #86efac;border-radius:4px;cursor:pointer;color:#15803d">Promote now</button>
+            </div>\`;
+          }).join('');
+        } catch (_) {}
+      }
+      window.rejectPromotion = async function(key) {
+        await fetch('/dashboard/cortex/memory/reject-promotion', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ key }) });
+        pollAutonomy();
+      };
+      window.approvePromotion = async function(key) {
+        await fetch('/dashboard/cortex/memory/promote', { method:'POST', headers:{'content-type':'application/json'}, body: JSON.stringify({ key }) });
+        pollAutonomy();
+      };
+      pollAutonomy();
+      setInterval(pollAutonomy, 30000);
+    })();
+    </script>`;
+    })()}
+
     <div class="actions">
       ${enabled ? `<button type="button" class="btn-cortex" data-act="resynth">▶ Re-synthesise now</button>
       ${repowiseOn ? `<button type="button" class="btn-cortex" data-act="repowise">↻ Run repowise now</button>` : ''}
@@ -5342,6 +5465,17 @@ function renderSettings(vals, flash) {
 
           <div class="s-field span2" style="margin-top:.6rem">
             <div class="s-hint" style="margin-top:0;border-top:1px dashed #d1d5db;padding-top:.7rem">
+              <strong>Autonomy</strong> — controls how agents can promote observations into the permanent KB without human intervention.
+            </div>
+          </div>
+          ${fld('PRX_CORTEX_AUTONOMY_LEVEL','Autonomy level','select',v('PRX_CORTEX_AUTONOMY_LEVEL') || '0','','0 = manual (all promotions require POST /cortex/memory/promote). 1 = cross-session memory only. 2 = confidence-gated with a review window before promotion. 3 = full-trust, promotes immediately on N confirms.',
+            [{v:'0',l:'0 — manual (default)'},{v:'1',l:'1 — cross-session memory'},{v:'2',l:'2 — confidence-gated (review window)'},{v:'3',l:'3 — full-trust (immediate)'}])}
+          ${fld('PRX_CORTEX_AUTO_PROMOTE_THRESHOLD','Confirm threshold','number',v('PRX_CORTEX_AUTO_PROMOTE_THRESHOLD'),'3','Number of re-observations (confirmations) of the same key before it becomes eligible for auto-promotion. Default: 3.')}
+          ${fld('PRX_CORTEX_AUTO_PROMOTE_DELAY_HOURS','Review window (hours)','number',v('PRX_CORTEX_AUTO_PROMOTE_DELAY_HOURS'),'24','Level 2 only: hours humans have to reject a queued promotion before it is applied. Default: 24.')}
+          ${fld('PRX_CORTEX_AUTO_PROMOTE_MIN_AGE_DAYS','Min age before promotion (days)','number',v('PRX_CORTEX_AUTO_PROMOTE_MIN_AGE_DAYS'),'2','Minimum age (days) of an observation before it can be auto-promoted. Prevents recent or noisy observations from entering the KB too fast. Default: 2.')}
+
+          <div class="s-field span2" style="margin-top:.6rem">
+            <div class="s-hint" style="margin-top:0;border-top:1px dashed #d1d5db;padding-top:.7rem">
               <strong>Repowise integration</strong> — runs <code>repowise update</code> on a schedule to refresh
               the dependency graph + wiki. Requires Python 3.11+; you can install it from the Cortex page.
             </div>
@@ -6484,13 +6618,17 @@ router.get('/cortex/install-status', (_req, res) => {
 //   GET  /cortex/memory/facts              → all live synthesised facts
 //   GET  /cortex/memory/get?key=<key>      → single value by key
 //   GET  /cortex/memory/tag?tag=<tag>      → all live keys carrying a tag
-//   GET  /cortex/memory/recent?n=10&tag=X  → n most-recent entries
+//   GET  /cortex/memory/recent?n=10&tag=X&since=<ms> → n most-recent entries (optional since filter)
 //   GET  /cortex/memory/signals?n=50       → recent transit events
 //   GET  /cortex/memory/stats              → storage stats (dashboard / debug)
+//   GET  /cortex/memory/context?ticket=X   → Step-0 bundle: facts + recent observations
+//   GET  /cortex/memory/pending-promotions → observations queued for auto-promotion
 //
 // Write (Step 13 / mid-session — agent feeds discoveries back):
-//   POST /cortex/memory/observe   {key,value,tags,ttl,ticketKey} → store discovery
-//   POST /cortex/memory/signal    {event,data}                   → transit event
+//   POST /cortex/memory/observe            {key,summary,type,persona,ticketKey,tags,ttl,value}
+//   POST /cortex/memory/signal             {event,data}
+//   POST /cortex/memory/promote            {key} → graduate observation to KB (manual)
+//   POST /cortex/memory/reject-promotion   {key} → block pending auto-promotion
 
 function _memGuard(res) {
   if (process.env.PRX_CORTEX_ENABLED !== 'Y') {
@@ -6528,9 +6666,16 @@ router.get('/cortex/memory/tag', (req, res) => {
 
 router.get('/cortex/memory/recent', (req, res) => {
   if (!_memGuard(res)) return;
-  const n   = Math.min(100, Math.max(1, parseInt(req.query.n   || '10', 10)));
-  const tag = (req.query.tag || '').toString().slice(0, 64) || undefined;
-  const entries = require('../runner/cortexLayer').memory().recent(n, tag ? { tag } : {});
+  const n     = Math.min(100, Math.max(1, parseInt(req.query.n   || '10', 10)));
+  const tag   = (req.query.tag   || '').toString().slice(0, 64) || undefined;
+  const since = req.query.since ? parseInt(req.query.since, 10) : null;
+  let entries = require('../runner/cortexLayer').memory().recent(n, tag ? { tag } : {});
+  if (since && !isNaN(since)) {
+    entries = entries.filter(e => e.value && typeof e.value === 'object'
+      ? (e.value.ts || 0) >= since
+      : true
+    );
+  }
   res.json({ ok: true, entries, count: entries.length });
 });
 
@@ -6608,7 +6753,8 @@ router.get('/cortex/memory/health', (_req, res) => {
 // Body fields:
 //   key        (required) — unique identifier, e.g. "pattern:cache-invalidation"
 //   summary    (required) — human-readable description of the discovery (max 4000 chars)
-//   type       (optional) — one of: pattern | decision | business-rule | anomaly | hotspot | context (default: context)
+//   type       (optional) — one of: pattern | decision | business-rule | anomaly | hotspot | context | session-summary (default: context)
+//   persona    (optional) — agent identity writing this observation, e.g. "alex"
 //   ticketKey  (optional) — Jira ticket this observation belongs to, e.g. "PRX-123"
 //   tags       (optional) — additional tag strings
 //   ttl        (optional) — milliseconds before this observation expires (0 = permanent)
@@ -6620,8 +6766,9 @@ router.post('/cortex/memory/observe', express.json(), (req, res) => {
   const tags      = Array.isArray(b.tags) ? b.tags.filter(t => typeof t === 'string').slice(0, 20) : [];
   const ttl       = (typeof b.ttl === 'number' && b.ttl > 0) ? b.ttl : 0;
   const ticketKey = (b.ticketKey || '').toString().toUpperCase().slice(0, 32) || null;
+  const persona   = (b.persona   || '').toString().slice(0, 64) || null;
 
-  const VALID_TYPES = new Set(['pattern', 'decision', 'business-rule', 'anomaly', 'hotspot', 'context']);
+  const VALID_TYPES = new Set(['pattern', 'decision', 'business-rule', 'anomaly', 'hotspot', 'context', 'session-summary']);
   const type    = VALID_TYPES.has(b.type) ? b.type : 'context';
   // Accept summary directly, or fall back to a stringified value for backward compat.
   const summary = (
@@ -6635,15 +6782,53 @@ router.post('/cortex/memory/observe', express.json(), (req, res) => {
 
   if (!tags.includes('agent-observed')) tags.push('agent-observed');
   if (!tags.includes(type))             tags.push(type);
-
-  const value = { type, summary, ticket: ticketKey, ts: Date.now(), raw: b.value ?? null };
+  if (type === 'session-summary' && !tags.includes('session-memory')) tags.push('session-memory');
 
   const cortex = require('../runner/cortexLayer');
-  const seq    = cortex.memory().put(key, value, { tags, ttl });
+  const autonomy = require('../runner/autonomyScheduler');
+  const mem    = cortex.memory();
+  const now    = Date.now();
 
-  activityLog.record('cortex_observed', ticketKey, 'claude', { key, type, tags, seq });
+  // Merge with existing observation to preserve and increment confirmCount.
+  const existing     = mem.get(key);
+  const prev         = (existing && typeof existing === 'object') ? existing : {};
+  const confirmCount = (prev.confirmCount || 0) + 1;
+
+  const value = {
+    type, summary, ticket: ticketKey, ts: now, raw: b.value ?? null,
+    confirmCount, persona: persona || prev.persona || null,
+    queuedForPromotionAt: prev.queuedForPromotionAt || null,
+    promoted: prev.promoted || false,
+    rejected: prev.rejected || false,
+  };
+
+  const level     = autonomy.autonomyLevel();
+  const threshold = autonomy.promoteThreshold();
+
+  // Level 2: queue for auto-promotion when threshold is reached for the first time.
+  if (level >= 2 && !value.promoted && !value.rejected &&
+      confirmCount >= threshold && !value.queuedForPromotionAt) {
+    value.queuedForPromotionAt = now;
+    if (!tags.includes('pending-promotion')) tags.push('pending-promotion');
+  } else if (value.queuedForPromotionAt && !tags.includes('pending-promotion')) {
+    tags.push('pending-promotion');
+  }
+
+  const seq = mem.put(key, value, { tags, ttl });
+
+  // Level 3: promote immediately — no review window.
+  if (level >= 3 && confirmCount >= threshold && !value.promoted && !value.rejected) {
+    const result = autonomy.promoteObservation(key, value, mem, cortex.kbDir());
+    if (result.ok) {
+      activityLog.record('cortex_observed', ticketKey, 'claude', { key, type, tags, seq, autoPromoted: true, kbFile: result.kbFile });
+      serverEvents.emit('cortex-observation-written', { key, tags, autoPromoted: true });
+      return res.json({ ok: true, seq, autoPromoted: true, kbFile: result.kbFile });
+    }
+  }
+
+  activityLog.record('cortex_observed', ticketKey, 'claude', { key, type, tags, seq, confirmCount });
   serverEvents.emit('cortex-observation-written', { key, tags });
-  res.json({ ok: true, seq });
+  res.json({ ok: true, seq, confirmCount });
 });
 
 router.post('/cortex/memory/signal', express.json(), (req, res) => {
@@ -6663,25 +6848,33 @@ router.post('/cortex/memory/signal', express.json(), (req, res) => {
 //
 // The observation is appended to the appropriate shared/*.md file based on its
 // type, then re-tagged as 'promoted' in LMDB so observations.md shows status.
-// The KB file change is picked up by fs.watch → triggers a new synthesis pass.
-//
-// Type → KB file mapping:
-//   pattern       → shared/patterns.md
-//   business-rule → shared/business-rules.md
-//   decision      → shared/decisions.md
-//   hotspot       → shared/architecture.md
-//   anomaly       → shared/patterns.md
-//   context       → shared/architecture.md
-const _PROMOTE_TARGETS = {
-  'pattern':       'shared/patterns.md',
-  'business-rule': 'shared/business-rules.md',
-  'decision':      'shared/decisions.md',
-  'hotspot':       'shared/architecture.md',
-  'anomaly':       'shared/patterns.md',
-  'context':       'shared/architecture.md',
-};
+// Type → KB file mapping lives in autonomyScheduler.PROMOTE_TARGETS.
 
 router.post('/cortex/memory/promote', express.json(), (req, res) => {
+  if (!_memGuard(res)) return;
+  const b   = req.body || {};
+  const key = (b.key || '').toString().trim().slice(0, 256);
+  if (!key) return res.status(400).json({ ok: false, error: 'key required' });
+
+  const cortex   = require('../runner/cortexLayer');
+  const autonomy = require('../runner/autonomyScheduler');
+  const mem      = cortex.memory();
+  const raw      = mem.get(key);
+  if (raw === null) return res.status(404).json({ ok: false, error: `observation '${key}' not found` });
+
+  const v = (raw && typeof raw === 'object') ? raw : { type: 'context', summary: String(raw) };
+  const result = autonomy.promoteObservation(key, v, mem, cortex.kbDir());
+  if (!result.ok) return res.status(result.error.includes('not found') ? 404 : 400).json({ ok: false, error: result.error });
+
+  activityLog.record('cortex_observed', v.ticket || null, 'claude', { key, type: v.type || 'context', promoted: true, kbFile: result.kbFile });
+  serverEvents.emit('cortex-observation-written', { key, tags: ['agent-observed', v.type || 'context', 'promoted'] });
+  res.json({ ok: true, key, type: v.type || 'context', kbFile: result.kbFile, target: result.target });
+});
+
+// Reject a queued auto-promotion — removes from the pending-promotion queue
+// so the scheduler won't promote it.  The observation stays in LMDB.
+//   POST /cortex/memory/reject-promotion   { key }
+router.post('/cortex/memory/reject-promotion', express.json(), (req, res) => {
   if (!_memGuard(res)) return;
   const b   = req.body || {};
   const key = (b.key || '').toString().trim().slice(0, 256);
@@ -6692,43 +6885,29 @@ router.post('/cortex/memory/promote', express.json(), (req, res) => {
   const raw    = mem.get(key);
   if (raw === null) return res.status(404).json({ ok: false, error: `observation '${key}' not found` });
 
-  const v       = (raw && typeof raw === 'object') ? raw : { type: 'context', summary: String(raw) };
-  const type    = v.type || 'context';
-  const summary = v.summary || (v.raw != null ? JSON.stringify(v.raw) : JSON.stringify(v));
-  const ticket  = v.ticket || null;
+  const v = (raw && typeof raw === 'object') ? raw : { type: 'context', summary: String(raw) };
+  if (v.promoted) return res.status(400).json({ ok: false, error: 'already promoted — cannot reject' });
 
-  const kbFile = _PROMOTE_TARGETS[type];
-  if (!kbFile) return res.status(400).json({ ok: false, error: `no KB target for type '${type}'` });
-
-  const kbBase = cortex.kbDir();
-  const target = path.join(kbBase, kbFile);
-  try { fs.mkdirSync(path.dirname(target), { recursive: true }); } catch (_) {}
-
-  const date  = new Date().toISOString().slice(0, 10);
-  const block = [
-    '',
-    `## ${key}`,
-    `<!-- promoted from Cortex on ${date}${ticket ? ' · ticket: ' + ticket : ''} -->`,
-    '',
-    summary,
-    '',
-  ].join('\n');
-
-  try {
-    fs.appendFileSync(target, block, 'utf8');
-  } catch (err) {
-    return res.status(500).json({ ok: false, error: `could not write to KB: ${err.message}` });
-  }
-
-  // Re-tag the observation as promoted — observations.md will surface the status marker.
-  mem.put(key, { ...v, promoted: true, promotedAt: Date.now(), promotedTo: kbFile }, {
-    tags: ['agent-observed', type, 'promoted'],
+  mem.put(key, { ...v, rejected: true, rejectedAt: Date.now(), queuedForPromotionAt: null }, {
+    tags: ['agent-observed', v.type || 'context', 'rejected'],
     ttl: 0,
   });
 
-  activityLog.record('cortex_observed', ticket, 'claude', { key, type, promoted: true, kbFile });
-  serverEvents.emit('cortex-observation-written', { key, tags: ['agent-observed', type, 'promoted'] });
-  res.json({ ok: true, key, type, kbFile, target });
+  serverEvents.emit('cortex-observation-written', { key, tags: ['agent-observed', v.type || 'context', 'rejected'] });
+  res.json({ ok: true, key, rejected: true });
+});
+
+// List observations currently queued for auto-promotion (pending-promotion tag).
+//   GET /cortex/memory/pending-promotions
+router.get('/cortex/memory/pending-promotions', (req, res) => {
+  if (!_memGuard(res)) return;
+  const cortex  = require('../runner/cortexLayer');
+  const mem     = cortex.memory();
+  const keys    = mem.byTag('pending-promotion');
+  const entries = keys
+    .map(k => ({ key: k, value: mem.get(k) }))
+    .filter(e => e.value !== null && typeof e.value === 'object' && !e.value.rejected && !e.value.promoted);
+  res.json({ ok: true, entries, count: entries.length });
 });
 
 router.get('/disk/json', (_req, res) => {
@@ -7410,6 +7589,7 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'PRX_DECISION_OUTCOME_ENABLED', 'PRX_DECISION_OUTCOME_INTERVAL_DAYS', 'PRX_DECISION_OUTCOME_LOOKBACK_DAYS', 'PRX_DECISION_OUTCOME_MIN_EVIDENCE',
     'PRX_COCHANGE_WINDOW_DAYS', 'PRX_COCHANGE_CACHE_TTL_DAYS',
     'PRX_CORTEX_ENABLED', 'PRX_CORTEX_DEBOUNCE_SECS', 'PRX_CORTEX_RESYNC_HOURS', 'PRX_CORTEX_DISTRIBUTED', 'PRX_CORTEX_FORCE_BUILDER',
+    'PRX_CORTEX_AUTONOMY_LEVEL', 'PRX_CORTEX_AUTO_PROMOTE_THRESHOLD', 'PRX_CORTEX_AUTO_PROMOTE_DELAY_HOURS', 'PRX_CORTEX_AUTO_PROMOTE_MIN_AGE_DAYS',
     'PRX_REPOWISE_ENABLED', 'PRX_REPOWISE_INTERVAL_DAYS', 'PRX_REPOWISE_PATH', 'PRX_REPOWISE_AUTO_INSTALL',
     'PRX_WASENDER_ENABLED', 'PRX_WASENDER_API_KEY', 'PRX_WASENDER_TO',
     'PRX_WASENDER_PUBLIC_URL', 'PRX_WASENDER_EVENTS', 'PRX_WASENDER_PDF_PASSWORD',
@@ -7436,6 +7616,13 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     // Bust budget cache so new admin key / budget takes effect immediately
     _budgetCache    = null;
     _budgetCachedAt = 0;
+
+    // Reset Redis client whenever Redis config changes so any stale connection
+    // (e.g. wrong password) is dropped and the new settings take effect immediately.
+    if (['PRX_REDIS_ENABLED','PRX_REDIS_URL','PRX_REDIS_PASSWORD','PRX_REDIS_PREFIX'].some(k => k in updates)) {
+      try { require('../memory/memoryAdapter').resetRedisClient(); } catch (_) {}
+    }
+
     activityLog.record('settings_saved', null, 'user', {
       fields: Object.keys(updates).filter(k => updates[k] !== '').join(','),
     });
