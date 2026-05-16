@@ -12,6 +12,7 @@ const { getPollStatus } = require('../runner/pollScheduler');
 const serverEvents  = require('../serverEvents');
 const watchStore    = require('../watchers/watchStore');
 const watchManager  = require('../watchers/watchManager');
+const cpuMonitor    = require('../runner/cpuMonitor');
 
 const VALID_MODES    = new Set(['dev', 'review', 'estimate']);
 const WATCH_LOG_DIR  = path.join(os.homedir(), '.prevoyant', 'watch', 'logs');
@@ -1396,6 +1397,14 @@ function renderDashboard(stats, budget) {
           : `<span class="info-val muted">unavailable</span>`}
       </div>
     </div>
+    <div class="info-item" id="cpu-info-item" title="Server process CPU and RAM — updates every 5s">
+      <svg class="info-icon" xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
+      <div class="info-text">
+        <span class="info-lbl">CPU / RAM</span>
+        <span class="info-val" id="cpu-val" style="font-variant-numeric:tabular-nums">—</span>
+        <span style="font-size:.7rem;color:#b0b7c3" id="cpu-sub">loading…</span>
+      </div>
+    </div>
   </div>`;
   })()}
 
@@ -1941,6 +1950,48 @@ function renderDashboard(stats, budget) {
         setTimeout(() => location.reload(), 1500);
       } catch (_) { err.textContent = 'Failed to queue tickets.'; err.style.display = ''; }
     }
+
+    // ── CPU / RAM monitor ──────────────────────────────────────────────────────
+    (function() {
+      const item = document.getElementById('cpu-info-item');
+      const val  = document.getElementById('cpu-val');
+      const sub  = document.getElementById('cpu-sub');
+      if (!item || !val || !sub) return;
+
+      let alertBanner = null;
+
+      function update() {
+        fetch('/dashboard/cpu/stats').then(r => r.json()).then(d => {
+          if (!d.ok) return;
+          const pct = d.current.toFixed(1);
+          val.textContent = pct + '% · ' + d.memMb + ' MB';
+          sub.textContent = 'avg ' + d.avg1m + '% · peak ' + d.peak + '%';
+
+          const hot = d.current > d.threshold;
+          const warm = d.current > d.threshold * 0.7;
+          val.style.color = hot ? '#dc2626' : warm ? '#ea580c' : '#16a34a';
+          item.style.background = hot ? '#fef2f2' : '';
+
+          if (d.alert && !alertBanner) {
+            alertBanner = document.createElement('div');
+            alertBanner.id = 'cpu-alert-banner';
+            alertBanner.style.cssText = 'background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:.55rem 1rem;margin-bottom:.75rem;display:flex;align-items:center;gap:.6rem;font-size:.83rem;color:#991b1b';
+            alertBanner.innerHTML =
+              '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' +
+              '<span><strong>CPU alert</strong> — server CPU is at ' + pct + '% (threshold ' + d.threshold + '%). Check the activity log for runaway jobs or reduce worker concurrency.</span>' +
+              '<button onclick="this.parentElement.remove()" style="margin-left:auto;padding:.2rem .6rem;background:transparent;border:1px solid #fca5a5;border-radius:4px;font-size:.75rem;cursor:pointer;color:#991b1b">Dismiss</button>';
+            const anchor = document.querySelector('.card') || document.querySelector('.info-strip');
+            if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(alertBanner, anchor);
+          } else if (!d.alert && alertBanner) {
+            alertBanner.remove();
+            alertBanner = null;
+          }
+        }).catch(() => {});
+      }
+
+      update();
+      setInterval(update, 5000);
+    })();
   </script>
   ${BASE_SCRIPT}
 </body>
@@ -6682,6 +6733,12 @@ router.post('/cortex/memory/promote', express.json(), (req, res) => {
 
 router.get('/disk/json', (_req, res) => {
   res.json({ status: readDiskStatus(), log: readDiskLog().slice(-100) });
+});
+
+// CPU / memory stats — polled by the dashboard info-strip every 5s.
+// Returns current CPU %, 1-min average, peak, RSS MB, and a 2-min sample ring.
+router.get('/cpu/stats', (_req, res) => {
+  res.json({ ok: true, ...cpuMonitor.getStats() });
 });
 
 router.post('/disk/approve-cleanup', (_req, res) => {
