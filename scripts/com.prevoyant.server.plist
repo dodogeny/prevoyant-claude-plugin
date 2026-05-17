@@ -36,6 +36,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/usr/local/bin/node</string>
+        <string>--max-old-space-size=256</string>
         <!-- UPDATE: replace /Users/YOUR_USERNAME with your actual home path -->
         <string>/Users/YOUR_USERNAME/dev-skill/server/index.js</string>
     </array>

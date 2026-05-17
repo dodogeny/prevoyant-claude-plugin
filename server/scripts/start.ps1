@@ -34,7 +34,7 @@ if (-not (Test-Path (Join-Path $serverDir 'node_modules'))) {
 
 # ── Start ─────────────────────────────────────────────────────────────────────
 $proc = Start-Process -FilePath 'node' `
-    -ArgumentList 'index.js' `
+    -ArgumentList '--max-old-space-size=256', 'index.js' `
     -WorkingDirectory $serverDir `
     -RedirectStandardOutput $logFile `
     -RedirectStandardError  $logFile `

@@ -32,7 +32,7 @@ fi
 
 # ── Start ─────────────────────────────────────────────────────────────────────
 cd "$SERVER_DIR"
-node index.js >> "$LOG_FILE" 2>&1 &
+node --max-old-space-size=256 index.js >> "$LOG_FILE" 2>&1 &
 SERVER_PID=$!
 echo "$SERVER_PID" > "$PID_FILE"
 

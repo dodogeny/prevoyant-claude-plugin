@@ -13,6 +13,18 @@
 const express = require('express');
 const path    = require('path');
 const { Worker } = require('worker_threads');
+
+// Worker memory limits — capped so 9+ concurrent workers don't exhaust system
+// RAM.  Override with PRX_WORKER_MEM_LIGHT / _MED / _HEAVY (MB) if needed.
+const WORKER_MEM = {
+  light:  parseInt(process.env.PRX_WORKER_MEM_LIGHT  || '64',  10),
+  medium: parseInt(process.env.PRX_WORKER_MEM_MEDIUM || '128', 10),
+  heavy:  parseInt(process.env.PRX_WORKER_MEM_HEAVY  || '192', 10),
+};
+function workerLimits(tier) {
+  const old = WORKER_MEM[tier] || WORKER_MEM.light;
+  return { maxOldGenerationSizeMb: old, maxYoungGenerationSizeMb: Math.round(old / 4) };
+}
 const config = require('./config/env');
 const jiraWebhook = require('./webhooks/jira');
 const dashboardRoutes = require('./dashboard/routes');
@@ -78,7 +90,7 @@ function startWatchdog() {
 
   watchdogWorker = new Worker(
     path.join(__dirname, 'workers', 'healthMonitor.js'),
-    { workerData }
+    { workerData, resourceLimits: workerLimits('light') }
   );
 
   watchdogWorker.on('message', msg => {
@@ -114,7 +126,7 @@ function startDiskMonitor() {
 
   diskWorker = new Worker(
     path.join(__dirname, 'workers', 'diskMonitor.js'),
-    { workerData }
+    { workerData, resourceLimits: workerLimits('light') }
   );
 
   diskWorker.on('error', err =>
@@ -159,7 +171,7 @@ function startUpdateChecker() {
 
   updateWorker = new Worker(
     path.join(__dirname, 'workers', 'updateChecker.js'),
-    { workerData }
+    { workerData, resourceLimits: workerLimits('light') }
   );
 
   updateWorker.on('message', msg => {
@@ -202,7 +214,7 @@ function startKbSync() {
 
   kbSyncWorker = new Worker(
     path.join(__dirname, 'workers', 'kbSyncWorker.js'),
-    { workerData }
+    { workerData, resourceLimits: workerLimits('light') }
   );
 
   kbSyncWorker.on('message', msg => {
@@ -244,7 +256,7 @@ function startTicketWatcher() {
 
   ticketWatcherWorker = new Worker(
     path.join(__dirname, 'workers', 'ticketWatcherWorker.js'),
-    { workerData }
+    { workerData, resourceLimits: workerLimits('medium') }
   );
 
   watchManager.setWorker(ticketWatcherWorker);
@@ -289,7 +301,7 @@ function startKbFlowAnalyst() {
 
   kbFlowAnalystWorker = new Worker(
     path.join(__dirname, 'workers', 'kbFlowAnalystWorker.js'),
-    { workerData }
+    { workerData, resourceLimits: workerLimits('medium') }
   );
 
   kbFlowAnalystWorker.on('message', msg => {
@@ -324,7 +336,7 @@ function startPatternMiner() {
   if (patternMinerWorker) return;
   patternMinerWorker = new Worker(
     path.join(__dirname, 'workers', 'memoryPatternMinerWorker.js'),
-    { workerData: {} }
+    { workerData: {}, resourceLimits: workerLimits('light') }
   );
   patternMinerWorker.on('message', msg => {
     if (!msg) return;
@@ -355,7 +367,7 @@ function startKbStaleness() {
   if (kbStalenessWorker) return;
   kbStalenessWorker = new Worker(
     path.join(__dirname, 'workers', 'kbStalenessWorker.js'),
-    { workerData: {} }
+    { workerData: {}, resourceLimits: workerLimits('light') }
   );
   kbStalenessWorker.on('message', msg => {
     if (!msg) return;
@@ -388,7 +400,7 @@ function startStaleBranchDetector() {
   if (staleBranchWorker) return;
   staleBranchWorker = new Worker(
     path.join(__dirname, 'workers', 'staleBranchWorker.js'),
-    { workerData: {} }
+    { workerData: {}, resourceLimits: workerLimits('light') }
   );
   staleBranchWorker.on('message', msg => {
     if (!msg) return;
@@ -431,7 +443,7 @@ function startDecisionOutcome() {
   if (decisionOutcomeWorker) return;
   decisionOutcomeWorker = new Worker(
     path.join(__dirname, 'workers', 'decisionOutcomeWorker.js'),
-    { workerData: {} }
+    { workerData: {}, resourceLimits: workerLimits('light') }
   );
   decisionOutcomeWorker.on('message', msg => {
     if (!msg) return;
@@ -498,7 +510,7 @@ function startCortex() {
 
   cortexWorker = new Worker(
     path.join(__dirname, 'workers', 'cortexWorker.js'),
-    { workerData: {} }
+    { workerData: {}, resourceLimits: workerLimits('heavy') }
   );
   cortexWorker.on('message', msg => {
     if (!msg) return;
@@ -693,17 +705,15 @@ app.listen(config.port, () => {
   });
 
   restoreScheduledJobs();
+  // Stagger worker starts so V8 isolate allocations don't all burst at once.
+  // Lightweight monitors first; heavier workers (cortex, watchers) after 2-4s.
   startWatchdog();
   startDiskMonitor();
   startUpdateChecker();
   startKbSync();
-  startTicketWatcher();
-  startKbFlowAnalyst();
-  startPatternMiner();
-  startKbStaleness();
-  startStaleBranchDetector();
-  startDecisionOutcome();
-  startCortex();
+  setTimeout(() => { startTicketWatcher(); startKbFlowAnalyst(); }, 2000);
+  setTimeout(() => { startPatternMiner(); startKbStaleness(); startStaleBranchDetector(); startDecisionOutcome(); }, 4000);
+  setTimeout(() => startCortex(), 6000);
 
   // Wire up CPU / RAM spike logging into the activity log.
   // cpuMonitor runs in the main thread from first require(); spikes fire at most

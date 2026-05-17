@@ -47,8 +47,11 @@ function _tick() {
   const elMs  = now - _lastTs;
   const ncpu  = os.cpus().length || 1;
 
-  const pct    = Math.min(100, ((delta.user + delta.system) / 1000 / elMs / ncpu) * 100);
-  const mem    = Math.round(process.memoryUsage().rss / (1024 * 1024));
+  const pct      = Math.min(100, ((delta.user + delta.system) / 1000 / elMs / ncpu) * 100);
+  const mu       = process.memoryUsage();
+  const mem      = Math.round(mu.rss        / (1024 * 1024));
+  const heapUsed = Math.round(mu.heapUsed   / (1024 * 1024));
+  const heapTotal= Math.round(mu.heapTotal  / (1024 * 1024));
 
   _lastCpu = process.cpuUsage();
   _lastTs  = now;
@@ -63,7 +66,7 @@ function _tick() {
   const ramMb    = Math.round((totalMem - freeMem) / (1024 * 1024));
   const totalRamMb = Math.round(totalMem / (1024 * 1024));
 
-  _ring.push({ ts: now, cpu: rounded, mem, ramPct, ramMb, totalRamMb });
+  _ring.push({ ts: now, cpu: rounded, mem, heapUsed, heapTotal, ramPct, ramMb, totalRamMb });
   if (_ring.length > RING_SIZE) _ring.shift();
 
   // CPU spike detection
@@ -105,23 +108,33 @@ function getStats() {
   const totalRamMb = Math.round(totalMem / (1024 * 1024));
 
   if (!_ring.length) {
+    const mu = process.memoryUsage();
     return {
-      current: 0, avg1m: 0, peak: 0, memMb: 0, numCpus: os.cpus().length, samples: [],
+      current: 0, avg1m: 0, peak: 0,
+      memMb: Math.round(mu.rss / (1024 * 1024)),
+      heapUsedMb: Math.round(mu.heapUsed / (1024 * 1024)),
+      heapTotalMb: Math.round(mu.heapTotal / (1024 * 1024)),
+      numCpus: os.cpus().length, samples: [],
       alert: false, alertCount: 0, threshold: CPU_THRESHOLD,
       ramPct: sysRamPct, ramMb: sysRamMb, totalRamMb, ramAlert: false, ramThreshold: RAM_THRESHOLD,
     };
   }
 
-  const last30  = _ring.slice(-30);
-  const current = _ring[_ring.length - 1].cpu;
-  const avg1m   = +(last30.reduce((s, x) => s + x.cpu, 0) / last30.length).toFixed(1);
-  const memMb   = _ring[_ring.length - 1].mem;
+  const last30     = _ring.slice(-30);
+  const current    = _ring[_ring.length - 1].cpu;
+  const avg1m      = +(last30.reduce((s, x) => s + x.cpu, 0) / last30.length).toFixed(1);
+  const last       = _ring[_ring.length - 1];
+  const memMb      = last.mem;
+  const heapUsedMb = last.heapUsed;
+  const heapTotalMb= last.heapTotal;
 
   return {
     current,
     avg1m,
     peak:         +(_peak.toFixed(1)),
     memMb,
+    heapUsedMb,
+    heapTotalMb,
     numCpus:      os.cpus().length,
     samples:      _ring.slice(-60),
     alert:        _alertCount >= ALERT_HOLD,

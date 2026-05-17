@@ -2030,28 +2030,27 @@ function renderDashboard(stats, budget) {
         fetch('/dashboard/cpu/stats').then(r => r.json()).then(d => {
           if (!d.ok) return;
           const pct = d.current.toFixed(1);
-          val.textContent = pct + '% CPU · ' + d.ramPct + '% RAM';
-          sub.textContent = 'avg ' + d.avg1m + '% · peak ' + d.peak + '% · ' + d.ramMb + ' MB used';
+          val.textContent = pct + '% CPU · ' + d.memMb + ' MB RAM';
+          sub.textContent = 'avg ' + d.avg1m + '% · peak ' + d.peak + '% CPU · heap ' + (d.heapUsedMb || '?') + '/' + (d.heapTotalMb || '?') + ' MB';
 
-          const hot  = d.current > d.threshold || d.ramAlert;
-          const warm = d.current > d.threshold * 0.7 || d.ramPct > d.ramThreshold * 0.85;
+          const hot  = d.current > d.threshold || d.alert;
+          const warm = d.current > d.threshold * 0.7;
           val.style.color = hot ? '#dc2626' : warm ? '#ea580c' : '#16a34a';
           item.style.background = hot ? '#fef2f2' : '';
 
-          if ((d.alert || d.ramAlert) && !alertBanner) {
+          if (d.alert && !alertBanner) {
             alertBanner = document.createElement('div');
             alertBanner.id = 'cpu-alert-banner';
             alertBanner.style.cssText = 'background:#fef2f2;border:1px solid #fca5a5;border-radius:8px;padding:.55rem 1rem;margin-bottom:.75rem;display:flex;align-items:center;gap:.6rem;font-size:.83rem;color:#991b1b';
             const msgs = [];
-            if (d.alert)    msgs.push('CPU is at ' + pct + '% (threshold ' + d.threshold + '%)');
-            if (d.ramAlert) msgs.push('RAM is at ' + d.ramPct + '% used (threshold ' + d.ramThreshold + '%)');
+            if (d.alert) msgs.push('CPU is at ' + pct + '% (threshold ' + d.threshold + '%)');
             alertBanner.innerHTML =
               '<svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#dc2626" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>' +
               '<span><strong>Resource alert</strong> — ' + msgs.join('; ') + '. Check the activity log for runaway jobs.</span>' +
               '<button onclick="this.parentElement.remove()" style="margin-left:auto;padding:.2rem .6rem;background:transparent;border:1px solid #fca5a5;border-radius:4px;font-size:.75rem;cursor:pointer;color:#991b1b">Dismiss</button>';
             const anchor = document.querySelector('.card') || document.querySelector('.info-strip');
             if (anchor && anchor.parentNode) anchor.parentNode.insertBefore(alertBanner, anchor);
-          } else if (!d.alert && !d.ramAlert && alertBanner) {
+          } else if (!d.alert && alertBanner) {
             alertBanner.remove();
             alertBanner = null;
           }
