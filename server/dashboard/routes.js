@@ -5,7 +5,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { spawn, execFile } = require('child_process');
-const { getStats, getTicket, reRunTicket, recordScheduled, deleteTicket, hasActive } = require('./tracker');
+const { getStats, getTicket, reRunTicket, recordScheduled, deleteTicket, hasActive, getActiveTickets } = require('./tracker');
 const { killJob, enqueue, scheduleJob, prioritizeJob, pauseQueue, resumeQueue, isPaused, getQueueDepth } = require('../queue/jobQueue');
 const activityLog = require('./activityLog');
 const { getPollStatus } = require('../runner/pollScheduler');
@@ -632,11 +632,54 @@ const BASE_SCRIPT = `
   <script>
     (function () {
       const logo = document.getElementById('sun-logo');
-      if (!logo) return;
+
+      // Inject keyframe for the status bar spinner (once per page)
+      if (!document.getElementById('prx-bar-style')) {
+        const s = document.createElement('style');
+        s.id = 'prx-bar-style';
+        s.textContent = '@keyframes prx-bar-spin{to{transform:rotate(360deg)}}';
+        document.head.appendChild(s);
+      }
+
+      // Create the ephemeral status bar and insert it immediately after <header>
+      let bar = document.getElementById('prx-activity-bar');
+      if (!bar) {
+        bar = document.createElement('div');
+        bar.id = 'prx-activity-bar';
+        bar.style.cssText = 'display:none;background:rgba(99,102,241,.07);border-bottom:1px solid rgba(99,102,241,.16);padding:.28rem 1.4rem;font-size:.75rem;font-weight:500;color:#4338ca;align-items:center;gap:.55rem';
+        bar.innerHTML =
+          '<svg style="flex-shrink:0;animation:prx-bar-spin 1.1s linear infinite" xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round"><path d="M21 12a9 9 0 1 1-6.219-8.56"/></svg>' +
+          '<span id="prx-bar-text" style="flex:1;white-space:nowrap;overflow:hidden;text-overflow:ellipsis"></span>' +
+          '<a id="prx-bar-link" href="/dashboard" style="color:#4338ca;font-weight:600;text-decoration:none;white-space:nowrap;font-size:.72rem;opacity:.8">View →</a>';
+        const hdr = document.querySelector('header');
+        if (hdr && hdr.parentNode) hdr.parentNode.insertBefore(bar, hdr.nextSibling);
+      }
+
+      const MODE_LABELS = { dev:'Dev', review:'Review', estimate:'Estimate', 'kb-review':'KB Review', watch:'Watch' };
+
       function checkBusy() {
         fetch('/dashboard/busy', { cache: 'no-store' })
           .then(r => r.json())
-          .then(d => logo.classList.toggle('processing', !!d.busy))
+          .then(d => {
+            if (logo) logo.classList.toggle('processing', !!d.busy);
+            const active = d.active || [];
+            if (active.length > 0) {
+              const t = active[0];
+              const mode   = MODE_LABELS[t.mode] || t.mode;
+              const step   = t.status === 'queued'    ? 'Queued'
+                           : t.status === 'retrying'  ? 'Retrying'
+                           : t.currentStep            ? t.currentStep
+                           : 'Running';
+              const extra  = active.length > 1 ? ' +' + (active.length - 1) + ' more' : '';
+              const barText = document.getElementById('prx-bar-text');
+              const barLink = document.getElementById('prx-bar-link');
+              if (barText) barText.textContent = t.ticketKey + ' · ' + mode + ' · ' + step + extra;
+              if (barLink) barLink.href = '/dashboard/ticket/' + encodeURIComponent(t.ticketKey);
+              bar.style.display = 'flex';
+            } else {
+              bar.style.display = 'none';
+            }
+          })
           .catch(() => {});
       }
       checkBusy();
@@ -2703,7 +2746,7 @@ function renderDisk(status, diskLog, flash) {
     ${!monitorEnabled ? `
     <div class="banner banner-info">
       <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-      <span>Disk Monitor is <strong>disabled</strong>. Enable it in <a href="/dashboard/settings" style="color:#1e40af">Settings → Disk Monitor</a> to start tracking disk usage automatically.</span>
+      <span>Disk Monitor is <strong>disabled</strong>. Enable it in <a href="/dashboard/settings#disk-monitor" style="color:#1e40af">Settings → Disk Monitor</a> to start tracking disk usage automatically.</span>
     </div>` : ''}
 
     ${pendingCleanup ? `
@@ -5662,6 +5705,25 @@ function renderSettings(vals, flash) {
       document.getElementById('s-tab-' + name).classList.add('active');
       btn.classList.add('active');
     }
+    // Auto-switch to the correct tab and open/scroll to the target when a hash is present.
+    // All named section IDs live in the Optional tab, so any known hash switches there.
+    (function() {
+      const hash = window.location.hash.slice(1);
+      if (!hash) return;
+      const target = document.getElementById(hash);
+      if (!target) return;
+      const optPane = document.getElementById('s-tab-optional');
+      if (optPane && optPane.contains(target)) {
+        document.querySelectorAll('.s-tab-pane').forEach(p => p.classList.remove('active'));
+        document.querySelectorAll('.s-tab').forEach(b => b.classList.remove('active'));
+        optPane.classList.add('active');
+        document.querySelectorAll('.s-tab').forEach(b => {
+          if (b.textContent.trim() === 'Optional') b.classList.add('active');
+        });
+        if (target.tagName === 'DETAILS') target.open = true;
+        setTimeout(() => target.scrollIntoView({ behavior: 'smooth', block: 'start' }), 50);
+      }
+    })();
 
     // ── Hermes status ─────────────────────────────────────────────────────────
     let _hermesPoller = null;
@@ -6474,8 +6536,11 @@ router.get('/', async (_req, res) => {
 router.get('/json', (_req, res) => res.json(getStats()));
 
 // Lightweight processing indicator — polled every 4 s by the sun-logo script.
-// O(1) Map scan; does not touch disk, rebuild merged sets, or sort.
-router.get('/busy', (_req, res) => res.json({ busy: hasActive() }));
+// Returns busy flag plus active ticket details for the status bar.
+router.get('/busy', (_req, res) => {
+  const active = getActiveTickets();
+  res.json({ busy: active.length > 0, active });
+});
 
 // Activity log
 router.get('/activity', (req, res) => {

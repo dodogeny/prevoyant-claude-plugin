@@ -462,9 +462,24 @@ function hasActive() {
   return false;
 }
 
+function getActiveTickets() {
+  const active = [];
+  for (const t of tickets.values()) {
+    if (t.status === 'running' || t.status === 'queued' || t.status === 'retrying') {
+      let currentStep = null;
+      if (t.stages) {
+        const activeStage = t.stages.find(s => s.status === 'active');
+        if (activeStage) currentStep = activeStage.label;
+      }
+      active.push({ ticketKey: t.ticketKey, mode: t.mode || 'dev', status: t.status, currentStep });
+    }
+  }
+  return active;
+}
+
 module.exports = {
   recordQueued, reRunTicket, recordScheduled, recordRetrying,
   recordStarted, recordCompleted, recordInterrupted,
   recordStepActive, appendOutput, recordUsage, recordActualCost,
-  getStats, getTicket, getScheduledTickets, deleteTicket, hasActive,
+  getStats, getTicket, getScheduledTickets, deleteTicket, hasActive, getActiveTickets,
 };
