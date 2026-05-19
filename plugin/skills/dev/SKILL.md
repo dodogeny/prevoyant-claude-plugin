@@ -1,7 +1,7 @@
 ---
 name: dev
 description: "\"Structured Jira-driven developer workflow skill. Supports three modes — (1) Dev mode: use when a developer provides a Jira ticket URL or ticket key (e.g. PROJ-1234) and wants to start development work; handles the full workflow from reading the Jira ticket to proposing a code fix. (2) PR Review mode: use when a developer wants to review code changes for a Jira ticket; analyses the ticket context plus all code changes on the associated feature branch, then outputs findings and recommendations as a PDF report. (3) KB Review mode: use when there are pending KB proposals from the autonomous Flow Analyst (Javed) to review and vote on — no Jira ticket required; runs KB sync, graph audit, and panel vote only.\""
-version: 1.5.1
+version: 1.5.2
 ---
 
 # Dev Workflow Skill
@@ -28,6 +28,8 @@ Full end-to-end developer workflow for Jira tickets. Guides Claude through readi
 | SC-013 | v1.4.2 | 2026-05-15 | — | Feature | Mid-session cortex consultation — Step 5 hotspot cross-check (emits `[KB+ RISK HIGH-CONFIDENCE]` on cortex+fragility agreement), Step 7b-0 cortex-first patterns, and a generic `cortex_consult` helper any panel step can use. Telemetry pings now tag the step (0a / 5 / 7b-0 / 7c-{agent}). | ACTIVE |
 | SC-014 | v1.5.0 | 2026-05-19 | — | Feature | KB Review Mode: standalone panel vote on pending kbflow proposals without a Jira ticket. Runs KB sync + graph audit (Step KR0) → full 13j panel vote (Step KR1) → summary + KB push (Step KR2). Trigger: `kb review`, `review kb`, `kb-review`, `/dev kb-review`. | ACTIVE |
 | SC-015 | v1.5.1 | 2026-05-19 | — | Feature | Step 13i: mirror each agent's session memory to basic-memory MCP (`write_note`) for semantic search. Layer 5b standalone mode: supplement 5-most-recent KB file reads with `basic-memory search` using ticket key terms to surface relevant older sessions. | ACTIVE |
+| SC-016 | v1.5.2 | 2026-05-19 | — | Feature | Step 13k: Pattern Miner review — panel votes on `pattern-proposals.md` entries (same unanimous gate as 13j); approved entries promoted to `shared/patterns.md`. Closes the Pattern Miner loop that previously produced proposals with no auto-promotion path. | ACTIVE |
+| SC-017 | v1.5.2 | 2026-05-19 | — | Feature | Step 13l: Decision Outcome apply — reads `decision-outcomes.md` grades (CONFIRMED/CONTRADICTED) and writes them back to source KB files; CONFIRMED increments `confirmed:` counter; CONTRADICTED appends a warning flag. Closes the Decision Outcome Worker loop. Autonomy level raised to 2 (confidence-gated). | ACTIVE |
 
 ## Configuration
 
@@ -1170,6 +1172,8 @@ When `AUTO_MODE_ON=1`, the skill runs in **analysis-only mode** with no interact
 | Step 13 — KB update failure | Warn developer if a write fails | Log `KB_WRITE_WARN: {reason}` and continue — do not block session completion |
 | Step 13i — Agent personal memory | Write session memory file for each participating agent | Runs automatically; if write fails, log `KB_WRITE_WARN: persona memory — {reason}` and continue |
 | Step 13j — Javed pending review | Review and vote on Javed's pending CMM contributions | Skip if `PRX_KBFLOW_ENABLED` is not `Y` or `~/.prevoyant/knowledge-buildup/kbflow-pending.md` has no PENDING APPROVAL entries |
+| Step 13k — Pattern Miner review | Panel votes on Pattern Miner pattern proposals | Skip if `PRX_PATTERN_MINER_ENABLED` is not `Y` or `~/.prevoyant/knowledge-buildup/pattern-proposals.md` has no PENDING APPROVAL entries |
+| Step 13l — Decision Outcome apply | Apply CONFIRMED/CONTRADICTED grades to source KB files | Skip if `PRX_DECISION_OUTCOME_ENABLED` is not `Y` or `~/.prevoyant/knowledge-buildup/decision-outcomes.md` has no CONFIRMED or CONTRADICTED entries |
 | Step R0 — KB initialisation (Review mode) | Same as Step 0 | Same as Step 0 |
 | Step R9 — KB update failure (Review mode) | Same as Step 13 | Same as Step 13 |
 | Step 1 — MCP failure | Stop and wait for developer | Print `HEADLESS_ERROR: {reason}` and exit immediately |
@@ -4576,6 +4580,107 @@ Display on completion:
 
 ---
 
+#### 13k. Review Pattern Miner Proposals
+
+**Skip condition:** If `PRX_PATTERN_MINER_ENABLED` is not `Y`/`YES`/`true` (case-insensitive), OR `~/.prevoyant/knowledge-buildup/pattern-proposals.md` does not exist, OR the file contains no entries with `Status: PENDING APPROVAL` — skip entirely. Display: `⏭️  Step 13k skipped — no pending Pattern Miner proposals.`
+
+The Memory Pattern Miner scans all 7 agents' personal memory files after every session and surfaces learnings that recur across 3+ distinct tickets. It writes candidates to `~/.prevoyant/knowledge-buildup/pattern-proposals.md` as `PENDING APPROVAL`. This step is the panel's gate — nothing enters `shared/patterns.md` without a vote here.
+
+**13k-1. Read `~/.prevoyant/knowledge-buildup/pattern-proposals.md`**
+
+Read the file and list all `## PATTERN-CANDIDATE:` entries whose `Status:` line is `PENDING APPROVAL`. For each, display: category, number of source tickets, the ticket list, and the representative learnings block. Entries older than 7 days (check `Date:`) get an `⏰ OVERDUE —` prefix.
+
+**13k-2. Panel Vote — Jordan chairs** (patterns are Jordan's domain)
+
+For each PENDING APPROVAL entry, Jordan presents it to the full panel. Each member gives a one-line verdict:
+
+- **Jordan** — does this match a real recurring pattern type? Does it duplicate an existing `shared/patterns.md` entry? Is the format correct?
+- **Morgan** — is this substantively new vs. already covered in the KB? Is the ticket evidence credible (not cherry-picked)?
+- **Alex** — does git history corroborate the claim that this situation recurs across those tickets?
+- **Sam** — does the runtime behaviour match the pattern description?
+- **Henk** — any business rule conflict or implication from promoting this?
+- **Riley** — does approving this introduce or obscure a regression risk?
+
+**Decision rule: unanimous approval required.** A single REJECT blocks the entry.
+
+**13k-3. Apply Approved Proposals**
+
+For each APPROVED entry:
+- Read the `### Proposed shared/patterns.md entry` block from the proposal.
+- Refine it into the established `shared/patterns.md` format (following existing entries in that file). Set `Frequency: {N}` where N is the count of tickets in the `Tickets:` field. Set `Recurrences: {ticket list}`.
+- Append the refined entry to `shared/patterns.md`.
+- Update `~/.prevoyant/knowledge-buildup/pattern-proposals.md`: change the entry's `Status: PENDING APPROVAL` → `Status: APPROVED | {today's date}`.
+
+For each REJECTED entry:
+- Update `~/.prevoyant/knowledge-buildup/pattern-proposals.md`: change `Status: PENDING APPROVAL` → `Status: REJECTED | {today's date} | Reason: {one-line reason}`.
+- Do not write anything to `shared/patterns.md`.
+
+Display on completion:
+```
+🧩 Pattern Miner Review — Complete
+   Total proposals: {N}
+   Approved       : {N} → appended to shared/patterns.md (Frequency: {range})
+   Rejected       : {N} → archived with rejection reason
+```
+
+---
+
+#### 13l. Apply Decision Outcome Grades
+
+**Skip condition:** If `PRX_DECISION_OUTCOME_ENABLED` is not `Y`/`YES`/`true` (case-insensitive), OR `~/.prevoyant/knowledge-buildup/decision-outcomes.md` does not exist, OR the file contains no `## DO-` entries with `status: **CONFIRMED**` or `status: **CONTRADICTED**` — skip entirely. Display: `⏭️  Step 13l skipped — no graded decisions to apply.`
+
+The Decision Outcome Worker grades decisions in the KB as CONFIRMED, CONTRADICTED, or PENDING based on evidence in agent retros and lessons-learned files. It writes grades to `decision-outcomes.md` but never writes back to the KB. This step closes that loop — it applies the grades directly to the source KB files so Cortex can filter on them.
+
+**13l-1. Read `~/.prevoyant/knowledge-buildup/decision-outcomes.md`**
+
+Parse all `## DO-{ID} — {title}` blocks. For each, extract:
+- `source:` — the KB file path (relative to `KNOWLEDGE_DIR`) containing the original decision entry
+- `status:` — `CONFIRMED`, `CONTRADICTED`, or `PENDING`
+- `evidence:` — confirmation and contradiction counts
+
+**13l-2. Apply CONFIRMED grades**
+
+For each block where `status: **CONFIRMED**`:
+1. Resolve the full path: `{KNOWLEDGE_DIR}/{source}`.
+2. Find the decision heading `## {ID}` (or `## {ID} —`) in that file.
+3. **Idempotency check:** if the entry already contains `status: CONFIRMED` with today's date, skip — already applied this session.
+4. If a `status:` field exists in the entry: update it to `status: CONFIRMED | {today}`.
+   If no `status:` field exists: append `status: CONFIRMED | {today}` on the line immediately below the heading.
+5. If a `confirmed:` counter exists: increment it by 1.
+   If not: append `confirmed: 1` below the status line.
+6. Append inline tag at the end of the entry block: `[CONFIRMED {today} — {N} confirmations via decision-outcome worker]`
+7. Emit `[KB+ ARCH]` marker: `[KB+ ARCH] Decision {ID} ({title}) CONFIRMED — {N} confirmations, zero contradictions`.
+
+**13l-3. Apply CONTRADICTED grades**
+
+For each block where `status: **CONTRADICTED**`:
+1. Resolve the full path and find the decision heading.
+2. **Idempotency check:** if the entry already contains `status: CONTRADICTED` with today's date, skip.
+3. Update or append `status: CONTRADICTED | {today}` below the heading.
+4. Append a warning block immediately after the heading section:
+   ```
+   ⚠️ CONTRADICTED {today} — {N} contradiction(s) found in agent retros.
+      Evidence: {first contradiction quote from the DO block, max 80 chars}
+      Action required: Review this decision before relying on it. Consider deprecating.
+      See: ~/.prevoyant/knowledge-buildup/decision-outcomes.md → DO-{ID}
+   ```
+5. Emit `[KB+ RISK]` marker: `[KB+ RISK] Decision {ID} ({title}) is CONTRADICTED — manual review required before next use`.
+
+**13l-4. PENDING entries**
+
+Skip all blocks where `status: **PENDING**` — insufficient evidence; no action taken.
+
+Display on completion:
+```
+⚖️  Decision Outcomes — Applied
+   Total graded : {N}
+   CONFIRMED    : {N} → status + confirmed: counter written to source files
+   CONTRADICTED : {N} → warning flags written; manual review recommended
+   PENDING      : {N} → skipped (insufficient evidence — worker monitoring)
+```
+
+---
+
 ### Step 14 — Bryan's Retrospective
 
 **Skip condition:** If `PRX_INCLUDE_SM_IN_SESSIONS_ENABLED` is not set or is not `Y`/`YES`/`true` (case-insensitive), skip this step entirely. Display: `⏭️  Step 14 skipped — set PRX_INCLUDE_SM_IN_SESSIONS_ENABLED=Y in .env to activate Bryan's retrospective.`
@@ -6318,27 +6423,36 @@ mkdir -p "$(dirname "$KBFLOW_PENDING")"
 
 **4. Graph audit** — run the identical graph-aware KB coverage audit from Step 0 (reads `$REPO_DIR/GRAPH_REPORT.md`, stages god-node gaps and surprising-connection candidates as `PENDING APPROVAL` entries in `kbflow-pending.md`). This ensures any fresh graphify candidates are captured before the vote. Emit: `KB coverage audit: {N} god-node gaps + {M} surprising-connection candidates staged.` If `GRAPH_REPORT.md` does not exist, emit: `KB coverage audit: GRAPH_REPORT.md not found — skipping graph audit.`
 
-**5. Count pending entries:**
+**5. Count pending entries across all three buildup files:**
 ```bash
+KBFLOW_PENDING="$HOME/.prevoyant/knowledge-buildup/kbflow-pending.md"
+PATTERN_PROPOSALS="$HOME/.prevoyant/knowledge-buildup/pattern-proposals.md"
+DECISION_OUTCOMES="$HOME/.prevoyant/knowledge-buildup/decision-outcomes.md"
+
 PENDING_COUNT=$(grep -c "^Status: PENDING APPROVAL" "$KBFLOW_PENDING" 2>/dev/null || echo 0)
+PATTERN_COUNT=$(grep -c "^Status: PENDING APPROVAL" "$PATTERN_PROPOSALS" 2>/dev/null || echo 0)
+DECISION_COUNT=$(grep -cE "status: \*\*(CONFIRMED|CONTRADICTED)\*\*" "$DECISION_OUTCOMES" 2>/dev/null || echo 0)
+TOTAL_PENDING=$(( PENDING_COUNT + PATTERN_COUNT + DECISION_COUNT ))
 ```
 
-**If `PENDING_COUNT` is 0:** output:
+**If `TOTAL_PENDING` is 0:** output:
 ```
-⏭️  KB Review Mode: No pending proposals found. Nothing to review.
-    Run Javed's autonomous analysis or graphify to generate proposals,
-    then re-invoke `kb review`.
+⏭️  KB Review Mode: No pending proposals found across any buildup file. Nothing to review.
+    Run Javed's autonomous analysis, graphify, or wait for the next Pattern Miner /
+    Decision Outcome worker cycle to generate proposals, then re-invoke `kb review`.
 ```
 Exit — do not proceed to Step KR1.
 
-**If `PENDING_COUNT` is > 0:** output:
+**If `TOTAL_PENDING` is > 0:** output:
 ```
-🔍 KB Review Mode — {PENDING_COUNT} pending proposal(s) found.
-   Oldest proposal: {date from the earliest PENDING APPROVAL entry, or "unknown"}
+🔍 KB Review Mode — {TOTAL_PENDING} pending item(s) found.
+   Javed proposals  : {PENDING_COUNT}  (kbflow-pending.md)
+   Pattern proposals: {PATTERN_COUNT}  (pattern-proposals.md)
+   Decision grades  : {DECISION_COUNT} (decision-outcomes.md — CONFIRMED/CONTRADICTED)
    Proceeding to panel vote → Step KR1.
 ```
 
-For each entry whose `Date:` is more than 7 days ago, note `⏰ {N} proposals are OVERDUE (> 7 days pending).`
+For each kbflow or pattern entry whose `Date:` is more than 7 days ago, note `⏰ {N} proposals are OVERDUE (> 7 days pending).`
 
 ---
 
@@ -6346,12 +6460,18 @@ For each entry whose `Date:` is more than 7 days ago, note `⏰ {N} proposals ar
 
 Announce: `### Step KR1 — Panel Vote`
 
-Execute **Step 13j in full** — follow the exact 13j-1 through 13j-4 procedure defined in the Dev Mode Step 13j section:
+Run all three review sub-steps in sequence. Each sub-step uses its own skip condition — a sub-step with zero pending items is skipped silently with a one-line notice; the others still run.
+
+**KR1-a — Javed's proposals (Step 13j):** Execute **Step 13j in full** — follow the exact 13j-1 through 13j-4 procedure defined in the Dev Mode Step 13j section:
 
 - **13j-1**: Read `kbflow-pending.md` and list all `PENDING APPROVAL` entries with title, flow, proposed date, type, and action tag. Prefix entries older than 7 days with `⏰ OVERDUE —`.
 - **13j-2**: Morgan chairs the panel vote. Each agent (Morgan, Alex, Sam, Jordan, Henk, Riley) gives a one-line verdict per proposal. Unanimous approval required — a single REJECT blocks the entry.
 - **13j-3**: Apply approved entries to `core-mental-map/` (or `shared/patterns.md` / `lessons-learned/javed.md` per type). Update `kbflow-pending.md` statuses.
 - **13j-4**: Update `kbflow-sessions.md` with the reviewed batch outcome.
+
+**KR1-b — Pattern Miner proposals (Step 13k):** Execute **Step 13k in full** — follow the exact 13k-1 through 13k-3 procedure defined in the Dev Mode Step 13k section. Jordan chairs; unanimous approval required; approved entries promoted to `shared/patterns.md`.
+
+**KR1-c — Decision Outcome grades (Step 13l):** Execute **Step 13l in full** — follow the exact 13l-1 through 13l-4 procedure defined in the Dev Mode Step 13l section. No vote required — grades are applied directly to source KB files based on the worker's evidence scoring.
 
 ---
 
@@ -6359,7 +6479,7 @@ Execute **Step 13j in full** — follow the exact 13j-1 through 13j-4 procedure 
 
 Announce: `### Step KR2 — Summary & KB Push`
 
-Display the standard 13j completion block:
+Display the combined completion block:
 ```
 🔍 Javed's KB Contributions — Review Complete
    Flow         : {flow name, or "mixed" if multiple flows}
@@ -6367,6 +6487,17 @@ Display the standard 13j completion block:
    Approved     : {N} → written to core-mental-map/
    Rejected     : {N} → archived with rejection reason
    Skipped      : {N} INFO entries (no action required)
+
+🧩 Pattern Miner Review — Complete
+   Total proposals: {PATTERN_COUNT}
+   Approved       : {N} → appended to shared/patterns.md
+   Rejected       : {N} → archived with rejection reason
+
+⚖️  Decision Outcomes — Applied
+   Total graded : {DECISION_COUNT}
+   CONFIRMED    : {N} → status + confirmed: counter written to source files
+   CONTRADICTED : {N} → warning flags written; manual review recommended
+   PENDING      : {N} → skipped (insufficient evidence)
 ```
 
 Then display the KB Review Mode summary:
