@@ -1,7 +1,7 @@
 ---
 name: dev
-description: "\"Structured Jira-driven developer workflow skill. Supports two modes — (1) Dev mode: use when a developer provides a Jira ticket URL or ticket key (e.g. PROJ-1234) and wants to start development work; handles the full workflow from reading the Jira ticket to proposing a code fix. (2) PR Review mode: use when a developer wants to review code changes for a Jira ticket; analyses the ticket context plus all code changes on the associated feature branch, then outputs findings and recommendations as a PDF report.\""
-version: 1.4.2
+description: "\"Structured Jira-driven developer workflow skill. Supports three modes — (1) Dev mode: use when a developer provides a Jira ticket URL or ticket key (e.g. PROJ-1234) and wants to start development work; handles the full workflow from reading the Jira ticket to proposing a code fix. (2) PR Review mode: use when a developer wants to review code changes for a Jira ticket; analyses the ticket context plus all code changes on the associated feature branch, then outputs findings and recommendations as a PDF report. (3) KB Review mode: use when there are pending KB proposals from the autonomous Flow Analyst (Javed) to review and vote on — no Jira ticket required; runs KB sync, graph audit, and panel vote only.\""
+version: 1.5.1
 ---
 
 # Dev Workflow Skill
@@ -26,6 +26,8 @@ Full end-to-end developer workflow for Jira tickets. Guides Claude through readi
 | SC-011 | v1.4.0 | 2026-05-15 | — | Feature | Step 5: Fragility score column (Muninn-style weighted composite) injected into the file map | ACTIVE |
 | SC-012 | v1.4.1 | 2026-05-15 | — | Feature | Step 0b: Layer 0 Cortex Pass — read ~/.prevoyant/cortex/facts/*.md first; emit `[CORTEX HIT/MISS]` markers; narrow Layers 1b/3 by coverage map (~50–70% Step 0 token savings when fresh) | ACTIVE |
 | SC-013 | v1.4.2 | 2026-05-15 | — | Feature | Mid-session cortex consultation — Step 5 hotspot cross-check (emits `[KB+ RISK HIGH-CONFIDENCE]` on cortex+fragility agreement), Step 7b-0 cortex-first patterns, and a generic `cortex_consult` helper any panel step can use. Telemetry pings now tag the step (0a / 5 / 7b-0 / 7c-{agent}). | ACTIVE |
+| SC-014 | v1.5.0 | 2026-05-19 | — | Feature | KB Review Mode: standalone panel vote on pending kbflow proposals without a Jira ticket. Runs KB sync + graph audit (Step KR0) → full 13j panel vote (Step KR1) → summary + KB push (Step KR2). Trigger: `kb review`, `review kb`, `kb-review`, `/dev kb-review`. | ACTIVE |
+| SC-015 | v1.5.1 | 2026-05-19 | — | Feature | Step 13i: mirror each agent's session memory to basic-memory MCP (`write_note`) for semantic search. Layer 5b standalone mode: supplement 5-most-recent KB file reads with `basic-memory search` using ticket key terms to surface relevant older sessions. | ACTIVE |
 
 ## Configuration
 
@@ -1199,8 +1201,9 @@ This skill operates in three modes. Detect the mode from the invocation:
 | **PR Review Mode** | `review IV-XXXX`, `PR review IV-XXXX`, `code review IV-XXXX`, `/dev review IV-XXXX` | **Step R0** (KB query) → Steps R1–R8 (code diff review → PDF) → **Step R9** (KB update) |
 | **Estimate Mode** | `estimate IV-XXXX`, `size IV-XXXX`, `point IV-XXXX`, `/dev estimate IV-XXXX` | **Step E0** (KB query) → Steps E1–E7 (planning poker → consensus → Jira update → KB update) |
 | **Watch Mode** | `watch IV-XXXX`, `/prx:dev watch IV-XXXX` | **Step W0** (KB query) → **Step W1** (fetch ticket + all comments) → **Step W2** (progress analysis) → **Step W3** (digest output) |
+| **KB Review Mode** | `kb review`, `review kb`, `kb-review`, `/dev kb-review`, `review pending kb`, `kbflow review` | **Step KR0** (KB sync + graph audit + pending check) → **Step KR1** (13j panel vote) → **Step KR2** (summary + KB push) — **no Jira ticket required** |
 
-**→ Check for trigger words in order: `estimate`/`size`/`point` → Estimate Mode. `review` → PR Review Mode. `watch` → Watch Mode. Otherwise → Dev Mode.**
+**→ Check for trigger words in order: `estimate`/`size`/`point` → Estimate Mode. `kb review`/`kb-review`/`review kb`/`kbflow review`/`review pending kb` → KB Review Mode (**check this BEFORE the generic `review` check**). `review` → PR Review Mode. `watch` → Watch Mode. Otherwise → Dev Mode.**
 
 ---
 
@@ -1212,6 +1215,7 @@ Invoke when the developer provides:
 - A phrase like `/prevoyant:dev PROJ-1234` or `/dev PROJ-1234` or "start dev on PROJ-1234" or "pick up PROJ-1234"
 - A phrase like `review PROJ-1234` or `PR review PROJ-1234` or `/dev review PROJ-1234` for code review
 - A phrase like `estimate PROJ-1234` or `size PROJ-1234` or `/dev estimate PROJ-1234` for effort estimation
+- A phrase like `kb review`, `review kb`, `kb-review`, or `/dev kb-review` to review pending KB proposals from Javed — **no ticket key required**
 
 Do NOT invoke for general code questions unrelated to a Jira ticket.
 
@@ -1776,6 +1780,10 @@ If the plugin directory is not accessible, agents fall back to the inline person
 - Session count: how many sessions each agent has contributed to (builds credibility over time)
 
 If an agent's memory directory is empty: state `{Agent} memory: none yet — first session.`
+
+**Supplement with basic-memory semantic search (when available):**
+
+After reading the 5 most recent KB files per agent, call `mcp__basic-memory-{agent}__search` with the ticket's primary keywords — component names, error types, affected service names (e.g. `"regex backtracking SQL comment"` or `"StackOverflowError JVM startup"`). Merge any returned sessions not already covered by the 5 most recent files. This surfaces relevant older memories that recency-only selection would miss. If the MCP tool is unavailable or returns no results, skip silently — do not log a warning.
 
 Each agent internalises their own memory before speaking. An agent with 20+ sessions of memory brings that accumulated experience to their analysis — they already know which areas of the codebase surprised them before, which of their past hypotheses proved correct, and which patterns they tend to miss.
 
@@ -4485,6 +4493,16 @@ session: {TICKET_KEY} | date: {DATE} | ticket-type: {BUG|ENHANCEMENT|PR_REVIEW}
 
 **Write the persona memory files last** — after all KB files are updated — so the memory reflects the full, final state of the session.
 
+**Also mirror to basic-memory MCP (when available):**
+
+After writing each agent's KB persona file, call `mcp__basic-memory-{agent}__write_note` (e.g. `mcp__basic-memory-morgan__write_note` for Morgan). This enables semantic search across all past sessions in standalone mode.
+
+- `title`: `{YYYYMMDD}-{TICKET_KEY}` (same stem as the KB filename, e.g. `20260518-IV-3786`)
+- `content`: full markdown content of the just-written persona memory file
+- `folder`: `sessions`
+
+Call each agent's write_note tool independently. If any call fails (MCP server not running, timeout), log `KB_WRITE_WARN: basic-memory {agent} — {reason}` and continue. The KB file is the primary record — basic-memory is supplemental and optional.
+
 Display on completion:
 ```
 🧠 Agent Personal Memory
@@ -4492,6 +4510,7 @@ Display on completion:
    Files written: {N} (personas/memory/{agent}/{date}-{ticket}.md × N)
    Agents       : Morgan ({X} sessions total), Alex ({X}), Sam ({X}),
                   Jordan ({X}), Henk ({X}), Riley ({X}), Bryan ({X})
+   basic-memory : mirrored {N}/{total} agents (any failures logged above)
 ```
 
 ---
@@ -4532,10 +4551,10 @@ For each APPROVED entry:
   Write the entry following the standard compressed format. Update `core-mental-map/INDEX.md` counts.
 - **PATTERN type**: append the `[ESTIMATE-PATTERN]` block to `shared/patterns.md`.
 - **LESSON type**: append the lesson entry to `lessons-learned/javed.md` (create if absent).
-- In all cases: update `~/.prevoyant/knowledge-buildup/kbflow-pending.md`: change `Status: PENDING APPROVAL` → `Status: APPROVED | {today's date}`.
+- In all cases: update `~/.prevoyant/knowledge-buildup/kbflow-pending.md`: change the `Status:` line from `Status: PENDING APPROVAL` → `Status: APPROVED | {today's date}`. **The `Status:` line is the machine-readable field the Prevoyant dashboard reads — it must be updated. Do not only modify the heading.**
 
 For each REJECTED entry:
-- Update `~/.prevoyant/knowledge-buildup/kbflow-pending.md`: change `Status: PENDING APPROVAL` → `Status: REJECTED | {today's date} | Reason: {one-line reason}`.
+- Update `~/.prevoyant/knowledge-buildup/kbflow-pending.md`: change the `Status:` line from `Status: PENDING APPROVAL` → `Status: REJECTED | {today's date} | Reason: {one-line reason}`. **The `Status:` line must be updated — not just the heading.**
 - Do not write anything to `core-mental-map/`.
 
 **13j-4. Update `~/.prevoyant/knowledge-buildup/kbflow-sessions.md`**
@@ -6259,6 +6278,107 @@ Identical to Step 14 in Dev Mode with these differences:
 
 ---
 
+## KB Review Mode
+
+KB Review Mode reviews and votes on pending KB proposals from the autonomous KB Flow Analyst (Javed) without requiring a Jira ticket. It is the fastest path to get stale pending proposals off the backlog: KB sync → graph audit → panel vote → done.
+
+Invoke with: `kb review`, `review kb`, `kb-review`, `/dev kb-review`, `review pending kb`, `kbflow review`
+
+---
+
+> **Headless output rule (applies to all KR steps):** KB Review Mode always runs headlessly via the Prevoyant Server (`AUTO_MODE=Y`). The session log is the only visibility into what happened. **Output each step announcement (`### Step KR{N} — {Label}`) and a short summary as plain text before executing any tool calls for that step.** Do not suppress or skip narration — it drives the pipeline display and the output log.
+
+### Step KR0 — KB Sync & Pending Check
+
+Announce: `### Step KR0 — KB Sync & Pending Check`
+
+**1. Resolve KB paths** (same as Step 0a Configuration block):
+```bash
+KB_MODE="${PRX_KB_MODE:-local}"
+if [ "$KB_MODE" = "distributed" ]; then
+  KB_WORK_DIR="${PRX_KB_LOCAL_CLONE:-$HOME/.prevoyant/kb}"
+else
+  KB_WORK_DIR="${PRX_KNOWLEDGE_DIR:-$HOME/.prevoyant/knowledge-base}"
+fi
+KBFLOW_PENDING="$HOME/.prevoyant/knowledge-buildup/kbflow-pending.md"
+REPO_DIR="${PRX_REPO_DIR}"
+```
+
+**2. Sync (distributed mode only):** If `KB_MODE=distributed`, run the same `git pull --ff-only` as Step 0a. Skip for local mode.
+
+**3. Initialise directories** (same mkdir block as Step 0a):
+```bash
+mkdir -p "$KB_WORK_DIR/tickets" "$KB_WORK_DIR/shared" "$KB_WORK_DIR/core-mental-map" \
+         "$KB_WORK_DIR/lessons-learned" "$KB_WORK_DIR/personas/memory/morgan" \
+         "$KB_WORK_DIR/personas/memory/alex" "$KB_WORK_DIR/personas/memory/sam" \
+         "$KB_WORK_DIR/personas/memory/jordan" "$KB_WORK_DIR/personas/memory/henk" \
+         "$KB_WORK_DIR/personas/memory/riley" "$KB_WORK_DIR/personas/memory/bryan"
+mkdir -p "$(dirname "$KBFLOW_PENDING")"
+```
+
+**4. Graph audit** — run the identical graph-aware KB coverage audit from Step 0 (reads `$REPO_DIR/GRAPH_REPORT.md`, stages god-node gaps and surprising-connection candidates as `PENDING APPROVAL` entries in `kbflow-pending.md`). This ensures any fresh graphify candidates are captured before the vote. Emit: `KB coverage audit: {N} god-node gaps + {M} surprising-connection candidates staged.` If `GRAPH_REPORT.md` does not exist, emit: `KB coverage audit: GRAPH_REPORT.md not found — skipping graph audit.`
+
+**5. Count pending entries:**
+```bash
+PENDING_COUNT=$(grep -c "^Status: PENDING APPROVAL" "$KBFLOW_PENDING" 2>/dev/null || echo 0)
+```
+
+**If `PENDING_COUNT` is 0:** output:
+```
+⏭️  KB Review Mode: No pending proposals found. Nothing to review.
+    Run Javed's autonomous analysis or graphify to generate proposals,
+    then re-invoke `kb review`.
+```
+Exit — do not proceed to Step KR1.
+
+**If `PENDING_COUNT` is > 0:** output:
+```
+🔍 KB Review Mode — {PENDING_COUNT} pending proposal(s) found.
+   Oldest proposal: {date from the earliest PENDING APPROVAL entry, or "unknown"}
+   Proceeding to panel vote → Step KR1.
+```
+
+For each entry whose `Date:` is more than 7 days ago, note `⏰ {N} proposals are OVERDUE (> 7 days pending).`
+
+---
+
+### Step KR1 — Panel Vote
+
+Announce: `### Step KR1 — Panel Vote`
+
+Execute **Step 13j in full** — follow the exact 13j-1 through 13j-4 procedure defined in the Dev Mode Step 13j section:
+
+- **13j-1**: Read `kbflow-pending.md` and list all `PENDING APPROVAL` entries with title, flow, proposed date, type, and action tag. Prefix entries older than 7 days with `⏰ OVERDUE —`.
+- **13j-2**: Morgan chairs the panel vote. Each agent (Morgan, Alex, Sam, Jordan, Henk, Riley) gives a one-line verdict per proposal. Unanimous approval required — a single REJECT blocks the entry.
+- **13j-3**: Apply approved entries to `core-mental-map/` (or `shared/patterns.md` / `lessons-learned/javed.md` per type). Update `kbflow-pending.md` statuses.
+- **13j-4**: Update `kbflow-sessions.md` with the reviewed batch outcome.
+
+---
+
+### Step KR2 — Summary & KB Push
+
+Announce: `### Step KR2 — Summary & KB Push`
+
+Display the standard 13j completion block:
+```
+🔍 Javed's KB Contributions — Review Complete
+   Flow         : {flow name, or "mixed" if multiple flows}
+   Total entries: {PENDING_COUNT}
+   Approved     : {N} → written to core-mental-map/
+   Rejected     : {N} → archived with rejection reason
+   Skipped      : {N} INFO entries (no action required)
+```
+
+Then display the KB Review Mode summary:
+```
+✅ KB Review Mode — Complete
+   KB push : {PUSHED / SKIPPED (local mode)}
+```
+
+**KB push (distributed mode only):** Run the same `git add … && git commit … && git push` sequence as Step 13f. Commit message: `kb: promote {N} Javed proposals (KB Review Mode — {today's date})`. Skip for local mode.
+
+---
+
 ## Watch Mode
 
 Watch Mode is invoked automatically by the Prevoyant Server ticket watcher. It runs headlessly (`AUTO_MODE=Y`) and produces a structured progress digest that is emailed to `PRX_EMAIL_TO`.
@@ -6378,6 +6498,8 @@ The Prevoyant Server dashboard detects these markers in real time to drive the p
 **Estimate Mode:** Step E0 (KB query) → Steps E1–E5 (scope → planning poker → debate → consensus) → Step E5b (PDF report) → Step E6 (KB update) → Step E7 (Bryan retrospective). Step E5 produces the final estimate block; Step E5b produces the PDF; Step E6 produces the KB update confirmation; Step E7 closes the session.
 
 **Watch Mode:** Step W0 (KB query) → Step W1 (fetch ticket + all comments) → Step W2 (progress analysis) → Step W3 (digest output). Runs headlessly; output is consumed by the Prevoyant Server ticket watcher, which emails the digest automatically. Always announce each step header exactly as `### Step W{N} — {Label}` before any content.
+
+**KB Review Mode:** Step KR0 (KB sync + graph audit + pending check) → Step KR1 (13j panel vote) → Step KR2 (summary + KB push). No ticket required. Exits early at Step KR0 if no pending proposals are found. Always announce each step header exactly as `### Step KR{N} — {Label}` before any content.
 
 ---
 

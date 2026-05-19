@@ -45,5 +45,10 @@
     { "id": "W1", "label": "Fetch Ticket" },
     { "id": "W2", "label": "Progress Analysis" },
     { "id": "W3", "label": "Digest Output" }
+  ],
+  "kb-review": [
+    { "id": "KR0", "label": "KB Sync & Pending Check" },
+    { "id": "KR1", "label": "Panel Vote" },
+    { "id": "KR2", "label": "Summary & KB Push" }
   ]
 }

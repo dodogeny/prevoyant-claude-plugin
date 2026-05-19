@@ -125,7 +125,7 @@ function buildMcpConfig() {
 }
 
 // Matches "Step 3 —", "Step R5 —", "Step E5b —", "Step 14 —" etc.
-const STEP_RE = /(?:^|[*#\s])Step\s+((?:R|E)?\d+[a-z]?)\s*[—–]/m;
+const STEP_RE = /(?:^|[*#\s])Step\s+((?:KR|W|R|E)?\d+[a-z]?)\s*[—–]/m;
 
 function detectStep(text) {
   const match = text.match(STEP_RE);
@@ -159,8 +159,9 @@ function loadStageInstructions(list) {
 }
 
 function stageSequenceHint(mode) {
-  const list = mode === 'review'   ? stages.review
-             : mode === 'estimate' ? stages.estimate
+  const list = mode === 'review'    ? stages.review
+             : mode === 'estimate'  ? stages.estimate
+             : mode === 'kb-review' ? stages['kb-review']
              : stages.dev;
   const seq = list.map(s => `Step ${s.id} — ${s.label}`).join(' → ');
   return `\n\nPrevoyant pipeline stages for this ${mode} session (announce each on its own line as ### Step N — {label}):\n${seq}`
@@ -266,8 +267,9 @@ function evidenceOnlyPrompt(ticketKey, evidenceBlock) {
 }
 
 function modePrompt(ticketKey, mode, kbBlock = null, evidenceBlock = null) {
-  const base = mode === 'review'   ? `/prx:dev review ${ticketKey}`
-             : mode === 'estimate' ? `/prx:dev estimate ${ticketKey}`
+  const base = mode === 'review'    ? `/prx:dev review ${ticketKey}`
+             : mode === 'estimate'  ? `/prx:dev estimate ${ticketKey}`
+             : mode === 'kb-review' ? `/prx:dev kb review`
              : `/prx:dev ${ticketKey}`;
   const invocation = base + stageSequenceHint(mode);
   const blocks = [kbBlock, evidenceBlock].filter(Boolean);
@@ -313,6 +315,18 @@ function processLine(ticketKey, line) {
         tracker.appendOutput(ticketKey, text);
         const stepId = detectStep(text);
         if (stepId) tracker.recordStepActive(ticketKey, stepId);
+      } else if (block.type === 'tool_use') {
+        // Log tool calls so headless runs (where Claude narrates minimally) still show activity.
+        // Format: [tool] bash · echo "hello"  or  [tool] read · /path/to/file
+        const toolName = block.name || 'tool';
+        let hint = '';
+        if (block.input) {
+          hint = block.input.command || block.input.file_path || block.input.path
+              || block.input.query  || block.input.skill
+              || (typeof block.input === 'string' ? block.input : '');
+          if (hint && hint.length > 120) hint = hint.slice(0, 117) + '…';
+        }
+        tracker.appendOutput(ticketKey, `[tool] ${toolName}${hint ? ' · ' + hint : ''}`);
       }
     }
   } else if (ev.type === 'result') {
@@ -362,9 +376,9 @@ async function runClaudeAnalysis(ticketKey, mode = 'dev', ticketMeta = {}) {
 
   // Pre-load KB content so Claude skips Step 0a/0b disk reads.
   // Falls back gracefully to null if KB is empty, encrypted, or unavailable.
-  // Skipped for evidence-only runs — no Jira ticket to key against.
+  // Skipped for evidence-only and kb-review runs — no Jira ticket to key against.
   let kbBlock = null;
-  if (!isEvidenceOnly) {
+  if (!isEvidenceOnly && mode !== 'kb-review') {
     try {
       kbBlock = await kbQuery.buildPriorKnowledgeBlock({ ticketKey, ...ticketMeta });
       if (kbBlock) console.log(`[runner] ${ticketKey} — KB pre-loaded (${kbBlock.length} chars)`);
@@ -390,7 +404,7 @@ async function runClaudeAnalysis(ticketKey, mode = 'dev', ticketMeta = {}) {
 
     // AUTO_MODE=Y — SKILL.md checks for exactly 'Y' in confirmation gates
     const childEnv = { ...process.env, AUTO_MODE: 'Y' };
-    if (!isEvidenceOnly && reportAlreadyExists(ticketKey, mode)) {
+    if (!isEvidenceOnly && mode !== 'kb-review' && reportAlreadyExists(ticketKey, mode)) {
       childEnv.CLAUDE_REPORT_SUFFIX = datetimeSuffix();
       console.log(`[runner] Existing report for ${ticketKey} — suffix ${childEnv.CLAUDE_REPORT_SUFFIX}`);
     }

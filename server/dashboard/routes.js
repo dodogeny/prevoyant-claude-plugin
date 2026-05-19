@@ -14,7 +14,7 @@ const watchStore    = require('../watchers/watchStore');
 const watchManager  = require('../watchers/watchManager');
 const cpuMonitor    = require('../runner/cpuMonitor');
 
-const VALID_MODES    = new Set(['dev', 'review', 'estimate']);
+const VALID_MODES    = new Set(['dev', 'review', 'estimate', 'kb-review']);
 const WATCH_LOG_DIR  = path.join(os.homedir(), '.prevoyant', 'watch', 'logs');
 
 const config = require('../config/env');
@@ -1480,10 +1480,17 @@ function renderDashboard(stats, budget) {
     <button onclick="toggleQueuePause()" style="margin-left:auto;padding:.25rem .75rem;background:#d97706;color:#fff;border:none;border-radius:5px;font-size:.78rem;cursor:pointer;font-family:inherit">Resume Queue</button>
   </div>` : ''}
   ${(() => {
-    const kbState = readKbflowState();
-    const pending = kbState.pendingCount || 0;
-    const oldestDays = kbState.oldestPendingDays || 0;
-    if (!pending || process.env.PRX_KBFLOW_ENABLED !== 'Y') return '';
+    if (process.env.PRX_KBFLOW_ENABLED !== 'Y') return '';
+    const _kbPendingFile = path.join(os.homedir(), '.prevoyant', 'knowledge-buildup', 'kbflow-pending.md');
+    const _kbPendingItems = parseKbflowPending(_kbPendingFile).filter(it => (it.status || '').toUpperCase().startsWith('PENDING'));
+    const pending = _kbPendingItems.length;
+    if (!pending) return '';
+    const oldestDays = _kbPendingItems.length > 0
+      ? Math.max(..._kbPendingItems.map(it => {
+          const d = new Date(it.proposed);
+          return isNaN(d.getTime()) ? 0 : Math.floor((Date.now() - d.getTime()) / 86400000);
+        }))
+      : 0;
     const isOverdue = oldestDays >= parseInt(process.env.PRX_KBFLOW_REVIEW_NUDGE_DAYS || '7', 10);
     const bg    = isOverdue ? '#fef2f2' : '#fffbeb';
     const bdr   = isOverdue ? '#fecaca' : '#fde68a';
@@ -7897,52 +7904,102 @@ function readKbflowState() {
 // Format (one block per proposal, separated by ---):
 //   ## JP-NNN — Title
 //   Status: PENDING APPROVAL | APPROVED | ... | REJECTED
-//   Flow: ...
-//   Incidents: ...
-//   Proposed: YYYY-MM-DD
-//   Type: CMM-ARCH | CMM-BIZ | CMM-DATA | CMM-GOTCHA
-//   Action: NEW | CORRECT | CONFIRM
-//   {body}
-//   ref: file:line
+// Supports two formats:
+//   Old: ## JP-NNN — Title / Proposed: / Flow: / Incidents: / Type: / Action:
+//   New: ## FLOW-YYYYMMDD-NNN — Title / Date: / Source: / Tickets: / Cluster: /
+//        with internal --- separators between ### Summary and ### CMM Proposals sections
 function parseKbflowPending(filePath) {
   let raw;
   try { raw = fs.readFileSync(filePath, 'utf8'); } catch (_) { return []; }
 
-  const blocks = raw.split(/^---\s*$/m).map(b => b.trim()).filter(Boolean);
-  const items  = [];
+  // Collect top-level blocks by scanning for `## ` headings (exactly two hashes).
+  // Splitting on `---` is unreliable — the new format uses `---` as an intra-block
+  // separator between the Summary and CMM Proposals subsections.
+  // Track triple-backtick fences so headings inside code blocks are ignored.
+  const lines = raw.split('\n');
+  const rawBlocks = [];
+  let cur = null;
+  let inFence = false;
+  for (const line of lines) {
+    if (line.startsWith('```')) inFence = !inFence;
+    if (!inFence && /^## [^#]/.test(line)) {
+      if (cur !== null) rawBlocks.push(cur.join('\n'));
+      cur = [line];
+    } else if (cur !== null) {
+      cur.push(line);
+    }
+  }
+  if (cur !== null) rawBlocks.push(cur.join('\n'));
 
-  for (const block of blocks) {
-    const titleMatch = block.match(/^##\s+(JP-\d+)\s*[—–-]\s*(.+?)\s*$/m);
+  const items = [];
+  for (const block of rawBlocks) {
+    // Accept any ID format: JP-NNN, FLOW-YYYYMMDD-NNN, CANDIDATE-*, CMM-*, etc.
+    const titleMatch = block.match(/^##\s+(\S+)\s+[—–-]\s+(.+?)\s*$/m);
     if (!titleMatch) continue;
 
-    const meta = {
-      id:        titleMatch[1],
-      title:     titleMatch[2],
-      status:    (block.match(/^Status:\s*(.+?)\s*$/m)        || [, ''])[1],
-      flow:      (block.match(/^Flow:\s*(.+?)\s*$/m)          || [, ''])[1],
-      incidents: (block.match(/^Incidents:\s*(.+?)\s*$/m)     || [, ''])[1],
-      proposed:  (block.match(/^Proposed:\s*(.+?)\s*$/m)      || [, ''])[1],
-      type:      (block.match(/^Type:\s*(.+?)\s*$/m)          || [, ''])[1],
-      action:    (block.match(/^Action:\s*(.+?)\s*$/m)        || [, ''])[1],
-      ref:       (block.match(/^ref:\s*(.+?)\s*$/m)           || [, ''])[1],
-    };
+    const id = titleMatch[1];
+    // Extract any trailing status annotation from the heading, e.g. [APPROVED — promoted 2026-05-18]
+    // Claude sometimes updates only the heading when approving/rejecting, leaving Status: stale.
+    const headingAnnotation = titleMatch[2].match(/\[(APPROVED|REJECTED|PROMOTED|PARTIAL)([^\]]*)\]/i);
+    const title = titleMatch[2]
+      .replace(/\s*\[(?:APPROVED|REJECTED|PROMOTED|PENDING|PARTIAL)[^\]]*\]\s*$/i, '')
+      .trim();
 
-    // The body sits between the metadata block and the `ref:` line.
-    const lines = block.split('\n');
-    const bodyLines = [];
-    let inBody = false;
-    for (const line of lines) {
-      if (/^(##|Status:|Flow:|Incidents:|Proposed:|Type:|Action:|ref:)/.test(line)) {
-        if (!line.startsWith('##') && !inBody) continue;
-      }
-      if (line.startsWith('##')) { inBody = true; continue; }
-      if (line.startsWith('ref:')) { inBody = false; continue; }
-      if (inBody && /^(Status|Flow|Incidents|Proposed|Type|Action):/.test(line)) continue;
-      if (inBody) bodyLines.push(line);
+    // Date: Proposed: (old) → Date: (new)
+    const proposed = ((block.match(/^Proposed:\s*(.+?)\s*$/m) || [])[1])
+                  || ((block.match(/^Date:\s*(.+?)\s*$/m)     || [])[1])
+                  || '';
+
+    // Flow source: Flow: (old) → Source: (new)
+    const flow = ((block.match(/^Flow:\s*(.+?)\s*$/m)  || [])[1])
+              || ((block.match(/^Source:\s*(.+?)\s*$/m) || [])[1])
+              || '';
+
+    // Incidents/tickets: Incidents: (old) → Tickets: (new)
+    const incidents = ((block.match(/^Incidents:\s*(.+?)\s*$/m) || [])[1])
+                   || ((block.match(/^Tickets:\s*(.+?)\s*$/m)   || [])[1])
+                   || '';
+
+    // Status: read the Status: field, then override with heading annotation if it contradicts.
+    // Claude sometimes updates only the heading (e.g. appends [APPROVED — promoted DATE])
+    // while leaving Status: PENDING APPROVAL unchanged — heading annotation wins in that case.
+    const statusField = ((block.match(/^Status:\s*(.+?)\s*$/m) || [])[1]) || '';
+    let status = statusField;
+    if (headingAnnotation && statusField.toUpperCase().startsWith('PENDING')) {
+      const annotLabel  = headingAnnotation[1].toUpperCase();
+      const annotDetail = headingAnnotation[2].trim().replace(/^[—–-]\s*/, '');
+      status = annotDetail ? `${annotLabel} | ${annotDetail}` : annotLabel;
     }
-    meta.body = bodyLines.join('\n').trim();
 
-    items.push(meta);
+    // Type: explicit field first, then infer from first [CMM+ TYPE …] tag
+    let type = ((block.match(/^Type:\s*(.+?)\s*$/m) || [])[1]) || '';
+    if (!type) {
+      const m = block.match(/\[CMM\+\s+([A-Z]+)/);
+      if (m) type = 'CMM-' + m[1];
+    }
+
+    // Action: explicit field first, then second word of [CMM+ TYPE ACTION] tag
+    let action = ((block.match(/^Action:\s*(.+?)\s*$/m) || [])[1]) || '';
+    if (!action) {
+      const m = block.match(/\[CMM\+\s+[A-Z]+\s+([A-Z]+)/);
+      if (m) action = m[1];
+    }
+
+    const ref = ((block.match(/ref:\s*(.+?)\s*$/m) || [])[1]) || '';
+
+    // Body: prefer ### Summary section; fall back to stripping metadata lines
+    let body = '';
+    const summaryIdx = block.indexOf('\n### Summary\n');
+    if (summaryIdx >= 0) {
+      const afterSummary = block.slice(summaryIdx + '\n### Summary\n'.length);
+      const nextSection  = afterSummary.search(/\n###\s/);
+      body = (nextSection >= 0 ? afterSummary.slice(0, nextSection) : afterSummary).trim();
+    } else {
+      const metaRe = /^(##|Status:|Date:|Proposed:|Source:|Flow:|Tickets:|Incidents:|Cluster:|Flows analysed:|Type:|Action:)/;
+      body = block.split('\n').filter(l => !metaRe.test(l) && l.trim()).join('\n').trim();
+    }
+
+    items.push({ id, title, status, flow, incidents, proposed, type, action, ref, body });
   }
   return items;
 }
@@ -8853,16 +8910,23 @@ function renderKnowledgeBuilder(flash) {
   const lastStatus   = state.lastRunStatus || '—';
   const isRunning    = state.isRunning === true;
   const hasSummary   = state.lastNewProposals != null || state.lastCorrections != null;
-  const pendingCount = state.pendingCount || counts.pending;
-  const oldestPendingDays = state.oldestPendingDays || 0;
+  const pendingCount = counts.pending;
+  const pendingItems = items.filter(it => (it.status || '').toUpperCase().startsWith('PENDING'));
+  const oldestPendingDays = pendingItems.length > 0
+    ? Math.max(...pendingItems.map(it => {
+        const d = new Date(it.proposed);
+        return isNaN(d.getTime()) ? 0 : Math.floor((Date.now() - d.getTime()) / 86400000);
+      }))
+    : 0;
   const nudgeDays    = parseInt(process.env.PRX_KBFLOW_REVIEW_NUDGE_DAYS || '7', 10);
 
   // Acceptance rate (approved / all reviewed)
   const reviewed     = counts.approved + counts.rejected;
   const acceptPct    = reviewed > 0 ? Math.round((counts.approved / reviewed) * 100) : null;
 
-  const flashMsg = flash === 'run-queued'   ? `<div style="background:#dcfce7;color:#166534;padding:.6rem 1rem;border-radius:8px;margin-bottom:1rem;font-size:.85rem">✓ Run queued — the KB Flow Analyst will start its scan momentarily.</div>` :
-                   flash === 'run-disabled' ? `<div style="background:#fee2e2;color:#991b1b;padding:.6rem 1rem;border-radius:8px;margin-bottom:1rem;font-size:.85rem">✗ Cannot run — the KB Flow Analyst is disabled. Enable it in Settings first.</div>` :
+  const flashMsg = flash === 'run-queued'      ? `<div style="background:#dcfce7;color:#166534;padding:.6rem 1rem;border-radius:8px;margin-bottom:1rem;font-size:.85rem">✓ Run queued — the KB Flow Analyst will start its scan momentarily.</div>` :
+                   flash === 'run-disabled'    ? `<div style="background:#fee2e2;color:#991b1b;padding:.6rem 1rem;border-radius:8px;margin-bottom:1rem;font-size:.85rem">✗ Cannot run — the KB Flow Analyst is disabled. Enable it in Settings first.</div>` :
+                   flash === 'review-running'  ? `<div style="background:#fef3c7;color:#92400e;padding:.6rem 1rem;border-radius:8px;margin-bottom:1rem;font-size:.85rem">⚠ A KB Review session is already running. <a href="/dashboard/ticket/KB-REVIEW" style="color:#92400e;font-weight:600">View progress →</a></div>` :
                    '';
 
   const runningBanner = isRunning ? `
@@ -8955,14 +9019,25 @@ ${isRunning ? '<meta http-equiv="refresh" content="30">' : ''}
     <div class="panel">
       <div class="row-hdr">
         <h2>KB Flow Analyst — Status</h2>
-        <form method="POST" action="/dashboard/knowledge-builder/run-now" style="margin:0"
-              onsubmit="return confirm('Start a KB Flow Analyst scan now? Scans typically take 30–120 minutes.')">
-          <button type="submit" class="btn" ${enabled && !isRunning ? '' : 'disabled'}
-                  title="${!enabled ? 'Enable the worker in Settings first' : isRunning ? 'Scan already in progress' : ''}">
-            <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-            Run Scan Now
-          </button>
-        </form>
+        <div style="display:flex;gap:.6rem;align-items:center;flex-wrap:wrap">
+          <form method="POST" action="/dashboard/knowledge-builder/run-now" style="margin:0"
+                onsubmit="return confirm('Start a KB Flow Analyst scan now? Scans typically take 30–120 minutes.')">
+            <button type="submit" class="btn" ${enabled && !isRunning ? '' : 'disabled'}
+                    title="${!enabled ? 'Enable the worker in Settings first' : isRunning ? 'Scan already in progress' : ''}">
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              Run Scan Now
+            </button>
+          </form>
+          ${pendingCount > 0 ? `
+          <form method="POST" action="/dashboard/knowledge-builder/review-now" style="margin:0"
+                onsubmit="return confirm('Start KB Review Mode? The team will vote on ${pendingCount} pending proposal${pendingCount === 1 ? '' : 's'} now — no Jira ticket required.')">
+            <button type="submit" class="btn" style="background:${oldestPendingDays >= nudgeDays ? '#b91c1c' : '#92400e'}" ${!isRunning ? '' : 'disabled'}
+                    title="${isRunning ? 'A job is already running' : 'Run KB Review Mode — vote on pending proposals'}">
+              <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+              Review ${pendingCount} Pending
+            </button>
+          </form>` : ''}
+        </div>
       </div>
       <div class="stat-grid">
         ${isRunning ? `
@@ -9113,7 +9188,7 @@ ${isRunning ? '<meta http-equiv="refresh" content="30">' : ''}
     <div class="panel">
       <h2>Run history (most recent first)</h2>
       ${sessions.length === 0 ? `
-        <div class="empty">No runs logged yet.</div>
+        <div class="empty">No runs logged yet — the KB Flow Analyst writes a row here at Step J7 after each completed scan. If you have proposals above but no history here, the analyst ran but did not write <code>kbflow-sessions.md</code>.</div>
       ` : `
         <table>
           <thead>
@@ -9233,6 +9308,17 @@ router.post('/knowledge-builder/run-now', (_req, res) => {
   serverEvents.emit('kbflow-run-now');
   activityLog.record('kbflow_scan_started', null, 'user', { trigger: 'manual' });
   res.redirect(303, '/dashboard/knowledge-builder?flash=run-queued');
+});
+
+router.post('/knowledge-builder/review-now', (_req, res) => {
+  const { hasActive } = require('./tracker');
+  if (hasActive('KB-REVIEW')) {
+    return res.redirect(303, '/dashboard/knowledge-builder?flash=review-running');
+  }
+  reRunTicket('KB-REVIEW', 'kb-review', 'manual');
+  enqueue('KB-REVIEW', 'kb-review');
+  activityLog.record('kbflow_review_nudge', null, 'user', { trigger: 'manual' });
+  res.redirect(303, '/dashboard/ticket/KB-REVIEW');
 });
 
 router.post('/settings/pattern-miner/run-now', express.json(), (_req, res) => {

@@ -44,9 +44,10 @@ function cancelDebouncedSave(ticketKey) {
 // IDs must match what Claude announces in output ("Step X —") to be tracked as active.
 
 const _stages = require('./stages.json');
-const DEV_STAGES      = _stages.dev;
-const REVIEW_STAGES   = _stages.review;
-const ESTIMATE_STAGES = _stages.estimate;
+const DEV_STAGES       = _stages.dev;
+const REVIEW_STAGES    = _stages.review;
+const ESTIMATE_STAGES  = _stages.estimate;
+const KB_REVIEW_STAGES = _stages['kb-review'];
 
 function makeStagePipeline(stageList) {
   return stageList.map(s => ({ id: s.id, label: s.label, status: 'pending', startedAt: null, completedAt: null }));
@@ -305,13 +306,15 @@ function recordStepActive(ticketKey, stepId) {
   if (!entry) return;
 
   const upper = String(stepId).toUpperCase();
-  const isReview   = upper.startsWith('R');
+  const isKbReview = upper.startsWith('KR');
+  const isReview   = !isKbReview && upper.startsWith('R');
   const isEstimate = upper.startsWith('E');
   let stages = entry.stages;
   if (!stages) {
-    if (isReview)        { stages = makeStagePipeline(REVIEW_STAGES);   entry.mode = 'review'; }
-    else if (isEstimate) { stages = makeStagePipeline(ESTIMATE_STAGES); entry.mode = 'estimate'; }
-    else                 { stages = makeStagePipeline(DEV_STAGES);       entry.mode = 'dev'; }
+    if (isKbReview)      { stages = makeStagePipeline(KB_REVIEW_STAGES); entry.mode = 'kb-review'; }
+    else if (isReview)   { stages = makeStagePipeline(REVIEW_STAGES);    entry.mode = 'review'; }
+    else if (isEstimate) { stages = makeStagePipeline(ESTIMATE_STAGES);  entry.mode = 'estimate'; }
+    else                 { stages = makeStagePipeline(DEV_STAGES);        entry.mode = 'dev'; }
   }
 
   const normalised = String(stepId).toUpperCase();
