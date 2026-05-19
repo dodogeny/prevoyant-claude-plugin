@@ -378,19 +378,37 @@ const BASE_CSS = `
   .sun-logo {
     display: flex; align-items: center; justify-content: center;
     flex-shrink: 0;
-    color: rgba(255,255,255,.35);
-    transition: color .5s ease, filter .5s ease;
+    opacity: .82;
+    transition: opacity .4s ease, filter .4s ease;
   }
   .sun-logo.processing {
-    color: #fbbf24;
-    filter: drop-shadow(0 0 5px rgba(251,191,36,.55));
+    opacity: 1;
+    filter: drop-shadow(0 0 7px rgba(251,191,36,.7));
   }
-  .sun-logo.processing svg {
-    animation: sun-spin 6s linear infinite;
+  /* Lighthouse beams: nearly invisible at rest, alternating sweep when active */
+  .lh-beam { opacity: .12; }
+  .sun-logo.processing .lh-beam-l {
+    animation: lh-flash-l 2.4s ease-in-out infinite;
   }
-  @keyframes sun-spin {
-    from { transform: rotate(0deg); }
-    to   { transform: rotate(360deg); }
+  .sun-logo.processing .lh-beam-r {
+    animation: lh-flash-r 2.4s ease-in-out infinite;
+  }
+  .sun-logo.processing .lh-glow {
+    animation: lh-glow-pulse 2.4s ease-in-out infinite;
+  }
+  @keyframes lh-flash-l {
+    0%, 40%  { opacity: 1; }
+    50%, 90% { opacity: 0; }
+    100%     { opacity: 1; }
+  }
+  @keyframes lh-flash-r {
+    0%, 40%  { opacity: 0; }
+    50%, 90% { opacity: 1; }
+    100%     { opacity: 0; }
+  }
+  @keyframes lh-glow-pulse {
+    0%, 100% { opacity: 1; }
+    45%, 55% { opacity: .35; }
   }
 
   .hermes-agent-badge {
@@ -1205,7 +1223,7 @@ function renderDashboard(stats, budget) {
 </head>
 <body>
   <header${parseInt(process.env.PRX_CORTEX_AUTONOMY_LEVEL || '0', 10) === 3 ? ' class="autonomous-mode"' : ''}>
-    <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg></span>Prevoyant Server</h1>
+    <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="2.5" stroke="#fff" stroke-width="2"/><path d="M8.5 4L12 2l3.5 2Z" fill="#fff" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/><rect x="8.5" y="4" width="7" height="4" rx=".3" fill="#dc2626" stroke="#fff" stroke-width="1.5"/><line x1="12" y1="4" x2="12" y2="8" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><line x1="8.5" y1="6" x2="15.5" y2="6" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><circle cx="12" cy="6" r="1.2" fill="#fbbf24" class="lh-glow"/><line x1="7" y1="8.3" x2="17" y2="8.3" stroke="#fff" stroke-width="2.5"/><path d="M9.5 8.5h5l.4 2.9H9.1Z" fill="#fff"/><path d="M9.1 11.4h5.8l.4 2.9H8.7Z" fill="#dc2626"/><path d="M8.7 14.3h6.6l.3 2.9H8.4Z" fill="#fff"/><path d="M8.4 17.2h7.2l.4 2.8H8Z" fill="#dc2626"/><path d="M11.2 20v-1.6a.8.8 0 0 1 1.6 0V20Z" fill="#1e293b"/><rect x="6" y="20" width="12" height="2" rx=".5" fill="#fff"/><g class="lh-beam lh-beam-l" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="8.5" y1="4.5" x2="2" y2="2"/><line x1="8.5" y1="7.5" x2="2" y2="10"/></g><g class="lh-beam lh-beam-r" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="15.5" y1="4.5" x2="22" y2="2"/><line x1="15.5" y1="7.5" x2="22" y2="10"/></g></svg></span>Prevoyant Server</h1>
     <span class="version-badge">v${pluginVersion}</span>
     ${parseInt(process.env.PRX_CORTEX_AUTONOMY_LEVEL || '0', 10) === 3 ? `<span class="autonomous-badge" title="Agents can promote observations directly to the KB without human review. Change in Settings → Cortex.">
       <span class="autonomous-icon"><svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="10" x="3" y="11" rx="2"/><circle cx="12" cy="5" r="2"/><path d="M12 7v4"/><line x1="8" y1="16" x2="8" y2="16"/><line x1="16" y1="16" x2="16" y2="16"/></svg></span>
@@ -2361,7 +2379,7 @@ function renderActivity(results, chartData, allTypes, allActors, actStats, filte
 </head>
 <body>
   <header>
-    <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg></span>Prevoyant Server</h1>
+    <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="2.5" stroke="#fff" stroke-width="2"/><path d="M8.5 4L12 2l3.5 2Z" fill="#fff" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/><rect x="8.5" y="4" width="7" height="4" rx=".3" fill="#dc2626" stroke="#fff" stroke-width="1.5"/><line x1="12" y1="4" x2="12" y2="8" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><line x1="8.5" y1="6" x2="15.5" y2="6" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><circle cx="12" cy="6" r="1.2" fill="#fbbf24" class="lh-glow"/><line x1="7" y1="8.3" x2="17" y2="8.3" stroke="#fff" stroke-width="2.5"/><path d="M9.5 8.5h5l.4 2.9H9.1Z" fill="#fff"/><path d="M9.1 11.4h5.8l.4 2.9H8.7Z" fill="#dc2626"/><path d="M8.7 14.3h6.6l.3 2.9H8.4Z" fill="#fff"/><path d="M8.4 17.2h7.2l.4 2.8H8Z" fill="#dc2626"/><path d="M11.2 20v-1.6a.8.8 0 0 1 1.6 0V20Z" fill="#1e293b"/><rect x="6" y="20" width="12" height="2" rx=".5" fill="#fff"/><g class="lh-beam lh-beam-l" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="8.5" y1="4.5" x2="2" y2="2"/><line x1="8.5" y1="7.5" x2="2" y2="10"/></g><g class="lh-beam lh-beam-r" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="15.5" y1="4.5" x2="22" y2="2"/><line x1="15.5" y1="7.5" x2="22" y2="10"/></g></svg></span>Prevoyant Server</h1>
     <span class="version-badge">v${pluginVersion}</span>
     <div class="meta">
       <span class="breadcrumb"><a href="/dashboard">Dashboard</a> › Activity Log</span>
@@ -2731,7 +2749,7 @@ function renderDisk(status, diskLog, flash) {
 </head>
 <body>
   <header>
-    <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg></span>Prevoyant Server</h1>
+    <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="2.5" stroke="#fff" stroke-width="2"/><path d="M8.5 4L12 2l3.5 2Z" fill="#fff" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/><rect x="8.5" y="4" width="7" height="4" rx=".3" fill="#dc2626" stroke="#fff" stroke-width="1.5"/><line x1="12" y1="4" x2="12" y2="8" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><line x1="8.5" y1="6" x2="15.5" y2="6" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><circle cx="12" cy="6" r="1.2" fill="#fbbf24" class="lh-glow"/><line x1="7" y1="8.3" x2="17" y2="8.3" stroke="#fff" stroke-width="2.5"/><path d="M9.5 8.5h5l.4 2.9H9.1Z" fill="#fff"/><path d="M9.1 11.4h5.8l.4 2.9H8.7Z" fill="#dc2626"/><path d="M8.7 14.3h6.6l.3 2.9H8.4Z" fill="#fff"/><path d="M8.4 17.2h7.2l.4 2.8H8Z" fill="#dc2626"/><path d="M11.2 20v-1.6a.8.8 0 0 1 1.6 0V20Z" fill="#1e293b"/><rect x="6" y="20" width="12" height="2" rx=".5" fill="#fff"/><g class="lh-beam lh-beam-l" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="8.5" y1="4.5" x2="2" y2="2"/><line x1="8.5" y1="7.5" x2="2" y2="10"/></g><g class="lh-beam lh-beam-r" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="15.5" y1="4.5" x2="22" y2="2"/><line x1="15.5" y1="7.5" x2="22" y2="10"/></g></svg></span>Prevoyant Server</h1>
     <span class="version-badge">v${pluginVersion}</span>
     <div class="meta">
       <span class="breadcrumb"><a href="/dashboard">Dashboard</a> › Disk Monitor</span>
@@ -3249,7 +3267,7 @@ function renderCortex() {
 </head>
 <body>
   <header>
-    <h1><span class="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/></svg></span>Cortex</h1>
+    <h1><span class="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="2.5" stroke="#fff" stroke-width="2"/><path d="M8.5 4L12 2l3.5 2Z" fill="#fff" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/><rect x="8.5" y="4" width="7" height="4" rx=".3" fill="#dc2626" stroke="#fff" stroke-width="1.5"/><line x1="12" y1="4" x2="12" y2="8" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><line x1="8.5" y1="6" x2="15.5" y2="6" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><circle cx="12" cy="6" r="1.2" fill="#fbbf24"/><line x1="7" y1="8.3" x2="17" y2="8.3" stroke="#fff" stroke-width="2.5"/><path d="M9.5 8.5h5l.4 2.9H9.1Z" fill="#fff"/><path d="M9.1 11.4h5.8l.4 2.9H8.7Z" fill="#dc2626"/><path d="M8.7 14.3h6.6l.3 2.9H8.4Z" fill="#fff"/><path d="M8.4 17.2h7.2l.4 2.8H8Z" fill="#dc2626"/><path d="M11.2 20v-1.6a.8.8 0 0 1 1.6 0V20Z" fill="#1e293b"/><rect x="6" y="20" width="12" height="2" rx=".5" fill="#fff"/></svg></span>Cortex</h1>
     <div class="meta"></div>
     <a href="/dashboard" class="header-btn">← Dashboard</a>
   </header>
@@ -3743,7 +3761,7 @@ function renderCortexFact(id) {
 </head>
 <body>
   <header>
-    <h1><span class="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/></svg></span>Cortex</h1>
+    <h1><span class="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="2.5" stroke="#fff" stroke-width="2"/><path d="M8.5 4L12 2l3.5 2Z" fill="#fff" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/><rect x="8.5" y="4" width="7" height="4" rx=".3" fill="#dc2626" stroke="#fff" stroke-width="1.5"/><line x1="12" y1="4" x2="12" y2="8" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><line x1="8.5" y1="6" x2="15.5" y2="6" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><circle cx="12" cy="6" r="1.2" fill="#fbbf24"/><line x1="7" y1="8.3" x2="17" y2="8.3" stroke="#fff" stroke-width="2.5"/><path d="M9.5 8.5h5l.4 2.9H9.1Z" fill="#fff"/><path d="M9.1 11.4h5.8l.4 2.9H8.7Z" fill="#dc2626"/><path d="M8.7 14.3h6.6l.3 2.9H8.4Z" fill="#fff"/><path d="M8.4 17.2h7.2l.4 2.8H8Z" fill="#dc2626"/><path d="M11.2 20v-1.6a.8.8 0 0 1 1.6 0V20Z" fill="#1e293b"/><rect x="6" y="20" width="12" height="2" rx=".5" fill="#fff"/></svg></span>Cortex</h1>
     <div class="meta"></div>
     <a href="/dashboard/cortex" class="header-btn">← All facts</a>
   </header>
@@ -3859,7 +3877,7 @@ function renderCortexNotFound(id) {
 }
 
 function renderCortexEmpty(fact) {
-  return `<!DOCTYPE html><html><head><title>${esc(fact.name)} · Cortex</title><style>${BASE_CSS}${_CORTEX_CSS}.page-body{max-width:760px;margin:3rem auto;padding:0 1.5rem}.empty-hero{background:var(--surface);border:1px solid var(--border-light);border-radius:var(--r-lg);padding:2rem;text-align:center;box-shadow:var(--shadow)}.empty-hero .icon{font-size:3rem;margin-bottom:.5rem}</style></head><body><header><h1><span class="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/></svg></span>Cortex</h1><div class="meta"></div><a href="/dashboard/cortex" class="header-btn">← All facts</a></header><div class="page-body"><div class="breadcrumb"><a href="/dashboard">Dashboard</a> &nbsp;›&nbsp; <a href="/dashboard/cortex">Cortex</a> &nbsp;›&nbsp; <span class="breadcrumb-here">${esc(fact.name)}</span></div><div class="empty-hero"><div class="icon">${fact.icon}</div><h2>${esc(fact.name)}</h2><p style="color:var(--text-3);margin:1rem 0">This fact file has not been synthesised yet. It will be created on the next cortex pass — either when the KB changes or on the heartbeat interval.</p><p style="margin-top:1.5rem"><a href="/dashboard/cortex" class="btn-cortex" style="text-decoration:none">← Back to Cortex</a></p></div></div>${BASE_SCRIPT}</body></html>`;
+  return `<!DOCTYPE html><html><head><title>${esc(fact.name)} · Cortex</title><style>${BASE_CSS}${_CORTEX_CSS}.page-body{max-width:760px;margin:3rem auto;padding:0 1.5rem}.empty-hero{background:var(--surface);border:1px solid var(--border-light);border-radius:var(--r-lg);padding:2rem;text-align:center;box-shadow:var(--shadow)}.empty-hero .icon{font-size:3rem;margin-bottom:.5rem}</style></head><body><header><h1><span class="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="2.5" stroke="#fff" stroke-width="2"/><path d="M8.5 4L12 2l3.5 2Z" fill="#fff" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/><rect x="8.5" y="4" width="7" height="4" rx=".3" fill="#dc2626" stroke="#fff" stroke-width="1.5"/><line x1="12" y1="4" x2="12" y2="8" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><line x1="8.5" y1="6" x2="15.5" y2="6" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><circle cx="12" cy="6" r="1.2" fill="#fbbf24"/><line x1="7" y1="8.3" x2="17" y2="8.3" stroke="#fff" stroke-width="2.5"/><path d="M9.5 8.5h5l.4 2.9H9.1Z" fill="#fff"/><path d="M9.1 11.4h5.8l.4 2.9H8.7Z" fill="#dc2626"/><path d="M8.7 14.3h6.6l.3 2.9H8.4Z" fill="#fff"/><path d="M8.4 17.2h7.2l.4 2.8H8Z" fill="#dc2626"/><path d="M11.2 20v-1.6a.8.8 0 0 1 1.6 0V20Z" fill="#1e293b"/><rect x="6" y="20" width="12" height="2" rx=".5" fill="#fff"/></svg></span>Cortex</h1><div class="meta"></div><a href="/dashboard/cortex" class="header-btn">← All facts</a></header><div class="page-body"><div class="breadcrumb"><a href="/dashboard">Dashboard</a> &nbsp;›&nbsp; <a href="/dashboard/cortex">Cortex</a> &nbsp;›&nbsp; <span class="breadcrumb-here">${esc(fact.name)}</span></div><div class="empty-hero"><div class="icon">${fact.icon}</div><h2>${esc(fact.name)}</h2><p style="color:var(--text-3);margin:1rem 0">This fact file has not been synthesised yet. It will be created on the next cortex pass — either when the KB changes or on the heartbeat interval.</p><p style="margin-top:1.5rem"><a href="/dashboard/cortex" class="btn-cortex" style="text-decoration:none">← Back to Cortex</a></p></div></div>${BASE_SCRIPT}</body></html>`;
 }
 
 // ── Watch page ────────────────────────────────────────────────────────────────
@@ -3984,7 +4002,7 @@ function renderWatchLogs(key, files, ticket, flash) {
 </head>
 <body>
   <header>
-    <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg></span>Prevoyant Server</h1>
+    <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="2.5" stroke="#fff" stroke-width="2"/><path d="M8.5 4L12 2l3.5 2Z" fill="#fff" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/><rect x="8.5" y="4" width="7" height="4" rx=".3" fill="#dc2626" stroke="#fff" stroke-width="1.5"/><line x1="12" y1="4" x2="12" y2="8" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><line x1="8.5" y1="6" x2="15.5" y2="6" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><circle cx="12" cy="6" r="1.2" fill="#fbbf24" class="lh-glow"/><line x1="7" y1="8.3" x2="17" y2="8.3" stroke="#fff" stroke-width="2.5"/><path d="M9.5 8.5h5l.4 2.9H9.1Z" fill="#fff"/><path d="M9.1 11.4h5.8l.4 2.9H8.7Z" fill="#dc2626"/><path d="M8.7 14.3h6.6l.3 2.9H8.4Z" fill="#fff"/><path d="M8.4 17.2h7.2l.4 2.8H8Z" fill="#dc2626"/><path d="M11.2 20v-1.6a.8.8 0 0 1 1.6 0V20Z" fill="#1e293b"/><rect x="6" y="20" width="12" height="2" rx=".5" fill="#fff"/><g class="lh-beam lh-beam-l" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="8.5" y1="4.5" x2="2" y2="2"/><line x1="8.5" y1="7.5" x2="2" y2="10"/></g><g class="lh-beam lh-beam-r" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="15.5" y1="4.5" x2="22" y2="2"/><line x1="15.5" y1="7.5" x2="22" y2="10"/></g></svg></span>Prevoyant Server</h1>
     <span class="version-badge">v${esc(pluginVersion)}</span>
     <span class="meta"></span>
     <a href="/dashboard/watch" class="settings-link" style="color:#fff">
@@ -4048,7 +4066,7 @@ function renderWatchLogView(key, filename, content, ticket) {
 </head>
 <body>
   <header>
-    <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg></span>Prevoyant Server</h1>
+    <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="2.5" stroke="#fff" stroke-width="2"/><path d="M8.5 4L12 2l3.5 2Z" fill="#fff" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/><rect x="8.5" y="4" width="7" height="4" rx=".3" fill="#dc2626" stroke="#fff" stroke-width="1.5"/><line x1="12" y1="4" x2="12" y2="8" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><line x1="8.5" y1="6" x2="15.5" y2="6" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><circle cx="12" cy="6" r="1.2" fill="#fbbf24" class="lh-glow"/><line x1="7" y1="8.3" x2="17" y2="8.3" stroke="#fff" stroke-width="2.5"/><path d="M9.5 8.5h5l.4 2.9H9.1Z" fill="#fff"/><path d="M9.1 11.4h5.8l.4 2.9H8.7Z" fill="#dc2626"/><path d="M8.7 14.3h6.6l.3 2.9H8.4Z" fill="#fff"/><path d="M8.4 17.2h7.2l.4 2.8H8Z" fill="#dc2626"/><path d="M11.2 20v-1.6a.8.8 0 0 1 1.6 0V20Z" fill="#1e293b"/><rect x="6" y="20" width="12" height="2" rx=".5" fill="#fff"/><g class="lh-beam lh-beam-l" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="8.5" y1="4.5" x2="2" y2="2"/><line x1="8.5" y1="7.5" x2="2" y2="10"/></g><g class="lh-beam lh-beam-r" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="15.5" y1="4.5" x2="22" y2="2"/><line x1="15.5" y1="7.5" x2="22" y2="10"/></g></svg></span>Prevoyant Server</h1>
     <span class="version-badge">v${esc(pluginVersion)}</span>
     <span class="meta"></span>
     <a href="/dashboard/watch" class="settings-link" style="color:#fff">
@@ -4300,7 +4318,7 @@ function renderWatch(flash) {
 </head>
 <body>
   <header>
-    <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg></span>Prevoyant Server</h1>
+    <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="2.5" stroke="#fff" stroke-width="2"/><path d="M8.5 4L12 2l3.5 2Z" fill="#fff" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/><rect x="8.5" y="4" width="7" height="4" rx=".3" fill="#dc2626" stroke="#fff" stroke-width="1.5"/><line x1="12" y1="4" x2="12" y2="8" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><line x1="8.5" y1="6" x2="15.5" y2="6" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><circle cx="12" cy="6" r="1.2" fill="#fbbf24" class="lh-glow"/><line x1="7" y1="8.3" x2="17" y2="8.3" stroke="#fff" stroke-width="2.5"/><path d="M9.5 8.5h5l.4 2.9H9.1Z" fill="#fff"/><path d="M9.1 11.4h5.8l.4 2.9H8.7Z" fill="#dc2626"/><path d="M8.7 14.3h6.6l.3 2.9H8.4Z" fill="#fff"/><path d="M8.4 17.2h7.2l.4 2.8H8Z" fill="#dc2626"/><path d="M11.2 20v-1.6a.8.8 0 0 1 1.6 0V20Z" fill="#1e293b"/><rect x="6" y="20" width="12" height="2" rx=".5" fill="#fff"/><g class="lh-beam lh-beam-l" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="8.5" y1="4.5" x2="2" y2="2"/><line x1="8.5" y1="7.5" x2="2" y2="10"/></g><g class="lh-beam lh-beam-r" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="15.5" y1="4.5" x2="22" y2="2"/><line x1="15.5" y1="7.5" x2="22" y2="10"/></g></svg></span>Prevoyant Server</h1>
     <span class="version-badge">v${esc(pluginVersion)}</span>
     <span class="meta"></span>
     <a href="/dashboard/activity" class="settings-link">
@@ -4812,7 +4830,7 @@ function renderSettings(vals, flash) {
 </head>
 <body>
   <header>
-    <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg></span>Prevoyant Server</h1>
+    <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="2.5" stroke="#fff" stroke-width="2"/><path d="M8.5 4L12 2l3.5 2Z" fill="#fff" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/><rect x="8.5" y="4" width="7" height="4" rx=".3" fill="#dc2626" stroke="#fff" stroke-width="1.5"/><line x1="12" y1="4" x2="12" y2="8" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><line x1="8.5" y1="6" x2="15.5" y2="6" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><circle cx="12" cy="6" r="1.2" fill="#fbbf24" class="lh-glow"/><line x1="7" y1="8.3" x2="17" y2="8.3" stroke="#fff" stroke-width="2.5"/><path d="M9.5 8.5h5l.4 2.9H9.1Z" fill="#fff"/><path d="M9.1 11.4h5.8l.4 2.9H8.7Z" fill="#dc2626"/><path d="M8.7 14.3h6.6l.3 2.9H8.4Z" fill="#fff"/><path d="M8.4 17.2h7.2l.4 2.8H8Z" fill="#dc2626"/><path d="M11.2 20v-1.6a.8.8 0 0 1 1.6 0V20Z" fill="#1e293b"/><rect x="6" y="20" width="12" height="2" rx=".5" fill="#fff"/><g class="lh-beam lh-beam-l" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="8.5" y1="4.5" x2="2" y2="2"/><line x1="8.5" y1="7.5" x2="2" y2="10"/></g><g class="lh-beam lh-beam-r" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="15.5" y1="4.5" x2="22" y2="2"/><line x1="15.5" y1="7.5" x2="22" y2="10"/></g></svg></span>Prevoyant Server</h1>
     <span class="version-badge">v${pluginVersion}</span>
     <div class="meta">
       <span class="breadcrumb"><a href="/dashboard">Dashboard</a> › Settings</span>
@@ -6027,7 +6045,7 @@ function renderRestartPage() {
 </head>
 <body>
   <header>
-    <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg></span>Prevoyant Server</h1>
+    <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="2.5" stroke="#fff" stroke-width="2"/><path d="M8.5 4L12 2l3.5 2Z" fill="#fff" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/><rect x="8.5" y="4" width="7" height="4" rx=".3" fill="#dc2626" stroke="#fff" stroke-width="1.5"/><line x1="12" y1="4" x2="12" y2="8" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><line x1="8.5" y1="6" x2="15.5" y2="6" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><circle cx="12" cy="6" r="1.2" fill="#fbbf24" class="lh-glow"/><line x1="7" y1="8.3" x2="17" y2="8.3" stroke="#fff" stroke-width="2.5"/><path d="M9.5 8.5h5l.4 2.9H9.1Z" fill="#fff"/><path d="M9.1 11.4h5.8l.4 2.9H8.7Z" fill="#dc2626"/><path d="M8.7 14.3h6.6l.3 2.9H8.4Z" fill="#fff"/><path d="M8.4 17.2h7.2l.4 2.8H8Z" fill="#dc2626"/><path d="M11.2 20v-1.6a.8.8 0 0 1 1.6 0V20Z" fill="#1e293b"/><rect x="6" y="20" width="12" height="2" rx=".5" fill="#fff"/><g class="lh-beam lh-beam-l" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="8.5" y1="4.5" x2="2" y2="2"/><line x1="8.5" y1="7.5" x2="2" y2="10"/></g><g class="lh-beam lh-beam-r" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="15.5" y1="4.5" x2="22" y2="2"/><line x1="15.5" y1="7.5" x2="22" y2="10"/></g></svg></span>Prevoyant Server</h1>
     <span class="version-badge">v${pluginVersion}</span>
   </header>
   <div class="restart-box">
@@ -6239,7 +6257,7 @@ function renderDetail(ticket, warn, warnMode) {
 </head>
 <body>
   <header>
-    <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg></span>Prevoyant Server</h1>
+    <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="2.5" stroke="#fff" stroke-width="2"/><path d="M8.5 4L12 2l3.5 2Z" fill="#fff" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/><rect x="8.5" y="4" width="7" height="4" rx=".3" fill="#dc2626" stroke="#fff" stroke-width="1.5"/><line x1="12" y1="4" x2="12" y2="8" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><line x1="8.5" y1="6" x2="15.5" y2="6" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><circle cx="12" cy="6" r="1.2" fill="#fbbf24" class="lh-glow"/><line x1="7" y1="8.3" x2="17" y2="8.3" stroke="#fff" stroke-width="2.5"/><path d="M9.5 8.5h5l.4 2.9H9.1Z" fill="#fff"/><path d="M9.1 11.4h5.8l.4 2.9H8.7Z" fill="#dc2626"/><path d="M8.7 14.3h6.6l.3 2.9H8.4Z" fill="#fff"/><path d="M8.4 17.2h7.2l.4 2.8H8Z" fill="#dc2626"/><path d="M11.2 20v-1.6a.8.8 0 0 1 1.6 0V20Z" fill="#1e293b"/><rect x="6" y="20" width="12" height="2" rx=".5" fill="#fff"/><g class="lh-beam lh-beam-l" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="8.5" y1="4.5" x2="2" y2="2"/><line x1="8.5" y1="7.5" x2="2" y2="10"/></g><g class="lh-beam lh-beam-r" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="15.5" y1="4.5" x2="22" y2="2"/><line x1="15.5" y1="7.5" x2="22" y2="10"/></g></svg></span>Prevoyant Server</h1>
     <span class="version-badge">v${pluginVersion}</span>
     <div class="meta" style="flex:1"></div>
   </header>
@@ -8204,7 +8222,7 @@ function renderHermesInsightsReview() {
 </head>
 <body>
   <header>
-    <h1><span class="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg></span>Prevoyant Server</h1>
+    <h1><span class="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="2.5" stroke="#fff" stroke-width="2"/><path d="M8.5 4L12 2l3.5 2Z" fill="#fff" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/><rect x="8.5" y="4" width="7" height="4" rx=".3" fill="#dc2626" stroke="#fff" stroke-width="1.5"/><line x1="12" y1="4" x2="12" y2="8" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><line x1="8.5" y1="6" x2="15.5" y2="6" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><circle cx="12" cy="6" r="1.2" fill="#fbbf24" class="lh-glow"/><line x1="7" y1="8.3" x2="17" y2="8.3" stroke="#fff" stroke-width="2.5"/><path d="M9.5 8.5h5l.4 2.9H9.1Z" fill="#fff"/><path d="M9.1 11.4h5.8l.4 2.9H8.7Z" fill="#dc2626"/><path d="M8.7 14.3h6.6l.3 2.9H8.4Z" fill="#fff"/><path d="M8.4 17.2h7.2l.4 2.8H8Z" fill="#dc2626"/><path d="M11.2 20v-1.6a.8.8 0 0 1 1.6 0V20Z" fill="#1e293b"/><rect x="6" y="20" width="12" height="2" rx=".5" fill="#fff"/><g class="lh-beam lh-beam-l" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="8.5" y1="4.5" x2="2" y2="2"/><line x1="8.5" y1="7.5" x2="2" y2="10"/></g><g class="lh-beam lh-beam-r" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="15.5" y1="4.5" x2="22" y2="2"/><line x1="15.5" y1="7.5" x2="22" y2="10"/></g></svg></span>Prevoyant Server</h1>
     <span class="version-badge">v${pluginVersion}</span>
     <div class="meta">
       <span class="breadcrumb"><a href="/dashboard">Dashboard</a> › <a href="/dashboard/hermes-config">Hermes Config</a> › Insights Review</span>
@@ -8478,7 +8496,7 @@ function renderHermesConfig(vals, flash) {
 </head>
 <body>
   <header>
-    <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="6"/><line x1="12" y1="18" x2="12" y2="22"/><line x1="4.93" y1="4.93" x2="7.76" y2="7.76"/><line x1="16.24" y1="16.24" x2="19.07" y2="19.07"/><line x1="2" y1="12" x2="6" y2="12"/><line x1="18" y1="12" x2="22" y2="12"/><line x1="4.93" y1="19.07" x2="7.76" y2="16.24"/><line x1="16.24" y1="7.76" x2="19.07" y2="4.93"/></svg></span>Prevoyant Server</h1>
+    <h1><span class="sun-logo" id="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="2.5" stroke="#fff" stroke-width="2"/><path d="M8.5 4L12 2l3.5 2Z" fill="#fff" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/><rect x="8.5" y="4" width="7" height="4" rx=".3" fill="#dc2626" stroke="#fff" stroke-width="1.5"/><line x1="12" y1="4" x2="12" y2="8" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><line x1="8.5" y1="6" x2="15.5" y2="6" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><circle cx="12" cy="6" r="1.2" fill="#fbbf24" class="lh-glow"/><line x1="7" y1="8.3" x2="17" y2="8.3" stroke="#fff" stroke-width="2.5"/><path d="M9.5 8.5h5l.4 2.9H9.1Z" fill="#fff"/><path d="M9.1 11.4h5.8l.4 2.9H8.7Z" fill="#dc2626"/><path d="M8.7 14.3h6.6l.3 2.9H8.4Z" fill="#fff"/><path d="M8.4 17.2h7.2l.4 2.8H8Z" fill="#dc2626"/><path d="M11.2 20v-1.6a.8.8 0 0 1 1.6 0V20Z" fill="#1e293b"/><rect x="6" y="20" width="12" height="2" rx=".5" fill="#fff"/><g class="lh-beam lh-beam-l" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="8.5" y1="4.5" x2="2" y2="2"/><line x1="8.5" y1="7.5" x2="2" y2="10"/></g><g class="lh-beam lh-beam-r" stroke="#fde68a" stroke-width="1.5" fill="none"><line x1="15.5" y1="4.5" x2="22" y2="2"/><line x1="15.5" y1="7.5" x2="22" y2="10"/></g></svg></span>Prevoyant Server</h1>
     <span class="version-badge">v${pluginVersion}</span>
     <div class="meta">
       <span class="breadcrumb"><a href="/dashboard">Dashboard</a> › Hermes Config</span>
