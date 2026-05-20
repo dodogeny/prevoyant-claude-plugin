@@ -131,18 +131,37 @@ function runRepowise() {
 
   const repo = repoDir();
   const alreadyIndexed = fs.existsSync(path.join(repo, '.repowise'));
-  const sub = alreadyIndexed ? 'update' : 'init';
+  let sub = alreadyIndexed ? 'update' : 'init';
 
   log('info', `Running '${repowiseCmd()} ${sub}' in ${repo}`);
   let result;
   try {
     result = spawnSync(repowiseCmd(), [sub, repo, '--index-only'], {
       encoding: 'utf8',
-      timeout: alreadyIndexed ? 5 * 60_000 : 60 * 60_000,  // init can be slow
+      timeout: sub === 'update' ? 5 * 60_000 : 60 * 60_000,
       stdio:   ['ignore', 'pipe', 'pipe'],
     });
   } catch (err) {
     return emit({ ok: false, error: err.message });
+  }
+
+  // If update fails because no prior sync exists (e.g. .repowise dir present
+  // but empty/corrupt), fall back to init automatically.
+  if (result.status !== 0 && sub === 'update') {
+    const errText = (result.stderr || result.stdout || '').toLowerCase();
+    if (errText.includes('no previous sync') || errText.includes('run \'repowise init\'')) {
+      log('info', `repowise update failed (no prior sync) — retrying with init`);
+      sub = 'init';
+      try {
+        result = spawnSync(repowiseCmd(), ['init', repo, '--index-only'], {
+          encoding: 'utf8',
+          timeout:  60 * 60_000,
+          stdio:    ['ignore', 'pipe', 'pipe'],
+        });
+      } catch (err) {
+        return emit({ ok: false, error: err.message });
+      }
+    }
   }
 
   if (result.status !== 0) {
