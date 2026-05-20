@@ -13,6 +13,7 @@ const serverEvents  = require('../serverEvents');
 const watchStore    = require('../watchers/watchStore');
 const watchManager  = require('../watchers/watchManager');
 const cpuMonitor    = require('../runner/cpuMonitor');
+const p2pBridge     = require('../runner/p2pBridge');
 
 const VALID_MODES    = new Set(['dev', 'review', 'estimate', 'kb-review']);
 const WATCH_LOG_DIR  = path.join(os.homedir(), '.prevoyant', 'watch', 'logs');
@@ -1626,6 +1627,239 @@ function renderDashboard(stats, budget) {
     </table>
   </div>
 
+  ${process.env.PRX_P2P_ENABLED === 'Y' ? `
+  <!-- ── P2P Live Wire ──────────────────────────────────────────────────── -->
+  <details id="p2p-wire-panel" open style="margin-bottom:1.2rem;border-radius:var(--r-lg);border:1px solid #164e63;background:#0c1a20;box-shadow:0 2px 12px rgba(6,182,212,.12);overflow:hidden">
+    <summary style="padding:.55rem 1.1rem;background:rgba(6,182,212,.08);border-bottom:1px solid #164e63;display:flex;align-items:center;gap:.6rem;cursor:pointer;list-style:none">
+      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#22d3ee" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+      <span style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#22d3ee">P2P Network</span>
+      <svg id="p2p-live-icon" width="22" height="14" viewBox="0 0 44 14" xmlns="http://www.w3.org/2000/svg" style="opacity:.2;flex-shrink:0;transition:opacity .5s"><style>#p2p-live-icon.live polyline{animation:liveWire 1s linear infinite}@keyframes liveWire{to{stroke-dashoffset:-24}}</style><polyline points="0,7 6,7 10,1 14,13 18,3 22,11 26,7 44,7" fill="none" stroke="#22d3ee" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="8 4"/></svg>
+      <span id="p2p-wire-badge" style="font-size:.65rem;padding:.1rem .45rem;border-radius:999px;background:rgba(34,211,238,.12);color:#67e8f9;font-weight:600;border:1px solid rgba(34,211,238,.25)">connecting…</span>
+      <span style="margin-left:auto;font-size:.68rem;color:#475569">port ${process.env.PRX_P2P_PORT || '7001'} · topic prevoyant/kb-sync/1</span>
+      <span class="p2p-chevron" style="margin-left:.5rem;color:#475569;font-size:.85rem">›</span>
+    </summary>
+    <div style="display:flex;gap:0">
+      <!-- SVG canvas -->
+      <div style="flex:1;padding:.75rem 1rem;min-width:0">
+        <svg id="p2p-wire-svg" viewBox="0 0 480 160" xmlns="http://www.w3.org/2000/svg"
+             style="width:100%;height:160px;display:block">
+          <defs>
+            <radialGradient id="selfGrad" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stop-color="#22d3ee" stop-opacity=".9"/>
+              <stop offset="100%" stop-color="#0891b2" stop-opacity=".5"/>
+            </radialGradient>
+            <radialGradient id="peerGrad" cx="50%" cy="50%" r="50%">
+              <stop offset="0%" stop-color="#818cf8" stop-opacity=".9"/>
+              <stop offset="100%" stop-color="#4f46e5" stop-opacity=".5"/>
+            </radialGradient>
+            <filter id="glowSelf">
+              <feGaussianBlur stdDeviation="3" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+            <filter id="glowPeer">
+              <feGaussianBlur stdDeviation="2" result="blur"/>
+              <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+            </filter>
+          </defs>
+          <style>
+            @keyframes wireDash { to { stroke-dashoffset: -20; } }
+            @keyframes wireGlow { 0%,100%{opacity:.5}50%{opacity:1} }
+            @keyframes selfPulse { 0%,100%{r:10}50%{r:12} }
+            @keyframes peerPulse { 0%,100%{r:7}50%{r:8.5} }
+            @keyframes syncBurst { 0%{opacity:0;r:6}50%{opacity:.7;r:18}100%{opacity:0;r:26} }
+            .p2p-wire { stroke-dasharray:6 4; animation: wireDash 1.5s linear infinite, wireGlow 2.5s ease-in-out infinite; }
+            .p2p-self { animation: selfPulse 3s ease-in-out infinite; }
+            .p2p-peer { animation: peerPulse 3.5s ease-in-out infinite; }
+            .p2p-chevron { display:inline-block; transition:transform .2s; }
+            details#p2p-wire-panel[open] .p2p-chevron { transform:rotate(90deg); }
+          </style>
+          <!-- Placeholder while JS loads -->
+          <text x="240" y="88" text-anchor="middle" fill="#334155" font-size="12" font-family="monospace">Loading network…</text>
+        </svg>
+      </div>
+      <!-- Stats sidebar -->
+      <div style="width:200px;flex-shrink:0;border-left:1px solid #164e63;padding:.8rem 1rem;display:flex;flex-direction:column;gap:.55rem;font-size:.74rem;color:#94a3b8">
+        <div>
+          <div style="color:#475569;font-size:.65rem;text-transform:uppercase;letter-spacing:.07em;margin-bottom:.2rem">Self ID</div>
+          <div id="p2p-self-id" style="font-family:monospace;color:#22d3ee;font-size:.68rem;word-break:break-all">—</div>
+        </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr;gap:.4rem">
+          <div>
+            <div style="color:#475569;font-size:.65rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.15rem">Peers</div>
+            <div id="p2p-peer-count" style="font-size:1.1rem;font-weight:700;color:#a5f3fc">0</div>
+          </div>
+          <div>
+            <div style="color:#475569;font-size:.65rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.15rem">Sync In</div>
+            <div id="p2p-syncs-in" style="font-size:1.1rem;font-weight:700;color:#86efac">0</div>
+          </div>
+          <div>
+            <div style="color:#475569;font-size:.65rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.15rem">Sync Out</div>
+            <div id="p2p-syncs-out" style="font-size:1.1rem;font-weight:700;color:#fcd34d">0</div>
+          </div>
+          <div>
+            <div style="color:#475569;font-size:.65rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.15rem">Mode</div>
+            <div id="p2p-mode" style="font-size:.72rem;font-weight:600;color:#c4b5fd">${(process.env.PRX_KB_MODE || 'local').toUpperCase()}</div>
+          </div>
+        </div>
+        <div>
+          <div style="color:#475569;font-size:.65rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.2rem">Last Sync</div>
+          <div id="p2p-last-sync" style="font-size:.68rem;color:#64748b;font-family:monospace">—</div>
+        </div>
+        <div>
+          <div style="color:#475569;font-size:.65rem;text-transform:uppercase;letter-spacing:.06em;margin-bottom:.2rem">Listening</div>
+          <div id="p2p-addrs" style="font-size:.63rem;color:#475569;font-family:monospace;word-break:break-all;max-height:48px;overflow:hidden">—</div>
+        </div>
+      </div>
+    </div>
+  </details>
+  <script>
+  (function() {
+    const SVG_NS = 'http://www.w3.org/2000/svg';
+    const svg    = document.getElementById('p2p-wire-svg');
+    const badge  = document.getElementById('p2p-wire-badge');
+    const CX = 100, CY = 80; // self node position (left-of-centre for space)
+    let lastSyncTs = 0;
+
+    function svgEl(tag, attrs) {
+      const el = document.createElementNS(SVG_NS, tag);
+      for (const [k, v] of Object.entries(attrs)) el.setAttribute(k, v);
+      return el;
+    }
+
+    function shortId(id) { return id ? id.slice(0, 8) + '…' : '?'; }
+
+    function peerPos(i, total) {
+      // Arrange peers in a vertical fan on the right side
+      const slots  = Math.max(total, 1);
+      const spread = Math.min(130, slots * 32);
+      const step   = spread / Math.max(slots - 1, 1);
+      const startY = CY - spread / 2;
+      return { x: 360, y: total === 1 ? CY : startY + i * step };
+    }
+
+    function render(data) {
+      // Clear SVG
+      while (svg.childNodes.length > 2) svg.removeChild(svg.lastChild); // keep defs + style
+      // Remove placeholder text if present
+      for (const el of [...svg.querySelectorAll('text')]) el.remove();
+
+      const peers = (data.peers || []).slice(0, 8); // cap at 8 for legibility
+
+      // Badge
+      if (badge) {
+        badge.textContent = peers.length === 0 ? 'no peers' : peers.length + ' peer' + (peers.length > 1 ? 's' : '');
+        badge.style.background = peers.length > 0 ? 'rgba(34,211,238,.18)' : 'rgba(100,116,139,.15)';
+        badge.style.color      = peers.length > 0 ? '#67e8f9' : '#94a3b8';
+      }
+
+      // Live wire icon — animates when peers are connected
+      const liveIcon = document.getElementById('p2p-live-icon');
+      if (liveIcon) {
+        const isLive = peers.length > 0;
+        liveIcon.style.opacity = isLive ? '1' : '.2';
+        liveIcon.classList.toggle('live', isLive);
+      }
+
+      // Stat sidebar
+      const selfEl = document.getElementById('p2p-self-id');
+      if (selfEl) selfEl.textContent = data.selfId ? data.selfId.slice(0, 20) + '…' : '(starting…)';
+      const pcEl = document.getElementById('p2p-peer-count');
+      if (pcEl) pcEl.textContent = peers.length;
+      const siEl = document.getElementById('p2p-syncs-in');
+      if (siEl) siEl.textContent = data.syncsIn || 0;
+      const soEl = document.getElementById('p2p-syncs-out');
+      if (soEl) soEl.textContent = data.syncsOut || 0;
+      const lsEl = document.getElementById('p2p-last-sync');
+      if (lsEl && data.lastSync) {
+        const t = new Date(data.lastSync.ts);
+        lsEl.textContent = t.toLocaleTimeString() + ' (' + data.lastSync.direction + ')';
+      }
+      const adEl = document.getElementById('p2p-addrs');
+      if (adEl) {
+        const addrs = (data.addrs || []).filter(a => !a.startsWith('/ip4/127.')).slice(0, 2);
+        adEl.textContent = addrs.length ? addrs.join('\\n') : (data.addrs || []).join('\\n').slice(0, 80) || '—';
+      }
+
+      // Draw wires first (behind nodes)
+      peers.forEach((p, i) => {
+        const pos = peerPos(i, peers.length);
+        const wire = svgEl('line', {
+          x1: CX, y1: CY, x2: pos.x, y2: pos.y,
+          stroke: '#22d3ee', 'stroke-width': '1.5',
+          class: 'p2p-wire',
+          'stroke-opacity': '.55',
+          style: 'animation-delay:' + (i * 0.3) + 's',
+        });
+        svg.appendChild(wire);
+      });
+
+      // Sync burst circle (briefly visible on new sync)
+      if (data.lastSync && data.lastSync.ts > lastSyncTs) {
+        lastSyncTs = data.lastSync.ts;
+        const burst = svgEl('circle', { cx: CX, cy: CY, r: 6, fill: 'none', stroke: '#22d3ee', 'stroke-width': '1.5' });
+        burst.style.cssText = 'animation:syncBurst .8s ease-out forwards';
+        svg.appendChild(burst);
+      }
+
+      // Self node
+      const selfCircle = svgEl('circle', {
+        cx: CX, cy: CY, r: 11, fill: 'url(#selfGrad)',
+        filter: 'url(#glowSelf)', class: 'p2p-self',
+      });
+      svg.appendChild(selfCircle);
+      const selfLabel = svgEl('text', {
+        x: CX, y: CY + 22, 'text-anchor': 'middle', fill: '#22d3ee',
+        'font-size': '9', 'font-family': 'monospace',
+      });
+      selfLabel.textContent = 'self';
+      svg.appendChild(selfLabel);
+
+      // No peers placeholder
+      if (peers.length === 0) {
+        const hint = svgEl('text', {
+          x: 260, y: CY, 'text-anchor': 'middle', fill: '#334155',
+          'font-size': '11', 'font-family': 'monospace',
+        });
+        hint.textContent = 'Contacting bootstrap nodes…';
+        svg.appendChild(hint);
+        return;
+      }
+
+      // Peer nodes
+      peers.forEach((p, i) => {
+        const pos = peerPos(i, peers.length);
+        const g = document.createElementNS(SVG_NS, 'g');
+
+        const circle = svgEl('circle', {
+          cx: pos.x, cy: pos.y, r: 8, fill: 'url(#peerGrad)',
+          filter: 'url(#glowPeer)', class: 'p2p-peer',
+          style: 'animation-delay:' + (i * 0.5) + 's',
+        });
+        const label = svgEl('text', {
+          x: pos.x, y: pos.y + 19, 'text-anchor': 'middle', fill: '#818cf8',
+          'font-size': '8', 'font-family': 'monospace',
+        });
+        label.textContent = shortId(p.id);
+        g.appendChild(circle);
+        g.appendChild(label);
+        svg.appendChild(g);
+      });
+    }
+
+    function poll() {
+      fetch('/dashboard/p2p/peers')
+        .then(r => r.json())
+        .then(data => render(data))
+        .catch(() => {
+          if (badge) { badge.textContent = 'error'; badge.style.color = '#f87171'; }
+        });
+    }
+
+    poll();
+    setInterval(poll, 5000);
+  })();
+  </script>` : ''}
+
   <div class="footer">Prevoyant Server v${pluginVersion} &mdash; Dashboard &mdash; ${new Date().toLocaleString('en-GB')}</div>
 
   <!-- Add Ticket Modal -->
@@ -2223,6 +2457,9 @@ const EVENT_DISPLAY = {
   repowise_install_failed:    { label: 'Repowise Install Failed',    bg: '#fee2e2', color: '#991b1b' },
   cpu_spike:                  { label: 'CPU Spike',                  bg: '#fee2e2', color: '#991b1b' },
   ram_spike:                  { label: 'RAM Spike',                  bg: '#fff7ed', color: '#9a3412' },
+  p2p_started:                { label: 'P2P Node Started',           bg: '#ecfdf5', color: '#065f46' },
+  p2p_kb_synced:              { label: 'P2P KB Sync In',             bg: '#f0fdf4', color: '#166534' },
+  p2p_error:                  { label: 'P2P Error',                  bg: '#fee2e2', color: '#991b1b' },
 };
 
 const ACTOR_STYLE = {
@@ -4612,7 +4849,7 @@ const NOTIFY_EVENTS = [
 function renderSettings(vals, flash) {
   const v = k => vals[k] || '';
 
-  const kbKeys     = ['PRX_KB_MODE','PRX_SOURCE_REPO_URL','PRX_KNOWLEDGE_DIR','PRX_KB_REPO','PRX_KB_LOCAL_CLONE','PRX_KB_KEY','PRX_REALTIME_KB_SYNC','PRX_UPSTASH_REDIS_URL','PRX_UPSTASH_REDIS_TOKEN','PRX_KB_SYNC_MACHINE','PRX_KB_SYNC_POLL_SECS','PRX_KB_SYNC_TRIGGER','PRX_KB_SYNC_DEBOUNCE_SECS'];
+  const kbKeys     = ['PRX_KB_MODE','PRX_SOURCE_REPO_URL','PRX_KNOWLEDGE_DIR','PRX_KB_REPO','PRX_KB_LOCAL_CLONE','PRX_KB_KEY','PRX_REALTIME_KB_SYNC','PRX_UPSTASH_REDIS_URL','PRX_UPSTASH_REDIS_TOKEN','PRX_KB_SYNC_MACHINE','PRX_KB_SYNC_POLL_SECS','PRX_KB_SYNC_TRIGGER','PRX_KB_SYNC_DEBOUNCE_SECS','PRX_P2P_ENABLED','PRX_P2P_PORT','PRX_P2P_MDNS_ENABLED','PRX_P2P_BOOTSTRAP_NODES'];
   const memKeys    = ['PRX_MEMORY_INDEX_ENABLED','PRX_MEMORY_LIMIT','PRX_REDIS_ENABLED','PRX_REDIS_URL','PRX_REDIS_PASSWORD','PRX_REDIS_PREFIX','PRX_REDIS_TTL_DAYS','PRX_BASIC_MEMORY_ENABLED','BASIC_MEMORY_HOME'];
   const emailKeys  = ['PRX_EMAIL_TO','PRX_SMTP_HOST','PRX_SMTP_PORT','PRX_SMTP_USER','PRX_SMTP_PASS'];
   const bryanKeys  = ['PRX_INCLUDE_SM_IN_SESSIONS_ENABLED','PRX_SKILL_UPGRADE_MIN_SESSIONS','PRX_SKILL_COMPACTION_INTERVAL','PRX_MONTHLY_BUDGET'];
@@ -5579,6 +5816,93 @@ function renderSettings(vals, flash) {
           ${fld('PRX_REPOWISE_PATH','Repowise binary path','text',v('PRX_REPOWISE_PATH'),'repowise','Override the command/path used to invoke repowise. Default: `repowise` on PATH.')}
           ${fld('PRX_REPOWISE_AUTO_INSTALL','Auto-install on session start','select',v('PRX_REPOWISE_AUTO_INSTALL') || 'N','','If Y, the plugin SessionStart hook will run the cross-platform installer if repowise is missing.',
             [{v:'N',l:'N — manual install (default)'},{v:'Y',l:'Y — auto-install'}])}
+        </div>
+      </details>
+
+      <!-- P2P KB Sync -->
+      <details class="s-section" id="p2p-sync" ${process.env.PRX_P2P_ENABLED === 'Y' ? 'open' : ''}>
+        <summary>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
+          P2P KB Sync
+          <span class="s-opt">Optional — replaces Redis signaling</span>
+          ${process.env.PRX_P2P_ENABLED === 'Y' ? '<span class="nav-menu-flag" style="background:rgba(34,197,94,.2);color:#4ade80;border-color:rgba(34,197,94,.4)">active</span>' : ''}
+          <span class="s-chevron">›</span>
+        </summary>
+        <div class="s-body">
+          <div class="s-field span2">
+            <div class="s-hint" style="margin-top:0">
+              Propagate KB updates peer-to-peer via <a href="https://github.com/libp2p/js-libp2p" target="_blank" rel="noopener">libp2p</a>
+              (GossipSub + TCP + Noise + Yamux). When active, replaces the Redis/Upstash
+              notification layer — no Upstash account needed.<br><br>
+              Requires <strong>PRX_KB_MODE=distributed</strong>. Changed <code>.md</code> files are
+              bundled inline in the GossipSub message and written directly on receipt —
+              no git operations involved on either side. In local mode the KB stays on
+              the dev machine and P2P will not start.<br><br>
+              Peer discovery uses hardcoded public IPFS bootstrap nodes as entry points
+              (they relay routing only — KB content never touches them) plus optional
+              mDNS for automatic LAN peer discovery.
+              Requires: <code>cd server &amp;&amp; npm install</code> after enabling.
+            </div>
+          </div>
+          ${fld('PRX_P2P_ENABLED','Enable P2P KB sync','select',v('PRX_P2P_ENABLED') || 'N','','When Y, replaces Redis/Upstash signaling with libp2p GossipSub.',
+            [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled (install deps first)'}])}
+          ${fld('PRX_P2P_PORT','Listen port','number',v('PRX_P2P_PORT'),'7001','TCP port for the libp2p node. Must be open on your firewall for WAN peers. Default: 7001.')}
+          ${fld('PRX_P2P_MDNS_ENABLED','LAN mDNS discovery','select',v('PRX_P2P_MDNS_ENABLED') || 'Y','','Y = auto-discover peers on the same LAN via multicast UDP. Set N in Docker or VMs where multicast is unavailable.',
+            [{v:'Y',l:'Y — enabled (default)'},{v:'N',l:'N — disabled'}])}
+          ${fld('PRX_P2P_BOOTSTRAP_NODES','Custom bootstrap nodes','text',v('PRX_P2P_BOOTSTRAP_NODES'),'(comma-separated multiaddrs)','Override hardcoded IPFS bootstrap nodes. Leave blank to use defaults. Example: /ip4/1.2.3.4/tcp/7001/p2p/QmXxx,...')}
+
+          <!-- Live peers panel -->
+          <div class="s-field span2" style="margin-top:1rem" id="p2p-peers-panel">
+            <span class="s-label" style="font-weight:600;display:flex;align-items:center;gap:.5rem">
+              Connected Peers
+              <button onclick="refreshP2pPeers()" style="font-size:.72rem;padding:.15rem .55rem;border:1px solid #d1d5db;border-radius:4px;background:#f9fafb;cursor:pointer;color:#374151">↻ Refresh</button>
+            </span>
+            <div id="p2p-peers-content" style="margin-top:.5rem;font-family:monospace;font-size:.78rem;background:#0f172a;color:#94a3b8;border-radius:6px;padding:.75rem 1rem;min-height:3rem">
+              ${process.env.PRX_P2P_ENABLED === 'Y'
+                ? '<span style="color:#64748b">Loading peer list…</span>'
+                : '<span style="color:#64748b">P2P sync is disabled</span>'}
+            </div>
+          </div>
+
+          <script>
+            function refreshP2pPeers() {
+              const el = document.getElementById('p2p-peers-content');
+              if (!el) return;
+              el.innerHTML = '<span style="color:#64748b">Fetching…</span>';
+              fetch('/dashboard/p2p/peers').then(r => r.json()).then(data => {
+                if (!data.enabled) {
+                  el.innerHTML = '<span style="color:#64748b">P2P sync is disabled — set PRX_P2P_ENABLED=Y</span>';
+                  return;
+                }
+                const selfLine = data.selfId
+                  ? '<div style="color:#fbbf24;margin-bottom:.5rem">⚡ Self: ' + data.selfId + '</div>' +
+                    '<div style="color:#64748b;margin-bottom:.75rem;font-size:.72rem">Listening: ' +
+                      (data.addrs || []).join(', ') + '</div>'
+                  : '<div style="color:#f87171">Node not started yet</div>';
+                const peerRows = (data.peers || []).length === 0
+                  ? '<div style="color:#64748b">No peers connected  (bootstrap nodes are being contacted…)</div>'
+                  : data.peers.map(p =>
+                      '<div style="margin-bottom:.35rem;color:#a3e635">● ' + p.id + '</div>' +
+                      '<div style="color:#64748b;font-size:.72rem;margin-left:1rem;margin-bottom:.4rem">' +
+                        (p.addrs || []).join(', ') + '</div>'
+                    ).join('');
+                el.innerHTML = selfLine + peerRows +
+                  '<div style="margin-top:.75rem;color:#475569;font-size:.7rem">Topic: ' + (data.topic || '—') +
+                  ' · In: ' + (data.syncsIn || 0) + ' · Out: ' + (data.syncsOut || 0) +
+                  (data.lastSync ? ' · Last: ' + new Date(data.lastSync.ts).toLocaleTimeString() +
+                    ' (' + data.lastSync.direction + ' from ' + data.lastSync.machine + ')' : '') + '</div>';
+              }).catch(e => {
+                el.innerHTML = '<span style="color:#f87171">Error: ' + e.message + '</span>';
+              });
+            }
+            if (document.readyState === 'loading') {
+              document.addEventListener('DOMContentLoaded', () => {
+                if (${process.env.PRX_P2P_ENABLED === 'Y' ? 'true' : 'false'}) refreshP2pPeers();
+              });
+            } else {
+              if (${process.env.PRX_P2P_ENABLED === 'Y' ? 'true' : 'false'}) refreshP2pPeers();
+            }
+          </script>
         </div>
       </details>
 
@@ -7500,6 +7824,12 @@ router.post('/queue',
   }
 );
 
+// ── P2P peers API ─────────────────────────────────────────────────────────────
+
+router.get('/p2p/peers', (_req, res) => {
+  res.json(p2pBridge.getState());
+});
+
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 router.get('/settings', (_req, res) => {
@@ -7685,6 +8015,7 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'PRX_KB_REPO', 'PRX_KB_LOCAL_CLONE', 'PRX_KB_KEY',
     'PRX_REALTIME_KB_SYNC', 'PRX_UPSTASH_REDIS_URL', 'PRX_UPSTASH_REDIS_TOKEN',
     'PRX_KB_SYNC_MACHINE', 'PRX_KB_SYNC_POLL_SECS', 'PRX_KB_SYNC_TRIGGER', 'PRX_KB_SYNC_DEBOUNCE_SECS',
+    'PRX_P2P_ENABLED', 'PRX_P2P_PORT', 'PRX_P2P_MDNS_ENABLED', 'PRX_P2P_BOOTSTRAP_NODES',
     'CLAUDE_REPORT_DIR',
     'AUTO_MODE', 'FORCE_FULL_RUN', 'PRX_REPORT_VERBOSITY',
     'PRX_JIRA_PROJECT', 'PRX_ATTACHMENT_MAX_MB',

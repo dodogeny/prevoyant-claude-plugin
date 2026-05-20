@@ -1558,6 +1558,20 @@ rm -rf ~/.prevoyant/reports   # or the path set in CLAUDE_REPORT_DIR
 
 ## Changelog
 
+### v1.3.3 — P2P KB Sync (libp2p)
+
+- **P2P knowledge-base propagation via libp2p:** new optional transport layer that replaces Redis/Upstash as the KB notification bus. When `PRX_P2P_ENABLED=Y`, the server starts a libp2p node (TCP · Noise encryption · Yamux muxer · GossipSub) that discovers peers via hardcoded IPFS public bootstrap nodes and optional mDNS for LAN auto-discovery. Two propagation modes: in `distributed` KB mode P2P signals peers to `git pull` (git still carries file content); in `local` KB mode changed `.md` files are bundled inline in the GossipSub message and written directly on receipt — **no git required**. Peer key is generated once and persisted to `~/.prevoyant/server/p2p-key.b64` for a stable peer ID across restarts.
+
+- **P2P dashboard panel — live wire:** a live animated network visualisation appears on the main dashboard when P2P is active. Shows the self node at centre, connected peers as nodes around it, and pulsing animated wire lines between them. Activity (sync in/out) triggers a glow burst on the wire. Peer count, self peer ID, sync counters, and last-sync timestamp are displayed. Auto-refreshes every 5 seconds.
+
+- **Settings UI integration:** new **P2P KB Sync** section in Settings with four controls (`PRX_P2P_ENABLED`, `PRX_P2P_PORT`, `PRX_P2P_MDNS_ENABLED`, `PRX_P2P_BOOTSTRAP_NODES`) and an embedded live peers panel with ↻ Refresh button. Variables are hot-toggled via the `settings-saved` event without a server restart.
+
+- **`GET /dashboard/p2p/peers` JSON endpoint:** returns `{ enabled, selfId, addrs, peers[], topic, syncsIn, syncsOut, lastSync }` — usable as a machine-readable health check for P2P network status.
+
+- **Precedence rule:** when P2P is active, `startKbSync()` (Redis/Upstash) is skipped automatically. No Upstash account is needed in P2P mode.
+
+- **Repowise init fallback (bugfix):** `cortexWorker.js` now detects the "No previous sync found" error from `repowise update` (which occurs when `.repowise/` exists but is empty/corrupt) and automatically retries with `repowise init` — self-healing without requiring manual intervention.
+
 ### v1.3.2 — Cortex Intelligence Layer + Fragility / Co-Change / Decision-Outcome (Muninn-inspired)
 
 - **Cortex — always-on intelligence layer (optional):** new background worker at `server/workers/cortexWorker.js` that sits on top of the KB. When `PRX_CORTEX_ENABLED=Y`, it watches the KB filesystem (debounced via `PRX_CORTEX_DEBOUNCE_SECS`) and synthesises a curated set of fact files at `~/.prevoyant/cortex/facts/*.md` — architecture, business rules, patterns, confirmed decisions, hotspots, glossary. Agents reference these in Step 0 of the dev skill instead of trawling the raw KB on every session. A new dashboard page at **`/dashboard/cortex`** renders every fact file with a "Re-synthesise now" button; the dashboard header gains an **animated revolving brain badge** while cortex is active. Cortex files are included in the backup/export ZIP via a new checkbox.

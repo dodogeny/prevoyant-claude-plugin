@@ -65,6 +65,7 @@ let watchdogWorker       = null;
 let diskWorker           = null;
 let updateWorker            = null;
 let kbSyncWorker            = null;
+let kbP2pWorker             = null;
 let ticketWatcherWorker     = null;
 let kbFlowAnalystWorker     = null;
 let patternMinerWorker      = null;
@@ -73,6 +74,8 @@ let staleBranchWorker       = null;
 let decisionOutcomeWorker   = null;
 let cortexWorker            = null;
 let hermesNotifierActive    = false;
+
+const p2pBridge = require('./runner/p2pBridge');
 
 function startWatchdog() {
   if (process.env.PRX_WATCHDOG_ENABLED !== 'Y') return;
@@ -200,6 +203,11 @@ function startKbSync() {
   if (process.env.PRX_REALTIME_KB_SYNC !== 'Y') return;
   if (process.env.PRX_KB_MODE !== 'distributed') return;
   if (kbSyncWorker) return;
+  // P2P takes precedence — skip Redis/Upstash sync when P2P is active.
+  if (process.env.PRX_P2P_ENABLED === 'Y') {
+    console.log('[prevoyant-server] KB sync: P2P active — Redis/Upstash signaling skipped');
+    return;
+  }
 
   const kbSync = require('./kb/kbSync');
   const workerData = {
@@ -238,6 +246,77 @@ function stopKbSync() {
   if (kbSyncWorker) {
     kbSyncWorker.postMessage({ type: 'graceful-stop' });
     kbSyncWorker = null;
+  }
+}
+
+function startKbP2p() {
+  if (process.env.PRX_P2P_ENABLED !== 'Y') return;
+  if ((process.env.PRX_KB_MODE || 'local').toLowerCase() !== 'distributed') {
+    console.warn('[prevoyant-server] P2P KB sync requires PRX_KB_MODE=distributed — P2P skipped (local KB stays on this machine)');
+    return;
+  }
+  if (kbP2pWorker) return;
+
+  p2pBridge.updateState({ enabled: true, started: new Date().toISOString() });
+
+  kbP2pWorker = new Worker(
+    path.join(__dirname, 'workers', 'kbP2pWorker.js'),
+    { workerData: {}, resourceLimits: workerLimits('medium') }
+  );
+
+  kbP2pWorker.on('message', msg => {
+    if (!msg) return;
+    if (msg.type === 'log') return; // already printed inside worker
+    if (msg.type === 'p2p-started') {
+      p2pBridge.updateState({ selfId: msg.selfId, addrs: msg.addrs, topic: msg.topic });
+      activityLog.record('p2p_started', null, 'system', { selfId: msg.selfId, addrs: msg.addrs });
+    }
+    if (msg.type === 'peers-updated' || msg.type === 'addrs-updated') {
+      p2pBridge.updateState({ selfId: msg.selfId, addrs: msg.addrs, peers: msg.peers || p2pBridge.getState().peers });
+    }
+    if (msg.type === 'kb-synced') {
+      const s = p2pBridge.getState();
+      p2pBridge.updateState({
+        lastSync: { ts: Date.now(), machine: msg.machine, ticket: msg.ticket, direction: 'in' },
+        syncsIn:  s.syncsIn + 1,
+      });
+      require('./kb/kbCache').invalidate();
+      activityLog.record('p2p_kb_synced', null, 'system', {
+        machine: msg.machine, ticket: msg.ticket, commit: msg.commit,
+      });
+    }
+    if (msg.type === 'kb-notified') {
+      const s = p2pBridge.getState();
+      p2pBridge.updateState({
+        lastSync:  { ts: Date.now(), machine: 'self', ticket: msg.ticket, direction: 'out' },
+        syncsOut:  s.syncsOut + 1,
+      });
+    }
+    if (msg.type === 'p2p-error') {
+      console.error('[p2p] Worker error:', msg.reason);
+      activityLog.record('p2p_error', null, 'system', { reason: msg.reason });
+    }
+  });
+
+  kbP2pWorker.on('error', err =>
+    console.error('[p2p] Worker thread error:', err.message)
+  );
+  kbP2pWorker.on('exit', code => {
+    kbP2pWorker = null;
+    p2pBridge.updateState({ peers: [] });
+    if (code !== 0) console.error(`[p2p] Worker exited with code ${code}`);
+  });
+
+  const port = process.env.PRX_P2P_PORT || '7001';
+  const mode = process.env.PRX_KB_MODE || 'local';
+  console.log(`[prevoyant-server] P2P KB sync active — port=${port} mode=${mode} (replaces Redis signaling)`);
+}
+
+function stopKbP2p() {
+  if (kbP2pWorker) {
+    kbP2pWorker.postMessage({ type: 'graceful-stop' });
+    kbP2pWorker = null;
+    p2pBridge.updateState({ enabled: false, peers: [], selfId: null, addrs: [] });
   }
 }
 
@@ -579,16 +658,18 @@ function stopCortex() {
   try { require('./runner/autonomyScheduler').stop(); } catch (_) {}
 }
 
-process.on('SIGTERM', () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); stopKbFlowAnalyst(); stopPatternMiner(); stopKbStaleness(); stopStaleBranchDetector(); stopDecisionOutcome(); stopCortex(); setTimeout(() => process.exit(0), 600); });
-process.on('SIGINT',  () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopTicketWatcher(); stopKbFlowAnalyst(); stopPatternMiner(); stopKbStaleness(); stopStaleBranchDetector(); stopDecisionOutcome(); stopCortex(); setTimeout(() => process.exit(0), 600); });
+process.on('SIGTERM', () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopKbP2p(); stopTicketWatcher(); stopKbFlowAnalyst(); stopPatternMiner(); stopKbStaleness(); stopStaleBranchDetector(); stopDecisionOutcome(); stopCortex(); setTimeout(() => process.exit(0), 600); });
+process.on('SIGINT',  () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopKbP2p(); stopTicketWatcher(); stopKbFlowAnalyst(); stopPatternMiner(); stopKbStaleness(); stopStaleBranchDetector(); stopDecisionOutcome(); stopCortex(); setTimeout(() => process.exit(0), 600); });
 
 // Reactively start/stop workers when settings are saved from the dashboard.
 // This avoids requiring a full server restart for monitor enable/disable toggles.
 serverEvents.on('settings-saved', () => {
   const diskEnabled        = process.env.PRX_DISK_MONITOR_ENABLED === 'Y';
   const watchdogEnabled    = process.env.PRX_WATCHDOG_ENABLED     === 'Y';
+  const p2pEnabled         = process.env.PRX_P2P_ENABLED           === 'Y';
   const kbSyncEnabled      = process.env.PRX_REALTIME_KB_SYNC     === 'Y'
-                          && process.env.PRX_KB_MODE               === 'distributed';
+                          && process.env.PRX_KB_MODE               === 'distributed'
+                          && !p2pEnabled;
   const watcherEnabled     = process.env.PRX_WATCH_ENABLED              === 'Y';
   const kbflowEnabled      = process.env.PRX_KBFLOW_ENABLED             === 'Y';
   const patternMinerOn     = process.env.PRX_PATTERN_MINER_ENABLED      === 'Y';
@@ -603,6 +684,8 @@ serverEvents.on('settings-saved', () => {
   if (!watchdogEnabled && watchdogWorker)                 stopWatchdog();
   if (kbSyncEnabled && !kbSyncWorker)                    startKbSync();
   if (!kbSyncEnabled && kbSyncWorker)                    stopKbSync();
+  if (p2pEnabled && !kbP2pWorker)                        startKbP2p();
+  if (!p2pEnabled && kbP2pWorker)                        stopKbP2p();
   if (watcherEnabled && !ticketWatcherWorker)             startTicketWatcher();
   if (!watcherEnabled && ticketWatcherWorker)             stopTicketWatcher();
   if (kbflowEnabled && !kbFlowAnalystWorker)              startKbFlowAnalyst();
@@ -711,6 +794,7 @@ app.listen(config.port, () => {
   startDiskMonitor();
   startUpdateChecker();
   startKbSync();
+  startKbP2p();
   setTimeout(() => { startTicketWatcher(); startKbFlowAnalyst(); }, 2000);
   setTimeout(() => { startPatternMiner(); startKbStaleness(); startStaleBranchDetector(); startDecisionOutcome(); }, 4000);
   setTimeout(() => startCortex(), 6000);
