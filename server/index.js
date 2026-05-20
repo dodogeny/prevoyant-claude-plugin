@@ -249,6 +249,62 @@ function stopKbSync() {
   }
 }
 
+// Required libp2p packages — checked at runtime so a fresh clone without
+// node_modules gets auto-healed before the worker thread starts.
+const P2P_REQUIRED_PACKAGES = [
+  'libp2p',
+  '@libp2p/tcp',
+  '@chainsafe/libp2p-noise',
+  '@libp2p/yamux',
+  '@libp2p/bootstrap',
+  '@libp2p/gossipsub',
+  '@libp2p/crypto',
+];
+
+function p2pPackagesMissing() {
+  for (const pkg of P2P_REQUIRED_PACKAGES) {
+    try { require.resolve(pkg); } catch (e) { if (e.code === 'MODULE_NOT_FOUND') return pkg; }
+  }
+  return null;
+}
+
+function ensureP2pDepsAndStart() {
+  const missing = p2pPackagesMissing();
+  if (!missing) { startKbP2p(); return; }
+
+  console.log(`[p2p] Missing package "${missing}" — running npm install in server directory…`);
+  p2pBridge.updateState({ enabled: true, installing: true, installLog: `Installing prerequisites (${missing} missing)…` });
+
+  const { spawn } = require('child_process');
+  const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+  const proc = spawn(npmCmd, ['install', '--prefer-offline', '--no-audit', '--no-fund'], {
+    cwd: path.join(__dirname),
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+
+  let lastLine = '';
+  const onData = (chunk) => {
+    const line = chunk.toString().trim().split('\n').pop() || '';
+    if (line) {
+      lastLine = line;
+      p2pBridge.updateState({ installLog: line.slice(0, 120) });
+    }
+  };
+  proc.stdout.on('data', onData);
+  proc.stderr.on('data', onData);
+
+  proc.on('close', (code) => {
+    if (code === 0) {
+      console.log('[p2p] npm install completed — starting P2P worker');
+      p2pBridge.updateState({ installing: false, installLog: 'Install complete ✓' });
+      startKbP2p();
+    } else {
+      console.error(`[p2p] npm install failed (exit ${code}): ${lastLine}`);
+      p2pBridge.updateState({ installing: false, enabled: false, installLog: `Install failed (exit ${code}): ${lastLine}` });
+    }
+  });
+}
+
 function startKbP2p() {
   if (process.env.PRX_P2P_ENABLED !== 'Y') return;
   if ((process.env.PRX_KB_MODE || 'local').toLowerCase() !== 'distributed') {
@@ -257,7 +313,7 @@ function startKbP2p() {
   }
   if (kbP2pWorker) return;
 
-  p2pBridge.updateState({ enabled: true, started: new Date().toISOString() });
+  p2pBridge.updateState({ enabled: true, installing: false, started: new Date().toISOString() });
 
   kbP2pWorker = new Worker(
     path.join(__dirname, 'workers', 'kbP2pWorker.js'),
@@ -277,8 +333,10 @@ function startKbP2p() {
     if (msg.type === 'kb-synced') {
       const s = p2pBridge.getState();
       p2pBridge.updateState({
-        lastSync: { ts: Date.now(), machine: msg.machine, ticket: msg.ticket, direction: 'in' },
-        syncsIn:  s.syncsIn + 1,
+        lastSync:      { ts: Date.now(), machine: msg.machine, ticket: msg.ticket, direction: 'in', filesCount: msg.filesCount || 0 },
+        lastFilePaths: msg.filePaths || [],
+        syncsIn:       s.syncsIn + 1,
+        filesIn:       s.filesIn + (msg.filesCount || 0),
       });
       require('./kb/kbCache').invalidate();
       activityLog.record('p2p_kb_synced', null, 'system', {
@@ -288,9 +346,14 @@ function startKbP2p() {
     if (msg.type === 'kb-notified') {
       const s = p2pBridge.getState();
       p2pBridge.updateState({
-        lastSync:  { ts: Date.now(), machine: 'self', ticket: msg.ticket, direction: 'out' },
-        syncsOut:  s.syncsOut + 1,
+        lastSync:      { ts: Date.now(), machine: 'self', ticket: msg.ticket, direction: 'out', filesCount: msg.filesCount || 0 },
+        lastFilePaths: msg.filePaths || [],
+        syncsOut:      s.syncsOut + 1,
+        filesOut:      s.filesOut + (msg.filesCount || 0),
       });
+    }
+    if (msg.type === 'reconcile-needed') {
+      if (kbP2pWorker) kbP2pWorker.postMessage({ type: 'trigger-reconcile-sync', peerId: msg.peerId });
     }
     if (msg.type === 'p2p-error') {
       console.error('[p2p] Worker error:', msg.reason);
@@ -684,7 +747,7 @@ serverEvents.on('settings-saved', () => {
   if (!watchdogEnabled && watchdogWorker)                 stopWatchdog();
   if (kbSyncEnabled && !kbSyncWorker)                    startKbSync();
   if (!kbSyncEnabled && kbSyncWorker)                    stopKbSync();
-  if (p2pEnabled && !kbP2pWorker)                        startKbP2p();
+  if (p2pEnabled && !kbP2pWorker)                        ensureP2pDepsAndStart();
   if (!p2pEnabled && kbP2pWorker)                        stopKbP2p();
   if (watcherEnabled && !ticketWatcherWorker)             startTicketWatcher();
   if (!watcherEnabled && ticketWatcherWorker)             stopTicketWatcher();
@@ -794,7 +857,7 @@ app.listen(config.port, () => {
   startDiskMonitor();
   startUpdateChecker();
   startKbSync();
-  startKbP2p();
+  ensureP2pDepsAndStart();
   setTimeout(() => { startTicketWatcher(); startKbFlowAnalyst(); }, 2000);
   setTimeout(() => { startPatternMiner(); startKbStaleness(); startStaleBranchDetector(); startDecisionOutcome(); }, 4000);
   setTimeout(() => startCortex(), 6000);

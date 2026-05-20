@@ -5,15 +5,20 @@
 // routes.js reads via getState() for the /p2p/peers API.
 
 let state = {
-  enabled:  false,
-  selfId:   null,
-  addrs:    [],
-  peers:    [],        // [{ id, addrs, latencyMs, protocols }]
-  topic:    'prevoyant/kb-sync/1',
-  started:  null,
-  lastSync: null,      // { ts, machine, ticket, direction: 'in'|'out' }
-  syncsIn:  0,
-  syncsOut: 0,
+  enabled:     false,
+  installing:  false,   // true while npm install is running
+  installLog:  '',      // last install status line
+  selfId:      null,
+  addrs:       [],
+  peers:       [],      // [{ id, addrs, latencyMs, protocols }]
+  topic:       'prevoyant/kb-sync/1',
+  started:     null,
+  lastSync:      null,  // { ts, machine, ticket, direction: 'in'|'out', filesCount }
+  lastFilePaths: [],    // file paths from most recent sync event (in or out)
+  syncsIn:       0,
+  syncsOut:      0,
+  filesIn:       0,
+  filesOut:      0,
 };
 
 function updateState(patch) {
