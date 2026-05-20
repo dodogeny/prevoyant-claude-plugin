@@ -1,10 +1,11 @@
 # Prevoyant - Claude Code Plugin `v1.3.2`
 
-**Prevoyant** is a [Claude Code](https://claude.ai/code) plugin — an AI agent team that runs a structured, end-to-end developer workflow for Jira tickets. Three modes:
+**Prevoyant** is a [Claude Code](https://claude.ai/code) plugin — an AI agent team that runs a structured, end-to-end developer workflow for Jira tickets. Four modes:
 
-- **Dev Mode** — hand Claude a ticket key and it walks through the full cycle: ticket ingestion → root cause analysis → proposed fix → PDF report (12 steps).
+- **Dev Mode** — hand Claude a ticket key and it walks through the full cycle: ticket ingestion → root cause analysis → proposed fix → PDF report → KB update → Bryan's retrospective.
 - **PR Review Mode** — hand Claude a ticket key with the word `review` and Prevoyant's Engineering Panel reviews the code changes on the associated feature branch, producing a structured PDF findings report.
 - **Estimate Mode** — hand Claude a ticket key with the word `estimate` and Prevoyant's Engineering Panel runs Planning Poker. Each engineer scores the ticket across three dimensions (complexity, risk, repetition) drawing on their acquired system knowledge and the shared KB, then votes simultaneously. Structured debate continues until the team reaches unanimous consensus.
+- **KB Review Mode** — run `/prevoyant:dev kb review` (no ticket needed) to process all three knowledge-buildup queues in one pass: Step 13j (KB Flow Analyst proposals), Step 13k (Pattern Miner proposals), Step 13l (Decision Outcome grades). Closes the intelligence loops without consuming a Jira ticket.
 
 ---
 
@@ -28,7 +29,8 @@ Invoke the skill with a Jira ticket key and Claude runs a structured multi-step 
 12. **Session stats** — elapsed time, actual token usage and cost via codeburn (falls back to estimation if Node.js unavailable)
 13. **PDF report** — full-detail report saved to `CLAUDE_REPORT_DIR`; emailed if `PRX_EMAIL_TO` is set
 14. **Update KB** — write session record; push to shared repo if distributed
-15. **Bryan's retrospective** — Scrum Master audits token spend, flags process friction, proposes one SKILL.md improvement; unanimous team vote; pushes to main after `PRX_SKILL_UPGRADE_MIN_SESSIONS` sessions
+15. **KB buildup steps** — 13j: Sam's Step 13j reviews KB Flow Analyst proposals in `kbflow-pending.md`; 13k: Jordan chairs panel vote on Pattern Miner proposals in `pattern-proposals.md`; 13l: apply CONFIRMED/CONTRADICTED Decision Outcome grades from `decision-outcomes.md` back to KB source files
+16. **Bryan's retrospective** — Scrum Master audits token spend, flags process friction, proposes one SKILL.md improvement; unanimous team vote; pushes to main after `PRX_SKILL_UPGRADE_MIN_SESSIONS` sessions
 
 ### PR Review Mode — `/prevoyant:dev review PROJ-1234`
 
@@ -106,6 +108,7 @@ That's it. The plugin is ready.
 ```
 /prevoyant:dev review PROJ-1234     ← PR code review
 /prevoyant:dev estimate PROJ-1234   ← Planning Poker estimation
+/prevoyant:dev kb review            ← KB Review Mode (no ticket needed)
 ```
 
 > **Verify Jira is connected** — open a Claude Code session in the project directory and ask `search for Jira issue PROJ-1`. If the MCP is configured correctly, Claude returns the issue details.
@@ -198,6 +201,27 @@ Set `PRX_EMAIL_TO` to enable. Leave it unset to disable email entirely.
 | `PRX_SKILL_UPGRADE_MIN_SESSIONS` | `3` | Sessions with an approved change before Bryan pushes to the plugin repo's main branch. Set to `1` to push after every approved session. |
 | `PRX_SKILL_COMPACTION_INTERVAL` | `10` | Sessions between full SKILL.md compaction passes. On compaction sessions Bryan deep-reviews the entire file to eliminate redundancy and compress verbose prose; requires all five team members to approve. |
 | `PRX_MONTHLY_BUDGET` | `20.00` | Monthly Claude subscription budget in USD. Actual spend is measured via [codeburn](https://github.com/getagentseal/codeburn), which reads Claude Code's local JSONL logs — no network call, no auth. Checked at every session start; Bryan uses the real figure in Step 14. Flags ⚠️ at >80% and ❌ at ≥100%. Budget resets on the 1st of each month. |
+
+### Intelligence Workers (optional)
+
+These workers run autonomously in the background and feed the knowledge-buildup queues consumed by Steps 13j, 13k, and 13l (and KB Review Mode).
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PRX_KBFLOW_ENABLED` | `Y` | Set to `Y` to enable the KB Flow Analyst worker. Queries Jira for recent incidents, traces the highest-impact business flows in the codebase, and writes proposed CMM updates to `~/.prevoyant/knowledge-buildup/kbflow-pending.md`. Consumed by Step 13j. |
+| `PRX_PATTERN_MINER_ENABLED` | `Y` | Set to `Y` to enable the Memory Pattern Miner. Scans all seven agents' personal memory files, finds learnings that appear across ≥3 tickets, and proposes `shared/patterns.md` entries to `~/.prevoyant/knowledge-buildup/pattern-proposals.md`. Consumed by Step 13k. |
+| `PRX_DECISION_OUTCOME_ENABLED` | `Y` | Set to `Y` to enable the Decision Outcome Worker. Grades KB decisions `CONFIRMED`, `CONTRADICTED`, or `PENDING` from retro evidence and writes `~/.prevoyant/knowledge-buildup/decision-outcomes.md`. Consumed by Step 13l. |
+| `PRX_STALENESS_ENABLED` | `Y` | Set to `Y` to enable the KB Staleness Scanner. Validates `file:line` references in KB files against the live codebase and marks stale or relocated anchors. |
+
+### Cortex Intelligence Layer (optional)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PRX_CORTEX_ENABLED` | `Y` | Set to `Y` to enable the Cortex layer. Distils the KB into 9 curated fact files (architecture, business-rules, patterns, decisions, hotspots, glossary, observations, autonomy-queue, session-memory) read by agents at Step 0. |
+| `PRX_CORTEX_AUTONOMY_LEVEL` | `2` | `0` — disabled (no auto-promotion). `1` — tracking only (builds LMDB observation store, no promotion). `2` — confidence-gated: LMDB observations with ≥3 confirmations and ≥2-day age are queued for KB promotion after a 24 h review window. `3` — fully automatic (no review window). |
+| `PRX_CORTEX_AUTO_PROMOTE_THRESHOLD` | `3` | Number of cross-session confirmations required before an LMDB observation is queued for auto-promotion (level 2+). |
+| `PRX_CORTEX_AUTO_PROMOTE_DELAY_HOURS` | `24` | Hours in the review window before a queued observation is actually promoted to KB (level 2+). |
+| `PRX_CORTEX_AUTO_PROMOTE_MIN_AGE_DAYS` | `2` | Minimum observation age in days before it is eligible for auto-promotion (level 2+). |
 
 ### Automation (optional)
 
@@ -449,7 +473,14 @@ team-kb/
 
 In `KB_MODE=distributed` all files on disk are `.md.enc`; the plain `.md` files exist only in a temp working directory during the session.
 
-**KB Flow Analyst working files** live *outside* the KB tree at `~/.prevoyant/knowledge-buildup/` — `kbflow-pending.md` holds Javed's proposed CMM contributions awaiting Step 13j panel vote; `kbflow-sessions.md` is the worker run log. Only entries unanimously approved by the panel are written into `core-mental-map/`. Neither file is ever committed to the KB repo.
+**Knowledge-buildup working files** live *outside* the KB tree at `~/.prevoyant/knowledge-buildup/` and are never committed to the KB repo:
+
+| File | Written by | Consumed by |
+|------|-----------|-------------|
+| `kbflow-pending.md` | KB Flow Analyst (Javed worker) | Step 13j — Sam chairs panel vote; approved entries written to `core-mental-map/` |
+| `kbflow-sessions.md` | KB Flow Analyst | Run log only — not consumed by skill steps |
+| `pattern-proposals.md` | Memory Pattern Miner worker | Step 13k — Jordan chairs panel vote; approved entries written to `shared/patterns.md` |
+| `decision-outcomes.md` | Decision Outcome Worker | Step 13l — grades applied back to KB source files (CONFIRMED increments counters; CONTRADICTED adds warning blocks) |
 
 `INDEX.md` holds two sections:
 - **Memory Palace** — vivid trigger phrases mapped to system rooms; primary retrieval (≤ 3 reads regardless of KB size)
@@ -463,7 +494,7 @@ In `KB_MODE=distributed` all files on disk are `.md.enc`; the plain `.md` files 
 | `core-mental-map/` | Codebase | Architecture, data flows, tech stack, gotchas (compressed facts) |
 | `personas/memory/` | Sessions | Each agent's personal memory — observations, calibration, surprises — one file per session per agent |
 | `lessons-learned/` | Developers | Per-person sprint retrospective entries: pitfalls and hard-won insights |
-| `~/.prevoyant/knowledge-buildup/` *(outside KB tree)* | KB Flow Analyst | Javed's pending CMM proposals and worker run log — never committed to the KB repo |
+| `~/.prevoyant/knowledge-buildup/` *(outside KB tree)* | KB Flow Analyst · Pattern Miner · Decision Outcome Worker | Three buildup queues (`kbflow-pending.md`, `pattern-proposals.md`, `decision-outcomes.md`) + run log — never committed to the KB repo |
 
 Every session starts by reading relevant `core-mental-map/` sections, all `lessons-learned/` files, and the last five personal memory files for each agent. Agents emit `[CMM+]` markers for codebase facts and `[LL+]` markers for lessons; both are written back to the KB at the end of every session. Each agent also writes a personal memory file (Step 13i) capturing what they observed, predicted, and got surprised by — so agents get sharper with every session they participate in.
 
@@ -552,8 +583,11 @@ An optional Node.js service that runs alongside the plugin as an always-on ambie
 **Key capabilities:**
 - **Webhook receiver** — accepts Jira webhook events and auto-queues assigned tickets
 - **Pipeline dashboard** — live job queue with stop/kill, session history, cost tracking (30-day sparkline), and PDF report viewer
-- **Cortex intelligence layer** — *(new in v1.3.2)* always-on, self-updating distillation of the KB; backed by a 3-tier fast memory store (LRU hot cache → LMDB mmap disk store → JSONL fallback) for sub-millisecond reads and crash-proof persistence; agents read the curated facts in Step 0 instead of trawling raw KB files. **→ [docs/CORTEX.md](docs/CORTEX.md)**
+- **Cortex intelligence layer** — always-on, self-updating distillation of the KB into 9 curated fact files; backed by a 3-tier fast memory store (LRU hot cache → LMDB mmap disk store → JSONL fallback) for sub-millisecond reads and crash-proof persistence; agents read the facts in Step 0 instead of trawling raw KB files. Autonomy level 2 (confidence-gated): LMDB observations with ≥3 confirmations and ≥2-day age are queued for auto-promotion after a 24 h review window. **→ [docs/CORTEX.md](docs/CORTEX.md)**
 - **KB Flow Analyst** — autonomous background worker that queries Jira for recent incidents, identifies the highest-impact business flows, traces them in the codebase, and proposes Core Mental Map updates to `~/.prevoyant/knowledge-buildup/kbflow-pending.md` for team vote at Step 13j; manageable via the Knowledge Builder dashboard page
+- **Memory Pattern Miner** — scans all seven agents' personal memory files after each run, finds learnings that appear across three or more tickets, and writes proposed `shared/patterns.md` entries (with frequency evidence) to `~/.prevoyant/knowledge-buildup/pattern-proposals.md` for Step 13k panel vote
+- **Decision Outcome Worker** — grades every KB decision entry `CONFIRMED`, `CONTRADICTED`, or `PENDING` by correlating it against retro evidence from recent sessions; writes grades to `~/.prevoyant/knowledge-buildup/decision-outcomes.md`; Step 13l applies grades back to the KB source files (adds warning blocks for contradicted decisions, increments `confirmed:` counters, adds `[KB+ ARCH]` markers)
+- **KB Staleness Scanner** — validates `file:line` references in KB files against the live codebase; marks stale or relocated anchors
 - **Health watchdog** — polls `/health` on a configurable interval and emails on DOWN/UP transitions
 - **Ticket watcher** — monitors watched Jira tickets and sends digest alerts on status changes
 - **Disk monitor** — tracks `~/.prevoyant/` disk usage against a configurable quota; alerts at threshold and runs periodic cleanup (sessions, server logs, watch logs, KB Flow Analyst run logs)
@@ -588,6 +622,9 @@ An optional Node.js service that runs alongside the plugin as an always-on ambie
 | **11** | Session stats — elapsed time, actual token usage and cost delta via codeburn (fallback: manual estimation) |
 | **12** | Generate PDF report → save to `CLAUDE_REPORT_DIR`; email if `PRX_EMAIL_TO` is set |
 | **13** | Write session record to KB; push if distributed |
+| **13j** | Sam reviews KB Flow Analyst proposals (`kbflow-pending.md`) — unanimous panel vote; approved entries written to `core-mental-map/` |
+| **13k** | Jordan chairs panel vote on Pattern Miner proposals (`pattern-proposals.md`) — approved entries promoted to `shared/patterns.md` with frequency counter |
+| **13l** | Apply Decision Outcome grades (`decision-outcomes.md`) — CONFIRMED: increments `confirmed:`, adds `[KB+ ARCH]`; CONTRADICTED: inserts warning block with `[KB+ RISK]`; PENDING: skipped |
 
 ### PR Review Mode (10 steps)
 
@@ -620,6 +657,16 @@ Story points = **Complexity + Risk + Repetition** (not hours). Scale: 1 · 2 · 
 | **E5** | Final estimate — story points, dimension summary (C/R/R), confidence (High/Medium/Low), key assumptions, what would change the estimate |
 | **E6** | KB update — records estimate with full dimension breakdown in `tickets/{KEY}.md`; appends `[ESTIMATE-PATTERN]` to `shared/patterns.md` if a reusable complexity insight was found |
 | **E7** | Bryan's retrospective — audits whether votes were grounded in KB evidence or gut feel; proposes estimation workflow improvements (opt-in) |
+
+### KB Review Mode (3 stages) — `/prevoyant:dev kb review`
+
+Standalone mode with no Jira ticket. Processes all three knowledge-buildup queues in one pass.
+
+| Stage | What happens |
+|-------|-------------|
+| **KR0** | Count pending entries across all three buildup files (`kbflow-pending.md`, `pattern-proposals.md`, `decision-outcomes.md`); skip if all are empty |
+| **KR1** | Run all three review steps in sequence — KR1-a: Step 13j (KB Flow Analyst proposals); KR1-b: Step 13k (Pattern Miner proposals); KR1-c: Step 13l (Decision Outcome apply) |
+| **KR2** | Combined completion block — reports counts promoted, confirmed, contradicted, and skipped across all three reviews |
 
 ---
 
@@ -682,8 +729,11 @@ Story points = **Complexity + Risk + Repetition** (not hours). Scale: 1 · 2 · 
 │   ├── workers/                  # Background worker threads
 │   │   ├── diskMonitor.js        # Disk space tracking and alerts
 │   │   ├── healthMonitor.js      # Watchdog: polls /health, emails on DOWN/UP
-│   │   ├── kbFlowAnalystWorker.js # Autonomous KB Flow Analyst: Jira-driven CMM proposals
+│   │   ├── kbFlowAnalystWorker.js # Autonomous KB Flow Analyst: Jira-driven CMM proposals → kbflow-pending.md
 │   │   ├── kbSyncWorker.js       # KB sync worker: Redis XREAD poll loop
+│   │   ├── kbStalenessScanner.js # Validates file:line KB refs against live codebase
+│   │   ├── memoryPatternMinerWorker.js # Scans agent memories → pattern-proposals.md
+│   │   ├── decisionOutcomeWorker.js    # Grades KB decisions CONFIRMED/CONTRADICTED → decision-outcomes.md
 │   │   ├── ticketWatcherWorker.js # Jira ticket watcher: scheduled digest polls
 │   │   └── updateChecker.js      # Checks GitHub for plugin updates
 │   └── scripts/

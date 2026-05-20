@@ -1219,6 +1219,9 @@ function renderDashboard(stats, budget) {
     .info-row a:hover { text-decoration:underline; }
     .info-modes { display:flex; gap:.5rem; flex-wrap:wrap; margin:.8rem 0 .4rem; }
     .info-mode-pill { font-size:.76rem; font-weight:600; padding:3px 10px; border-radius:20px; }
+    .mode-kb { background: var(--green-dim); color: var(--green); }
+    .info-lh-hero { display:flex; justify-content:center; align-items:center; margin:.25rem 0 1rem; }
+    .info-lh-hero svg { filter: drop-shadow(0 2px 8px rgba(251,191,36,.35)); }
   </style>
 </head>
 <body>
@@ -1736,20 +1739,54 @@ function renderDashboard(stats, budget) {
   <div class="modal-overlay" id="info-modal" onclick="overlayClick(event,'info-modal')">
     <div class="modal" style="max-width:460px">
       <div class="modal-header">
-        <span class="modal-title">Prevoyant</span>
+        <span class="modal-title">About Prevoyant</span>
         <button class="modal-close" onclick="closeModal('info-modal')" title="Close">
           <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
         </button>
+      </div>
+      <div class="info-lh-hero">
+        <svg xmlns="http://www.w3.org/2000/svg" width="52" height="52" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="1" x2="12" y2="2.5" stroke="#94a3b8" stroke-width="2"/>
+          <path d="M8.5 4L12 2l3.5 2Z" fill="#e2e8f0" stroke="#e2e8f0" stroke-width="1.5" stroke-linejoin="round"/>
+          <rect x="8.5" y="4" width="7" height="4" rx=".3" fill="#dc2626" stroke="#e2e8f0" stroke-width="1.5"/>
+          <line x1="12" y1="4" x2="12" y2="8" stroke="rgba(255,255,255,.4)" stroke-width=".8"/>
+          <line x1="8.5" y1="6" x2="15.5" y2="6" stroke="rgba(255,255,255,.4)" stroke-width=".8"/>
+          <circle cx="12" cy="6" r="1.2" fill="#fbbf24"/>
+          <line x1="7" y1="8.3" x2="17" y2="8.3" stroke="#e2e8f0" stroke-width="2.5"/>
+          <path d="M9.5 8.5h5l.4 2.9H9.1Z" fill="#e2e8f0"/>
+          <path d="M9.1 11.4h5.8l.4 2.9H8.7Z" fill="#dc2626"/>
+          <path d="M8.7 14.3h6.6l.3 2.9H8.4Z" fill="#e2e8f0"/>
+          <path d="M8.4 17.2h7.2l.4 2.8H8Z" fill="#dc2626"/>
+          <path d="M11.2 20v-1.6a.8.8 0 0 1 1.6 0V20Z" fill="#475569"/>
+          <rect x="6" y="20" width="12" height="2" rx=".5" fill="#e2e8f0"/>
+          <g stroke="#fde68a" stroke-width="1.5" fill="none" opacity=".7">
+            <line x1="8.5" y1="4.5" x2="2" y2="2"/>
+            <line x1="8.5" y1="7.5" x2="2" y2="10"/>
+          </g>
+          <g stroke="#fde68a" stroke-width="1.5" fill="none" opacity=".7">
+            <line x1="15.5" y1="4.5" x2="22" y2="2"/>
+            <line x1="15.5" y1="7.5" x2="22" y2="10"/>
+          </g>
+        </svg>
       </div>
       <p class="info-desc">${pluginDescription}</p>
       <div class="info-modes">
         <span class="info-mode-pill mode-dev">Dev</span>
         <span class="info-mode-pill mode-review">Review</span>
         <span class="info-mode-pill mode-estimate">Estimate</span>
+        <span class="info-mode-pill mode-kb">KB Review</span>
       </div>
       <div class="info-row">
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/></svg>
-        Version <strong>v${pluginVersion}</strong>
+        Skill version <strong>v${pluginVersion}</strong>
+      </div>
+      <div class="info-row">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"/><polyline points="3.27 6.96 12 12.01 20.73 6.96"/><line x1="12" y1="22.08" x2="12" y2="12"/></svg>
+        Active loops: <strong>KB Flow Analyst · Pattern Miner · Decision Outcome · Cortex</strong>
+      </div>
+      <div class="info-row">
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+        Autonomy level <strong>2</strong> — confidence-gated KB promotion (24 h review window)
       </div>
       <div class="info-row">
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 0 0-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0 0 20 4.77 5.07 5.07 0 0 0 19.91 1S18.73.65 16 2.48a13.38 13.38 0 0 0-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 0 0 5 4.77a5.44 5.44 0 0 0-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 0 0 9 18.13V22"/></svg>
