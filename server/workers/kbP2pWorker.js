@@ -56,7 +56,11 @@ const debounceMs      = () => parseInt(process.env.PRX_KB_SYNC_DEBOUNCE_SECS || 
 const mdnsEnabled     = () => (process.env.PRX_P2P_MDNS_ENABLED || 'Y').toUpperCase() !== 'N';
 const machineName     = () => (process.env.PRX_KB_SYNC_MACHINE || os.hostname()).trim();
 const p2pSecret       = () => (process.env.PRX_P2P_SECRET || '').trim();
-const reconcileMins   = () => parseInt(process.env.PRX_P2P_RECONCILE_MINS || '60', 10);
+const reconcileMins   = () => parseInt(process.env.PRX_P2P_RECONCILE_MINS    || '60', 10);
+const trickleEnabled   = () => (process.env.PRX_P2P_TRICKLE || 'N').toUpperCase() === 'Y';
+// Trickle internals are self-deterministic — initial values, then adapted per-batch by RTT feedback.
+const TRICKLE_INIT_DELAY_MS   = 500;
+const TRICKLE_INIT_BATCH_SIZE = 2;
 
 const bootstrapList   = () => {
   const env = (process.env.PRX_P2P_BOOTSTRAP_NODES || '').trim();
@@ -89,6 +93,33 @@ function hmacVerify(data, sig) {
   // Constant-time comparison
   try { return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(sig || '')); }
   catch (_) { return false; }
+}
+
+// ── AES-256-GCM content encryption (optional — PRX_P2P_ENCRYPT=Y) ─────────────
+// Key is derived once from PRX_P2P_SECRET; encryption is per-file (random IV).
+// When PRX_P2P_SECRET is blank, PRX_P2P_ENCRYPT is silently ignored.
+
+function getEncKey() {
+  if ((process.env.PRX_P2P_ENCRYPT || 'N').toUpperCase() !== 'Y') return null;
+  const secret = p2pSecret();
+  if (!secret) return null;
+  return crypto.createHash('sha256').update('prevoyant-p2p-enc-v1:' + secret).digest();
+}
+
+function encryptContent(plaintext, key) {
+  const iv = crypto.randomBytes(12);
+  const cipher = crypto.createCipheriv('aes-256-gcm', key, iv);
+  const enc = Buffer.concat([cipher.update(plaintext, 'utf8'), cipher.final()]);
+  return { iv: iv.toString('hex'), ciphertext: enc.toString('base64'), tag: cipher.getAuthTag().toString('hex') };
+}
+
+function decryptContent(enc, key) {
+  const decipher = crypto.createDecipheriv('aes-256-gcm', key, Buffer.from(enc.iv, 'hex'));
+  decipher.setAuthTag(Buffer.from(enc.tag, 'hex'));
+  return Buffer.concat([
+    decipher.update(Buffer.from(enc.ciphertext, 'base64')),
+    decipher.final(),
+  ]).toString('utf8');
 }
 
 // Wrap outbound payload with HMAC envelope
@@ -156,27 +187,28 @@ function saveLastSyncTs(ts) {
 // Scan KB dir for .md files modified since sinceMs.
 // Returns [{ path, content, lastModifiedMs }] sorted newest-first.
 // Stops accumulating content once bytes > maxBytes, but still records paths.
-function gatherChangedFiles(dir, sinceMs, maxBytes) {
+// Async so the libp2p event loop stays responsive during large KB scans.
+async function gatherChangedFiles(dir, sinceMs, maxBytes) {
   if (!fs.existsSync(dir)) return [];
   const limit = maxBytes !== undefined ? maxBytes : MAX_GOSSIP_BYTES;
   const out = [];
   let totalBytes = 0;
   let truncated = false;
 
-  const scan = (d) => {
+  const scan = async (d) => {
     let entries;
-    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch (_) { return; }
+    try { entries = await fs.promises.readdir(d, { withFileTypes: true }); } catch (_) { return; }
     for (const e of entries) {
       if (e.name.startsWith('.')) continue;
       const full = path.join(d, e.name);
-      if (e.isDirectory()) { scan(full); continue; }
+      if (e.isDirectory()) { await scan(full); continue; }
       if (!e.name.endsWith('.md')) continue;
       try {
-        const stat = fs.statSync(full);
+        const stat = await fs.promises.stat(full);
         if (stat.mtimeMs < sinceMs) continue;
         const rel = path.relative(dir, full);
         if (truncated) { out.push({ path: rel, content: null, lastModifiedMs: stat.mtimeMs }); continue; }
-        const content = fs.readFileSync(full, 'utf8');
+        const content = await fs.promises.readFile(full, 'utf8');
         totalBytes += content.length;
         if (totalBytes > limit) {
           truncated = true;
@@ -184,35 +216,45 @@ function gatherChangedFiles(dir, sinceMs, maxBytes) {
           out.push({ path: rel, content: null, lastModifiedMs: stat.mtimeMs });
           continue;
         }
-        out.push({ path: rel, content, lastModifiedMs: stat.mtimeMs });
+        const encKey = getEncKey();
+        const payload = encKey
+          ? { encrypted: encryptContent(content, encKey), content: null }
+          : { content };
+        out.push({ path: rel, lastModifiedMs: stat.mtimeMs, ...payload });
       } catch (_) {}
     }
   };
-  scan(dir);
+  await scan(dir);
   // Sort newest-first so most-recent changes ship first when truncated
   out.sort((a, b) => (b.lastModifiedMs || 0) - (a.lastModifiedMs || 0));
   return out;
 }
 
 // Gather ALL .md files (no size cap — for stream-based full sync).
-function gatherAllFiles(dir) {
+// Async so the libp2p event loop stays responsive during large KB scans.
+async function gatherAllFiles(dir) {
   if (!fs.existsSync(dir)) return [];
   const out = [];
-  const scan = (d) => {
+  const encKey = getEncKey();
+  const scan = async (d) => {
     let entries;
-    try { entries = fs.readdirSync(d, { withFileTypes: true }); } catch (_) { return; }
+    try { entries = await fs.promises.readdir(d, { withFileTypes: true }); } catch (_) { return; }
     for (const e of entries) {
       if (e.name.startsWith('.')) continue;
       const full = path.join(d, e.name);
-      if (e.isDirectory()) { scan(full); continue; }
+      if (e.isDirectory()) { await scan(full); continue; }
       if (!e.name.endsWith('.md')) continue;
       try {
-        const stat = fs.statSync(full);
-        out.push({ path: path.relative(dir, full), content: fs.readFileSync(full, 'utf8'), lastModifiedMs: stat.mtimeMs });
+        const stat = await fs.promises.stat(full);
+        const content = await fs.promises.readFile(full, 'utf8');
+        const payload = encKey
+          ? { encrypted: encryptContent(content, encKey), content: null }
+          : { content };
+        out.push({ path: path.relative(dir, full), lastModifiedMs: stat.mtimeMs, ...payload });
       } catch (_) {}
     }
   };
-  scan(dir);
+  await scan(dir);
   return out;
 }
 
@@ -236,8 +278,8 @@ function getKbLatestMtime(dir) {
 }
 
 // Fingerprint: sha256 of sorted "path:mtime" pairs — cheap manifest comparison.
-function kbFingerprint(dir) {
-  const files = gatherAllFiles(dir).map(f => `${f.path}:${f.lastModifiedMs}`).sort();
+async function kbFingerprint(dir) {
+  const files = (await gatherAllFiles(dir)).map(f => `${f.path}:${f.lastModifiedMs}`).sort();
   return crypto.createHash('sha256').update(files.join('\n')).digest('hex').slice(0, 16);
 }
 
@@ -248,8 +290,24 @@ function kbFingerprint(dir) {
 // Returns { written, skipped }.
 function applyFiles(files, dir) {
   let written = 0, skipped = 0;
+  const encKey = getEncKey();
   for (const f of files) {
-    if (!f.path || typeof f.content !== 'string') continue;
+    if (!f.path) continue;
+    // Resolve content: either plaintext or decrypt if encrypted
+    let content = null;
+    if (typeof f.content === 'string') {
+      content = f.content;
+    } else if (f.encrypted) {
+      try {
+        // Try with our key first; if no key, fall back to raw ciphertext object (shouldn't happen)
+        content = encKey ? decryptContent(f.encrypted, encKey) : null;
+      } catch (e) {
+        log('warn', `Decryption failed for ${f.path}: ${e.message} — skipping`);
+        continue;
+      }
+    }
+    if (typeof content !== 'string') continue;
+
     const safe = path.normalize(f.path).replace(/^(\.\.(\/|\\|$))+/, '');
     const dest = path.join(dir, safe);
     try {
@@ -257,7 +315,7 @@ function applyFiles(files, dir) {
         const localMtime = fs.statSync(dest).mtimeMs;
         if (f.lastModifiedMs <= localMtime) { skipped++; continue; } // local is same or newer
       }
-      writeAtomic(dest, f.content);
+      writeAtomic(dest, content);
       written++;
     } catch (e) {
       log('warn', `Could not write ${safe}: ${e.message}`);
@@ -351,87 +409,163 @@ function broadcastPeers(node, selfId, addrs) {
   });
 }
 
-// ── Outbound: publish KB changes via GossipSub ────────────────────────────────
+// ── Payload size helper ───────────────────────────────────────────────────────
+
+// Returns serialized byte estimate for a file entry (works for plaintext + encrypted payloads).
+function filePayloadSize(f) {
+  if (typeof f.content === 'string') return f.content.length;
+  if (f.encrypted?.ciphertext)       return f.encrypted.ciphertext.length + 100; // +100 for IV/tag JSON
+  return 0;
+}
+
+// ── Outbound: bulk publish (all batches back-to-back) ─────────────────────────
+
+async function bulkPublish(node, ticket, sendableFiles, deletions) {
+  const batches = [];
+  let current = [], currentSize = 0;
+  for (const f of sendableFiles) {
+    const sz = filePayloadSize(f);
+    if (current.length && currentSize + sz > MAX_GOSSIP_BYTES) {
+      batches.push(current); current = []; currentSize = 0;
+    }
+    current.push(f); currentSize += sz;
+  }
+  if (current.length) batches.push(current);
+  if (!batches.length) batches.push([]); // at least one message for deletions only
+
+  const batchTotal = batches.length;
+  let published = 0;
+  if (parentPort) parentPort.postMessage({ type: 'transfer-progress', phase: 'sending', done: 0, total: sendableFiles.length, file: '' });
+
+  for (let i = 0; i < batches.length; i++) {
+    const payload = {
+      machine: machineName(), ticket: ticket || '', ts: Date.now(),
+      batchIndex: i, batchTotal,
+      files: batches[i],
+      deletions: i === 0 ? deletions : [],
+    };
+    const envelope = signEnvelope(payload);
+    let ok = false;
+    for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+      try {
+        await node.services.pubsub.publish(TOPIC, new TextEncoder().encode(envelope));
+        published += batches[i].length; ok = true;
+      } catch (e) {
+        if (attempt < 2) await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+        else log('warn', `Publish batch ${i} failed after 3 attempts: ${e.message}`);
+      }
+    }
+    if (parentPort) parentPort.postMessage({ type: 'transfer-progress', phase: 'sending', done: published, total: sendableFiles.length, file: '' });
+  }
+
+  if (parentPort) parentPort.postMessage({ type: 'transfer-progress', phase: 'done' });
+  return { published, batchTotal };
+}
+
+// ── Outbound: trickle publish (incremental, adaptive inter-batch delay) ────────
+
+async function tricklePublish(node, ticket, sendableFiles, deletions) {
+  let   batchSz        = TRICKLE_INIT_BATCH_SIZE;
+  let   delay          = TRICKLE_INIT_DELAY_MS;
+  const MIN_DELAY      = 100, MAX_DELAY = 10_000;
+  let   totalPublished = 0;
+  let   cursor         = 0;   // index into sendableFiles; advances by adaptive batchSz each round
+  let   batchIndex     = 0;
+
+  if (parentPort) parentPort.postMessage({ type: 'transfer-progress', phase: 'sending', done: 0, total: sendableFiles.length, file: '' });
+
+  while (cursor < sendableFiles.length || (batchIndex === 0 && deletions.length)) {
+    const batch = sendableFiles.slice(cursor, cursor + batchSz);
+    const i = batchIndex;
+    // batchTotal is unknown up front (batchSz adapts); use 0 as sentinel
+    const payload = {
+      machine: machineName(), ticket: ticket || '', ts: Date.now(),
+      batchIndex: i, batchTotal: 0,
+      files: batch,
+      deletions: i === 0 ? deletions : [],
+    };
+    const envelope = signEnvelope(payload);
+    const t0 = Date.now();
+    let ok = false;
+    for (let attempt = 0; attempt < 3 && !ok; attempt++) {
+      try {
+        await node.services.pubsub.publish(TOPIC, new TextEncoder().encode(envelope));
+        ok = true; totalPublished += batch.length;
+      } catch (e) {
+        if (attempt < 2) await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+        else log('warn', `Trickle batch ${i} failed: ${e.message}`);
+      }
+    }
+
+    // Adaptive: fast RTT → shrink delay + grow batch; slow/failed → lengthen delay + shrink batch
+    const rtt = Date.now() - t0;
+    if (ok && rtt < 300) {
+      delay   = Math.max(MIN_DELAY, Math.round(delay * 0.85));
+      batchSz = Math.min(10, batchSz + 1);
+    } else if (!ok || rtt > 1000) {
+      delay   = Math.min(MAX_DELAY, Math.round(delay * 1.50));
+      batchSz = Math.max(1, batchSz - 1);
+    }
+
+    cursor += batch.length || 1; // advance; guard against empty batch (deletions-only first pass)
+    batchIndex++;
+
+    if (parentPort) parentPort.postMessage({ type: 'transfer-progress', phase: 'sending', done: totalPublished, total: sendableFiles.length, file: batch[0]?.path || '' });
+
+    const hasMore = cursor < sendableFiles.length;
+    if (hasMore) await new Promise(r => setTimeout(r, delay));
+  }
+
+  if (parentPort) parentPort.postMessage({ type: 'transfer-progress', phase: 'done' });
+  return { published: totalPublished, batchTotal: batchIndex };
+}
+
+// ── Outbound: entry point — branches to bulk or trickle ──────────────────────
 
 let lastPublishMs = 0;
 
 async function publishUpdate(node, ticket) {
-  const sinceMs = lastPublishMs || (Date.now() - 60_000);
-  const allChanged = gatherChangedFiles(kbDir(), sinceMs);
+  const sinceMs    = lastPublishMs || (Date.now() - 60_000);
+  const allChanged = await gatherChangedFiles(kbDir(), sinceMs);
 
   // Detect deletions: paths in manifest but no longer on disk
   const manifest   = loadManifest();
-  const currentSet = new Set(gatherAllFiles(kbDir()).map(f => f.path));
+  const currentSet = new Set((await gatherAllFiles(kbDir())).map(f => f.path));
   const deletionTs = Date.now();
   const deletions  = Object.keys(manifest)
     .filter(p => !currentSet.has(p))
     .map(p => ({ path: p, deletedAt: deletionTs }));
 
-  if (!allChanged.length && !deletions.length) {
+  // Sendable = files with plaintext content OR encrypted payload.
+  // Skipped  = truncated entries (path+mtime only, no payload) — queued for next trigger.
+  const sendableFiles = allChanged.filter(f => typeof f.content === 'string' || f.encrypted);
+  const skippedFiles  = allChanged.filter(f => typeof f.content !== 'string' && !f.encrypted);
+
+  if (!sendableFiles.length && !deletions.length) {
     log('info', 'No KB changes or deletions — skipping publish');
     return;
   }
 
   lastPublishMs = Date.now();
 
-  // Split into batches that fit within GossipSub limit.
-  // Files without content (truncated) carry only path+mtime and are sent in later batches.
-  const withContent    = allChanged.filter(f => f.content !== null);
-  const withoutContent = allChanged.filter(f => f.content === null);
+  const mode = trickleEnabled() ? 'trickle' : 'bulk';
+  const { published, batchTotal } = trickleEnabled()
+    ? await tricklePublish(node, ticket, sendableFiles, deletions)
+    : await bulkPublish(node, ticket, sendableFiles, deletions);
 
-  // Group withContent into size-bounded batches
-  const batches = [];
-  let current = [], currentSize = 0;
-  for (const f of withContent) {
-    const sz = f.content.length;
-    if (current.length && currentSize + sz > MAX_GOSSIP_BYTES) {
-      batches.push(current);
-      current = []; currentSize = 0;
-    }
-    current.push(f);
-    currentSize += sz;
-  }
-  if (current.length) batches.push(current);
-  if (!batches.length) batches.push([]); // ensure at least one message for deletions
+  log('info', `Published ${published} file(s) in ${batchTotal} batch(es) [${mode}], ${deletions.length} deletion(s) — ticket=${ticket || '?'}`);
 
-  const batchTotal = batches.length;
-  let published = 0;
-
-  for (let i = 0; i < batches.length; i++) {
-    const payload = {
-      machine:    machineName(),
-      ticket:     ticket || '',
-      ts:         Date.now(),
-      batchIndex: i,
-      batchTotal,
-      files:      batches[i],
-      deletions:  i === 0 ? deletions : [], // deletions only in first batch
-    };
-    const envelope = signEnvelope(payload);
-    try {
-      await node.services.pubsub.publish(TOPIC, new TextEncoder().encode(envelope));
-      published += batches[i].length;
-    } catch (e) {
-      log('warn', `Publish batch ${i} failed: ${e.message}`);
-    }
-  }
-
-  const totalFiles = withContent.length;
-  log('info', `Published ${totalFiles} file(s) in ${batchTotal} batch(es), ${deletions.length} deletion(s) — ticket=${ticket || '?'}`);
-
-  // Update manifest to reflect current state
-  saveManifest(gatherAllFiles(kbDir()));
+  saveManifest(await gatherAllFiles(kbDir()));
 
   if (parentPort) parentPort.postMessage({
-    type:      'kb-notified',
+    type:       'kb-notified',
     ticket,
-    filesCount: totalFiles,
-    filePaths:  withContent.map(f => f.path).slice(0, 10),
+    filesCount: published,
+    filePaths:  sendableFiles.map(f => f.path).slice(0, 10),
   });
 
-  // Notify about any files that couldn't fit in this round
-  if (withoutContent.length) {
-    log('warn', `${withoutContent.length} file(s) exceeded batch budget — will publish on next trigger`);
+  if (skippedFiles.length) {
+    log('warn', `${skippedFiles.length} file(s) exceeded batch budget — will publish on next trigger`);
   }
 }
 
@@ -450,7 +584,7 @@ async function applyUpdate(raw) {
   const deleted = applyDeletions(deletions || [], kbDir());
 
   if (written || deleted) {
-    saveManifest(gatherAllFiles(kbDir()));
+    saveManifest(await gatherAllFiles(kbDir()));
     saveLastSyncTs(Date.now());
   }
 
@@ -472,7 +606,7 @@ async function applyUpdate(raw) {
 
 async function applyReconcile(payload, node) {
   if (payload.machine === machineName()) return;
-  const localFp = kbFingerprint(kbDir());
+  const localFp = await kbFingerprint(kbDir());
   if (payload.fingerprint === localFp) return; // already in sync
 
   log('info', `Reconcile fingerprint mismatch with ${payload.machine} — requesting delta sync`);
@@ -563,7 +697,8 @@ if (parentPort) {
   }
 
   const authMode = p2pSecret() ? 'HMAC-SHA256' : 'none (set PRX_P2P_SECRET to enable)';
-  log('info', `Starting — port=${p2pPort()} trigger=${syncTrigger()} mdns=${mdnsEnabled()} auth=${authMode}`);
+  const xferMode = trickleEnabled() ? 'trickle (adaptive)' : 'bulk';
+  log('info', `Starting — port=${p2pPort()} trigger=${syncTrigger()} mdns=${mdnsEnabled()} auth=${authMode} transfer=${xferMode}`);
 
   // ── Load libp2p ESM packages ───────────────────────────────────────────────
   let createLibp2p, tcp, noise, yamux, bootstrap, gossipsub;
@@ -687,8 +822,8 @@ if (parentPort) {
       }
 
       const sinceMs = typeof req.sinceMs === 'number' ? req.sinceMs : 0;
-      const files   = sinceMs === 0 ? gatherAllFiles(kbDir()) : gatherChangedFiles(kbDir(), sinceMs, Infinity);
-      const fp      = kbFingerprint(kbDir());
+      const files   = sinceMs === 0 ? await gatherAllFiles(kbDir()) : await gatherChangedFiles(kbDir(), sinceMs, Infinity);
+      const fp      = await kbFingerprint(kbDir());
 
       log('info', `Sync request from ${req.machine || from} sinceMs=${sinceMs} → sending ${files.length} file(s)`);
 
@@ -700,30 +835,45 @@ if (parentPort) {
     }
   });
 
-  async function requestDeltaSync(peerId, sinceMs) {
+  async function requestDeltaSync(peerId, sinceMs, attempt = 0) {
+    const MAX_ATTEMPTS = 3;
     const reqBody = { sinceMs, machine: machineName() };
     const sig     = p2pSecret() ? hmacSign(JSON.stringify(reqBody)) : '';
     const req     = Buffer.from(JSON.stringify({ ...reqBody, sig }));
+
+    if (parentPort) parentPort.postMessage({ type: 'transfer-progress', phase: 'connecting', done: 0, total: 0, file: '' });
 
     try {
       const stream = await libp2pNode.dialProtocol(peerId, SYNC_PROTO);
       await stream.sink([req]);
 
+      if (parentPort) parentPort.postMessage({ type: 'transfer-progress', phase: 'receiving', done: 0, total: 0, file: '' });
+
       const chunks = [];
       for await (const chunk of stream.source) {
         chunks.push(chunk instanceof Uint8Array ? chunk : Buffer.from(chunk.slice()));
       }
-      if (!chunks.length) { log('warn', 'Empty sync response'); return; }
+      if (!chunks.length) {
+        log('warn', 'Empty sync response');
+        if (parentPort) parentPort.postMessage({ type: 'transfer-progress', phase: 'done' });
+        return;
+      }
 
-      const resp = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      const resp       = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      const totalFiles = (resp.files || []).length;
+
+      if (parentPort) parentPort.postMessage({ type: 'transfer-progress', phase: 'applying', done: 0, total: totalFiles, file: '' });
+
       const { written, skipped } = applyFiles(resp.files || [], kbDir());
       const deleted = applyDeletions(resp.deletions || [], kbDir());
 
       if (written || deleted) {
-        saveManifest(gatherAllFiles(kbDir()));
+        saveManifest(await gatherAllFiles(kbDir()));
         saveLastSyncTs(Date.now());
         syncedFromPeer = true;
       }
+
+      if (parentPort) parentPort.postMessage({ type: 'transfer-progress', phase: 'done' });
 
       log('info', `Delta sync from ${resp.machine}: wrote=${written} skipped=${skipped} deleted=${deleted}`);
 
@@ -737,7 +887,14 @@ if (parentPort) {
         filePaths,
       });
     } catch (e) {
-      log('warn', `Delta sync from ${peerId.toString().slice(0,12)} failed: ${e.message}`);
+      if (attempt < MAX_ATTEMPTS - 1) {
+        const delay = 2000 * Math.pow(2, attempt); // 2 s → 4 s
+        log('warn', `Sync attempt ${attempt + 1}/${MAX_ATTEMPTS} failed (${e.message}) — retrying in ${delay}ms`);
+        await new Promise(r => setTimeout(r, delay));
+        return requestDeltaSync(peerId, sinceMs, attempt + 1);
+      }
+      log('warn', `Delta sync failed after ${MAX_ATTEMPTS} attempts: ${e.message}`);
+      if (parentPort) parentPort.postMessage({ type: 'transfer-progress', phase: 'done' });
     }
   }
 
@@ -763,7 +920,7 @@ if (parentPort) {
   // ── Reconciliation broadcaster ────────────────────────────────────────────
   // Every reconcileMins(), broadcast our KB fingerprint so peers can detect drift.
   async function broadcastReconcile() {
-    const fp = kbFingerprint(kbDir());
+    const fp = await kbFingerprint(kbDir());
     const payload = { type: 'reconcile', machine: machineName(), fingerprint: fp, ts: Date.now() };
     try {
       const envelope = signEnvelope(payload);

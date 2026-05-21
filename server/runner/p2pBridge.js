@@ -15,6 +15,7 @@ let state = {
   started:     null,
   lastSync:      null,  // { ts, machine, ticket, direction: 'in'|'out', filesCount }
   lastFilePaths: [],    // file paths from most recent sync event (in or out)
+  transfer:      null,  // { phase, done, total, file } while a sync is in flight; null otherwise
   syncsIn:       0,
   syncsOut:      0,
   filesIn:       0,

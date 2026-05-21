@@ -458,6 +458,51 @@ const BASE_CSS = `
     to   { transform: rotate(360deg); }
   }
 
+  /* ── P2P network badge ────────────────────────────────────────── */
+  .p2p-network-badge {
+    display: inline-flex; align-items: center; gap: .45rem;
+    background: linear-gradient(135deg, rgba(8,145,178,.10), rgba(6,182,212,.08));
+    border: 1px solid rgba(8,145,178,.32);
+    border-radius: 20px;
+    padding: .28rem .75rem .28rem .55rem;
+    color: #67e8f9;
+    font-size: .72rem;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background .2s, border-color .2s, color .2s, box-shadow .2s;
+    animation: p2p-badge-glow 2.4s ease-in-out infinite;
+  }
+  .p2p-network-badge:hover {
+    background: linear-gradient(135deg, rgba(8,145,178,.20), rgba(6,182,212,.16));
+    border-color: rgba(8,145,178,.6);
+    color: #a5f3fc;
+    box-shadow: 0 0 14px rgba(8,145,178,.35);
+    animation: none;
+  }
+  @keyframes p2p-badge-glow {
+    0%, 100% { box-shadow: 0 0 0px rgba(8,145,178,0);    border-color: rgba(8,145,178,.32); }
+    50%      { box-shadow: 0 0 10px rgba(8,145,178,.45); border-color: rgba(8,145,178,.65); }
+  }
+  .p2p-pulse-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #0ea5e9;
+    box-shadow: 0 0 8px rgba(14,165,233,.85);
+    flex-shrink: 0;
+    animation: p2p-dot-pulse 1.8s ease-in-out infinite;
+  }
+  @keyframes p2p-dot-pulse {
+    0%, 100% { opacity: .45; transform: scale(.8); }
+    50%      { opacity: 1;   transform: scale(1.25); }
+  }
+  header.autonomous-mode .p2p-network-badge {
+    background: rgba(255,255,255,.07);
+    border-color: rgba(255,255,255,.2);
+    color: rgba(255,255,255,.75);
+    animation: none;
+  }
+
   /* ── Cortex brain badge (always-on intelligence layer) ───────── */
   .cortex-brain-badge {
     display: inline-flex; align-items: center; gap: .45rem;
@@ -1252,6 +1297,18 @@ function renderDashboard(stats, budget) {
       <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 2A2.5 2.5 0 0 1 12 4.5v15a2.5 2.5 0 0 1-4.96.44 2.5 2.5 0 0 1-2.96-3.08 3 3 0 0 1-.34-5.58 2.5 2.5 0 0 1 1.32-4.24 2.5 2.5 0 0 1 1.98-3A2.5 2.5 0 0 1 9.5 2z"/><path d="M14.5 2A2.5 2.5 0 0 0 12 4.5v15a2.5 2.5 0 0 0 4.96.44 2.5 2.5 0 0 0 2.96-3.08 3 3 0 0 0 .34-5.58 2.5 2.5 0 0 0-1.32-4.24 2.5 2.5 0 0 0-1.98-3A2.5 2.5 0 0 0 14.5 2z"/></svg>
       <span>Cortex</span>
     </a>` : ''}
+    ${process.env.PRX_P2P_ENABLED === 'Y' ? `<a href="/dashboard#p2p-network" class="p2p-network-badge" title="P2P KB sync active — click to view network status">
+      <span class="p2p-pulse-dot"></span>
+      <svg width="14" height="14" viewBox="0 0 14 14" xmlns="http://www.w3.org/2000/svg" fill="none">
+        <line x1="7" y1="2" x2="2" y2="12" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+        <line x1="7" y1="2" x2="12" y2="12" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+        <line x1="2" y1="12" x2="12" y2="12" stroke="currentColor" stroke-width="1" stroke-linecap="round"/>
+        <circle cx="7" cy="2" r="2" fill="currentColor"><animate attributeName="opacity" values="1;0.3;1" dur="1.8s" repeatCount="indefinite"/></circle>
+        <circle cx="2" cy="12" r="2" fill="currentColor"><animate attributeName="opacity" values="1;0.3;1" dur="1.8s" begin="0.6s" repeatCount="indefinite"/></circle>
+        <circle cx="12" cy="12" r="2" fill="currentColor"><animate attributeName="opacity" values="1;0.3;1" dur="1.8s" begin="1.2s" repeatCount="indefinite"/></circle>
+      </svg>
+      <span>P2P</span>
+    </a>` : ''}
     ${process.env.PRX_HERMES_ENABLED === 'Y' ? `<a id="dash-hermes-badge" href="/dashboard/hermes-config" class="hermes-agent-badge" title="Hermes — click to manage">
       <span id="dash-hermes-dot" class="hermes-pulse-dot"></span>
       <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
@@ -1623,10 +1680,13 @@ function renderDashboard(stats, budget) {
     <span><strong>P2P sync is enabled but inactive</strong> — set <code>PRX_KB_MODE=distributed</code> in <a href="/dashboard/settings#p2p-sync" style="color:#92400e">Settings</a> to activate peer-to-peer replication.</span>
   </div>`
       : `<!-- ── P2P Network ────────────────────────────────────────────── -->
-  <div style="margin:.75rem 1.75rem;border-radius:var(--r-md);border:1px solid var(--border);border-left:3px solid #0891b2;background:var(--surface);overflow:hidden;box-shadow:var(--shadow)">
+  <div id="p2p-network" style="margin:.75rem 1.75rem;border-radius:var(--r-md);border:1px solid var(--border);border-left:3px solid #0891b2;background:var(--surface);overflow:hidden;box-shadow:var(--shadow)"
     <!-- Header -->
     <div style="padding:.5rem 1rem;background:rgba(8,145,178,.04);border-bottom:1px solid var(--border-light);display:flex;align-items:center;gap:.55rem">
-      <span id="p2p-dot" style="width:8px;height:8px;border-radius:50%;background:#cbd5e1;flex-shrink:0;transition:background .4s"></span>
+      <span id="p2p-socket-icon" style="display:inline-flex;flex-shrink:0;overflow:visible">
+        <svg width="44" height="22" viewBox="0 0 44 22" overflow="visible" xmlns="http://www.w3.org/2000/svg"><circle cx="22" cy="11" r="3.5" fill="none" stroke="#cbd5e1" stroke-width="1" opacity="0"><animate attributeName="r" values="3.5;10;3.5" dur="3s" repeatCount="indefinite"/><animate attributeName="opacity" values="0.5;0;0.5" dur="3s" repeatCount="indefinite"/></circle><circle cx="22" cy="11" r="3.5" fill="#cbd5e1"><animate attributeName="opacity" values="0.4;0.85;0.4" dur="2.5s" repeatCount="indefinite"/></circle></svg>
+      </span>
+      <span id="p2p-dot" style="width:6px;height:6px;border-radius:50%;background:#cbd5e1;flex-shrink:0;transition:background .4s"></span>
       <span style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#0891b2">P2P Network</span>
       <span id="p2p-wire-badge" style="font-size:.65rem;padding:.1rem .45rem;border-radius:999px;background:#e0f7fa;color:#0891b2;font-weight:600;border:1px solid #b2ebf2">connecting…</span>
       <span style="margin-left:auto;font-size:.65rem;color:var(--text-3)">port ${process.env.PRX_P2P_PORT || '7001'} &middot; DISTRIBUTED</span>
@@ -1657,6 +1717,8 @@ function renderDashboard(stats, budget) {
     </div>
     <!-- Install progress (hidden unless installing) -->
     <div id="p2p-install-log" style="display:none;padding:.35rem 1rem;font-size:.7rem;font-family:monospace;color:#7c3aed;background:#faf5ff;border-bottom:1px solid var(--border-light)"></div>
+    <!-- Transfer progress (hidden unless a sync is in flight) -->
+    <div id="p2p-transfer" style="display:none;padding:.3rem 1rem;font-size:.68rem;background:linear-gradient(135deg,#faf5ff 0%,#f0f9ff 100%);border-bottom:1px solid var(--border-light)"></div>
     <!-- Peers + last event -->
     <div style="padding:.6rem 1rem;display:grid;grid-template-columns:1fr 1fr;gap:1rem;font-size:.73rem">
       <div>
@@ -1699,6 +1761,39 @@ function renderDashboard(stats, budget) {
           }
           var installEl = document.getElementById('p2p-install-log');
           if (installEl) { installEl.style.display = d.installing || d.installLog ? '' : 'none'; installEl.textContent = d.installLog || ''; }
+          // Socket icon
+          var sockEl = document.getElementById('p2p-socket-icon');
+          if (sockEl) {
+            if (hasPeers) {
+              // 3-node mesh: triangle of peers, staggered glow rings, data packet circulating the edges
+              sockEl.innerHTML = '<svg width="44" height="22" viewBox="0 0 44 22" overflow="visible" xmlns="http://www.w3.org/2000/svg"><line x1="22" y1="4" x2="9" y2="19" stroke="#0891b2" stroke-width="1.5" stroke-linecap="round"/><line x1="22" y1="4" x2="35" y2="19" stroke="#0891b2" stroke-width="1.5" stroke-linecap="round"/><line x1="9" y1="19" x2="35" y2="19" stroke="#0891b2" stroke-width="1.5" stroke-linecap="round"/><circle cx="22" cy="4" r="3.5" fill="#0891b2"/><circle cx="9" cy="19" r="3.5" fill="#0891b2"/><circle cx="35" cy="19" r="3.5" fill="#0891b2"/><circle cx="22" cy="4" r="3.5" fill="none" stroke="#0891b2" stroke-width="1.2" opacity="0"><animate attributeName="r" values="3.5;8;3.5" dur="2s" repeatCount="indefinite"/><animate attributeName="opacity" values="0.55;0;0.55" dur="2s" repeatCount="indefinite"/></circle><circle cx="9" cy="19" r="3.5" fill="none" stroke="#0891b2" stroke-width="1.2" opacity="0"><animate attributeName="r" values="3.5;8;3.5" dur="2s" begin="0.66s" repeatCount="indefinite"/><animate attributeName="opacity" values="0.55;0;0.55" dur="2s" begin="0.66s" repeatCount="indefinite"/></circle><circle cx="35" cy="19" r="3.5" fill="none" stroke="#0891b2" stroke-width="1.2" opacity="0"><animate attributeName="r" values="3.5;8;3.5" dur="2s" begin="1.33s" repeatCount="indefinite"/><animate attributeName="opacity" values="0.55;0;0.55" dur="2s" begin="1.33s" repeatCount="indefinite"/></circle><circle r="2" fill="#e0f7fa" opacity="0"><animate attributeName="cx" values="9;35;22;9" keyTimes="0;0.33;0.66;1" dur="3s" repeatCount="indefinite"/><animate attributeName="cy" values="19;19;4;19" keyTimes="0;0.33;0.66;1" dur="3s" repeatCount="indefinite"/><animate attributeName="opacity" values="0;0.9;0.9;0.9;0" keyTimes="0;0.04;0.93;0.98;1" dur="3s" repeatCount="indefinite"/></circle></svg>';
+            } else if (d.selfId) {
+              // Single node broadcasting sonar rings, ghost peer nodes fading in at corners
+              sockEl.innerHTML = '<svg width="44" height="22" viewBox="0 0 44 22" overflow="visible" xmlns="http://www.w3.org/2000/svg"><circle cx="22" cy="11" r="3.5" fill="none" stroke="#f59e0b" stroke-width="1.2" opacity="0"><animate attributeName="r" values="3.5;13;3.5" dur="2s" repeatCount="indefinite"/><animate attributeName="opacity" values="0.7;0;0.7" dur="2s" repeatCount="indefinite"/></circle><circle cx="22" cy="11" r="3.5" fill="none" stroke="#f59e0b" stroke-width="1.2" opacity="0"><animate attributeName="r" values="3.5;13;3.5" dur="2s" begin="0.7s" repeatCount="indefinite"/><animate attributeName="opacity" values="0.7;0;0.7" dur="2s" begin="0.7s" repeatCount="indefinite"/></circle><circle cx="22" cy="11" r="3.5" fill="#f59e0b"/><circle cx="7" cy="4" r="2" fill="#f59e0b" opacity="0"><animate attributeName="opacity" values="0;0.4;0" dur="2.5s" repeatCount="indefinite"/></circle><circle cx="37" cy="4" r="2" fill="#f59e0b" opacity="0"><animate attributeName="opacity" values="0;0.4;0" dur="2.5s" begin="0.8s" repeatCount="indefinite"/></circle><circle cx="7" cy="19" r="2" fill="#f59e0b" opacity="0"><animate attributeName="opacity" values="0;0.4;0" dur="2.5s" begin="1.6s" repeatCount="indefinite"/></circle><circle cx="37" cy="19" r="2" fill="#f59e0b" opacity="0"><animate attributeName="opacity" values="0;0.4;0" dur="2.5s" begin="2.3s" repeatCount="indefinite"/></circle></svg>';
+            } else {
+              // Single dim node with a slow expanding ring — waking up
+              sockEl.innerHTML = '<svg width="44" height="22" viewBox="0 0 44 22" overflow="visible" xmlns="http://www.w3.org/2000/svg"><circle cx="22" cy="11" r="3.5" fill="none" stroke="#cbd5e1" stroke-width="1" opacity="0"><animate attributeName="r" values="3.5;10;3.5" dur="3s" repeatCount="indefinite"/><animate attributeName="opacity" values="0.5;0;0.5" dur="3s" repeatCount="indefinite"/></circle><circle cx="22" cy="11" r="3.5" fill="#cbd5e1"><animate attributeName="opacity" values="0.4;0.85;0.4" dur="2.5s" repeatCount="indefinite"/></circle></svg>';
+            }
+          }
+          // Transfer progress
+          var xferEl = document.getElementById('p2p-transfer');
+          if (xferEl) {
+            if (d.transfer) {
+              var phase = d.transfer.phase;
+              var phaseLbl = phase === 'connecting' ? 'Connecting to peer…'
+                           : phase === 'receiving'  ? 'Receiving KB files…'
+                           : phase === 'sending'    ? 'Sending KB files to peers…'
+                           : phase === 'applying'   ? 'Applying to local KB…'
+                           : 'Syncing…';
+              var pct = d.transfer.total ? Math.round(d.transfer.done / d.transfer.total * 100) : 0;
+              xferEl.style.display = '';
+              xferEl.innerHTML = '<div style="display:flex;align-items:center;gap:.55rem">' +
+                '<svg width="10" height="10" viewBox="0 0 10 10" style="flex-shrink:0"><circle cx="5" cy="5" r="4" fill="none" stroke="#7c3aed" stroke-width="1.5" stroke-dasharray="6 3"><animateTransform attributeName="transform" type="rotate" from="0 5 5" to="360 5 5" dur="1s" repeatCount="indefinite"/></circle></svg>' +
+                '<span style="color:#7c3aed">' + phaseLbl + (d.transfer.total ? ' · ' + d.transfer.done + '/' + d.transfer.total + ' files' : '') + '</span>' +
+                (d.transfer.total ? '<div style="flex:1;height:3px;background:#ede9fe;border-radius:2px;overflow:hidden"><div style="width:' + pct + '%;height:100%;background:#7c3aed;border-radius:2px;transition:width .3s"></div></div>' : '') +
+                '</div>';
+            } else { xferEl.style.display = 'none'; }
+          }
           var el;
           el = document.getElementById('p2p-s-peers'); if (el) el.textContent = peers.length;
           el = document.getElementById('p2p-s-in');    if (el) el.textContent = d.filesIn  || 0;
@@ -1739,20 +1834,31 @@ function renderDashboard(stats, budget) {
         });
     }
     var p2pTimer = null;
-    function scheduleNext(installing) {
+    function scheduleNext(installing, transferring) {
       clearTimeout(p2pTimer);
-      p2pTimer = setTimeout(function() { p2pRefresh(null); }, installing ? 4000 : 30000);
+      p2pTimer = setTimeout(function() { p2pRefresh(null); }, installing ? 4000 : transferring ? 3000 : 30000);
     }
     var _origRefresh = p2pRefresh;
     p2pRefresh = function(ev) {
       _origRefresh(ev);
-      fetch('/dashboard/p2p/peers').then(function(r){return r.json();}).then(function(d){ scheduleNext(!!d.installing); }).catch(function(){ scheduleNext(false); });
+      fetch('/dashboard/p2p/peers').then(function(r){return r.json();}).then(function(d){ scheduleNext(!!d.installing, !!d.transfer); }).catch(function(){ scheduleNext(false, false); });
     };
     window.p2pRefresh = p2pRefresh;
     p2pRefresh(null);
   })();
   </script>`;
-  })() : ''}
+  })() : `
+  <!-- ── P2P Network (disabled) ─────────────────────────────────────────── -->
+  <div style="margin:.75rem 1.75rem;padding:.55rem 1rem;border-radius:var(--r-md);border:1px solid var(--border);background:var(--surface);display:flex;align-items:center;gap:.75rem;font-size:.78rem;color:var(--text-3);box-shadow:var(--shadow)">
+    <svg width="20" height="12" viewBox="0 0 20 12" xmlns="http://www.w3.org/2000/svg" style="flex-shrink:0">
+      <circle cx="3" cy="6" r="2.5" fill="#cbd5e1"/><circle cx="17" cy="6" r="2.5" fill="#cbd5e1"/>
+      <line x1="5.5" y1="6" x2="8" y2="6" stroke="#94a3b8" stroke-width="1.8" stroke-linecap="round"/>
+      <line x1="12" y1="6" x2="14.5" y2="6" stroke="#94a3b8" stroke-width="1.8" stroke-linecap="round"/>
+    </svg>
+    <div><strong style="color:var(--text-2)">P2P KB Sync</strong> is disabled.
+      Enable it in <a href="/dashboard/settings#p2p-sync" style="color:var(--accent)">Settings → P2P KB Sync</a>
+      to synchronise the knowledge base across all connected machines in real-time.</div>
+  </div>`}
 
   <div class="section">
     <h2>Processed Tickets <span style="font-weight:400;color:#aaa;font-size:0.72rem;text-transform:none;letter-spacing:0">(includes reports found in ${stats.reportsDir})</span></h2>
@@ -1766,156 +1872,6 @@ function renderDashboard(stats, budget) {
       <tbody>${stats.tickets.length ? rows : emptyRow}</tbody>
     </table>
   </div>
-
-  ${false ? `
-  <!-- removed: old dark P2P panel relocated above ticket table -->
-  <details id="p2p-wire-panel-old" style="display:none">
-    <summary style="padding:.55rem 1rem;background:rgba(6,182,212,.06);border-bottom:1px solid #164e63;display:flex;align-items:center;gap:.55rem;cursor:pointer;list-style:none">
-      <span id="p2p-dot" style="width:8px;height:8px;border-radius:50%;background:#334155;flex-shrink:0;transition:background .4s"></span>
-      <span style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#22d3ee">P2P Network</span>
-      <span id="p2p-wire-badge" style="font-size:.65rem;padding:.1rem .45rem;border-radius:999px;background:rgba(34,211,238,.1);color:#67e8f9;font-weight:600;border:1px solid rgba(34,211,238,.2)">connecting…</span>
-      <span style="margin-left:auto;font-size:.65rem;color:#334155">port ${process.env.PRX_P2P_PORT || '7001'} &middot; ${(process.env.PRX_KB_MODE || 'local').toUpperCase()}</span>
-      <button onclick="p2pRefresh(event)" title="Refresh" style="background:none;border:none;color:#475569;cursor:pointer;font-size:.85rem;padding:0 .25rem;line-height:1">↻</button>
-      <span class="p2p-chevron" style="color:#475569;font-size:.82rem;display:inline-block;transition:transform .2s">›</span>
-    </summary>
-    <style>
-      @keyframes p2pPulse { 0%,100%{opacity:1}50%{opacity:.25} }
-      details#p2p-wire-panel[open] .p2p-chevron { transform:rotate(90deg); }
-    </style>
-    <!-- Stats strip -->
-    <div style="display:grid;grid-template-columns:repeat(4,1fr);border-bottom:1px solid #0f2533">
-      <div style="padding:.5rem 1rem;border-right:1px solid #0f2533">
-        <div style="color:#475569;font-size:.6rem;text-transform:uppercase;letter-spacing:.07em">Peers</div>
-        <div id="p2p-s-peers" style="font-size:.95rem;font-weight:700;color:#a5f3fc;margin-top:.15rem">—</div>
-      </div>
-      <div style="padding:.5rem 1rem;border-right:1px solid #0f2533">
-        <div style="color:#475569;font-size:.6rem;text-transform:uppercase;letter-spacing:.07em">KB Syncs In</div>
-        <div id="p2p-s-in" style="font-size:.95rem;font-weight:700;color:#86efac;margin-top:.15rem">0</div>
-      </div>
-      <div style="padding:.5rem 1rem;border-right:1px solid #0f2533">
-        <div style="color:#475569;font-size:.6rem;text-transform:uppercase;letter-spacing:.07em">KB Syncs Out</div>
-        <div id="p2p-s-out" style="font-size:.95rem;font-weight:700;color:#fcd34d;margin-top:.15rem">0</div>
-      </div>
-      <div style="padding:.5rem 1rem">
-        <div style="color:#475569;font-size:.6rem;text-transform:uppercase;letter-spacing:.07em">Last Sync</div>
-        <div id="p2p-s-last" style="font-size:.75rem;font-weight:600;color:#94a3b8;margin-top:.15rem">—</div>
-      </div>
-    </div>
-    <!-- Peers + last event -->
-    <div style="padding:.65rem 1rem;display:grid;grid-template-columns:1fr 1fr;gap:1rem;font-size:.73rem">
-      <div>
-        <div style="color:#334155;font-size:.6rem;text-transform:uppercase;letter-spacing:.07em;margin-bottom:.35rem">Connected Peers</div>
-        <div id="p2p-peer-list" style="color:#64748b;font-family:monospace;line-height:1.8">—</div>
-      </div>
-      <div>
-        <div style="color:#334155;font-size:.6rem;text-transform:uppercase;letter-spacing:.07em;margin-bottom:.35rem">Last KB Sync Event</div>
-        <div id="p2p-last-event" style="color:#64748b;font-size:.72rem;line-height:1.7">No syncs yet</div>
-      </div>
-    </div>
-  </details>
-  <script>
-  (function() {
-    function p2pRefresh(ev) {
-      if (ev) ev.stopPropagation();
-      fetch('/dashboard/p2p/peers')
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-          var peers = d.peers || [];
-          var hasPeers = peers.length > 0;
-
-          // Status dot
-          var dot = document.getElementById('p2p-dot');
-          if (dot) {
-            if (hasPeers) {
-              dot.style.background = '#22d3ee';
-              dot.style.animation  = 'p2pPulse 2s ease-in-out infinite';
-            } else if (d.selfId) {
-              dot.style.background = '#f59e0b';
-              dot.style.animation  = 'none';
-            } else {
-              dot.style.background = '#334155';
-              dot.style.animation  = 'none';
-            }
-          }
-
-          // Badge
-          var badge = document.getElementById('p2p-wire-badge');
-          if (badge) {
-            badge.textContent = hasPeers
-              ? peers.length + ' peer' + (peers.length > 1 ? 's' : '') + ' connected'
-              : (d.selfId ? 'no peers yet' : 'starting…');
-            badge.style.color       = hasPeers ? '#67e8f9' : '#64748b';
-            badge.style.borderColor = hasPeers ? 'rgba(34,211,238,.2)' : 'rgba(100,116,139,.25)';
-            badge.style.background  = hasPeers ? 'rgba(34,211,238,.1)' : 'rgba(100,116,139,.1)';
-          }
-
-          // Stats strip
-          var el;
-          el = document.getElementById('p2p-s-peers'); if (el) el.textContent = peers.length;
-          el = document.getElementById('p2p-s-in');    if (el) el.textContent = d.syncsIn  || 0;
-          el = document.getElementById('p2p-s-out');   if (el) el.textContent = d.syncsOut || 0;
-          el = document.getElementById('p2p-s-last');
-          if (el) el.textContent = d.lastSync ? new Date(d.lastSync.ts).toLocaleTimeString() : '—';
-
-          // Peer list
-          el = document.getElementById('p2p-peer-list');
-          if (el) {
-            if (!peers.length) {
-              el.innerHTML = '<span style="color:#334155">' + (d.selfId ? 'Awaiting peers…' : 'Node starting…') + '</span>';
-            } else {
-              el.innerHTML = peers.map(function(p) {
-                var addr = (p.addrs || [])[0] || '';
-                var m = addr.match(/\\/ip[46]\\/([\\.\\da-f:]+)\\/tcp\\/(\\d+)/);
-                var host = m ? m[1] + ':' + m[2] : (addr.slice(0, 30) || '');
-                return '<div><span style="color:#a5f3fc">● </span>' +
-                  '<span style="color:#94a3b8">' + p.id.slice(0, 16) + '…</span>' +
-                  (host ? ' <span style="color:#334155;font-size:.68rem">(' + host + ')</span>' : '') +
-                  '</div>';
-              }).join('');
-            }
-          }
-
-          // Last sync event
-          el = document.getElementById('p2p-last-event');
-          if (el) {
-            if (d.lastSync) {
-              var isIn = d.lastSync.direction === 'in';
-              var dirLabel = isIn ? '← received from' : '→ sent to peers';
-              var machine  = isIn ? (d.lastSync.machine || '?') : '';
-              el.innerHTML =
-                '<span style="color:' + (isIn ? '#86efac' : '#fcd34d') + '">' + dirLabel +
-                (machine ? ' <strong>' + machine + '</strong>' : '') + '</span>' +
-                (d.lastSync.ticket ? '<br><span style="color:#475569">ticket: ' + d.lastSync.ticket + '</span>' : '') +
-                '<br><span style="color:#334155">' + new Date(d.lastSync.ts).toLocaleString() + '</span>';
-            } else {
-              el.textContent = 'No syncs yet';
-            }
-          }
-        })
-        .catch(function() {
-          var badge = document.getElementById('p2p-wire-badge');
-          if (badge) { badge.textContent = 'error'; badge.style.color = '#f87171'; }
-        });
-    }
-    window.p2pRefresh = p2pRefresh;
-    p2pRefresh(null);
-    setInterval(function() { p2pRefresh(null); }, 30000);
-  })();
-  </script>` : `
-  <!-- ── P2P Live Wire (disabled) ─────────────────────────────────────── -->
-  <details id="p2p-wire-panel" style="margin-bottom:1.2rem;border-radius:var(--r-lg);border:1px solid #1e293b;background:#0c1a20;overflow:hidden">
-    <summary style="padding:.55rem 1.1rem;background:rgba(100,116,139,.06);border-bottom:1px solid #1e293b;display:flex;align-items:center;gap:.6rem;cursor:pointer;list-style:none">
-      <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#475569" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
-      <span style="font-size:.72rem;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:#475569">P2P Network</span>
-      <svg width="22" height="14" viewBox="0 0 44 14" xmlns="http://www.w3.org/2000/svg" style="opacity:.15;flex-shrink:0"><polyline points="0,7 6,7 10,1 14,13 18,3 22,11 26,7 44,7" fill="none" stroke="#94a3b8" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="8 4"/></svg>
-      <span style="font-size:.65rem;padding:.1rem .45rem;border-radius:999px;background:rgba(100,116,139,.12);color:#64748b;font-weight:600;border:1px solid rgba(100,116,139,.25)">disabled</span>
-      <span style="margin-left:auto;font-size:.68rem;color:#334155">Set PRX_P2P_ENABLED=Y in Settings → P2P KB Sync</span>
-      <span style="margin-left:.5rem;color:#334155;font-size:.85rem">›</span>
-    </summary>
-    <div style="padding:1rem 1.4rem;color:#475569;font-size:.78rem;font-family:monospace">
-      P2P knowledge-base sync is disabled. Set <code style="color:#94a3b8">PRX_P2P_ENABLED=Y</code> and <code style="color:#94a3b8">PRX_KB_MODE=distributed</code> in <a href="/dashboard/settings#p2p-sync" style="color:#60a5fa">Settings → P2P KB Sync</a> to enable peer-to-peer replication.
-    </div>
-  </details>`}
 
   <div class="footer">Prevoyant Server v${pluginVersion} &mdash; Dashboard &mdash; ${new Date().toLocaleString('en-GB')}</div>
 
@@ -2887,33 +2843,63 @@ function readEnvValues() {
   try {
     for (const line of fs.readFileSync(ENV_PATH, 'utf8').split('\n')) {
       const m = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
-      if (m) v[m[1]] = m[2].replace(/^["']|["']$/g, '');
+      if (m) {
+        // Strip surrounding quotes, then expand \n escape sequences (used for multi-line values like PEM keys)
+        v[m[1]] = m[2].replace(/^["']|["']$/g, '').replace(/\\n/g, '\n');
+      }
     }
   } catch (_) {}
   return v;
+}
+
+// Serialize a value for .env storage.
+// Multi-line values (e.g. PEM keys) are wrapped in double quotes with \n escaping
+// so they remain on a single line — compatible with dotenv and our custom reader.
+function envSerialize(val) {
+  if (/[\r\n]/.test(val)) {
+    const escaped = val.replace(/\r\n/g, '\n').replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\n/g, '\\n');
+    return `"${escaped}"`;
+  }
+  return val;
 }
 
 function writeEnvValues(updates) {
   let content = '';
   try { content = fs.readFileSync(ENV_PATH, 'utf8'); } catch (_) {}
   const applied = new Set();
-  const updated = content.split('\n').map(line => {
-    const active = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
+  const lines   = content.split('\n');
+  const result  = [];
+  let i = 0;
+  while (i < lines.length) {
+    const line    = lines[i];
+    const active  = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
     if (active && active[1] in updates) {
       applied.add(active[1]);
-      return `${active[1]}=${updates[active[1]]}`;
+      result.push(`${active[1]}=${envSerialize(updates[active[1]])}`);
+      // Skip any multi-line continuation lines that belonged to the old value
+      // (e.g. raw PEM that wasn't quoted — stop at blank line, comment, or next KEY=)
+      i++;
+      while (i < lines.length) {
+        const nx = lines[i];
+        if (/^[A-Z_][A-Z0-9_]*=/.test(nx) || /^#/.test(nx) || nx.trim() === '') break;
+        i++;
+      }
+      continue;
     }
     const commented = line.match(/^#\s*([A-Z_][A-Z0-9_]*)=(.*)$/);
     if (commented && commented[1] in updates && !applied.has(commented[1]) && updates[commented[1]] !== '') {
       applied.add(commented[1]);
-      return `${commented[1]}=${updates[commented[1]]}`;
+      result.push(`${commented[1]}=${envSerialize(updates[commented[1]])}`);
+      i++;
+      continue;
     }
-    return line;
-  });
+    result.push(line);
+    i++;
+  }
   const extra = Object.entries(updates)
     .filter(([k, v]) => !applied.has(k) && v !== '')
-    .map(([k, v]) => `${k}=${v}`);
-  fs.writeFileSync(ENV_PATH, updated.join('\n') + (extra.length ? '\n' + extra.join('\n') : ''), 'utf8');
+    .map(([k, v]) => `${k}=${envSerialize(v)}`);
+  fs.writeFileSync(ENV_PATH, result.join('\n') + (extra.length ? '\n' + extra.join('\n') : ''), 'utf8');
 
   // Keep process.env in sync so in-process reads see the new values immediately.
   for (const [k, v] of Object.entries(updates)) process.env[k] = v;
@@ -4848,25 +4834,29 @@ function renderWatch(flash) {
 
 // ── Settings page ─────────────────────────────────────────────────────────────
 
-function fld(key, label, type, val, placeholder, hint, opts) {
+function fld(key, label, type, val, placeholder, hint, opts, disabled) {
   const id = `f_${key}`;
+  const dis = disabled ? ' disabled' : '';
   let input;
   if (type === 'select') {
-    const options = opts.map(o =>
+    const options = (opts || []).map(o =>
       `<option value="${esc(o.v)}"${val === o.v ? ' selected' : ''}>${esc(o.l)}</option>`
     ).join('');
-    input = `<select id="${id}" name="${key}" class="s-input">${options}</select>`;
+    input = `<select id="${id}" name="${key}" class="s-input"${dis}>${options}</select>`;
   } else if (type === 'password') {
     input = `<div class="pw-wrap">
-      <input type="password" id="${id}" name="${key}" value="${esc(val)}" placeholder="${esc(placeholder || '')}" class="s-input" autocomplete="off">
+      <input type="password" id="${id}" name="${key}" value="${esc(val)}" placeholder="${esc(placeholder || '')}" class="s-input" autocomplete="off"${dis}>
       <button type="button" class="pw-eye" onclick="togglePw('${id}')" tabindex="-1">
         <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
       </button>
     </div>`;
+  } else if (type === 'textarea') {
+    input = `<textarea id="${id}" name="${key}" class="s-input" style="font-family:monospace;font-size:.72rem;height:5.5rem;resize:vertical;white-space:pre" autocomplete="off" spellcheck="false"${dis}>${esc(val)}</textarea>`;
   } else {
-    input = `<input type="${type}" id="${id}" name="${key}" value="${esc(val)}" placeholder="${esc(placeholder || '')}" class="s-input">`;
+    input = `<input type="${type}" id="${id}" name="${key}" value="${esc(val)}" placeholder="${esc(placeholder || '')}" class="s-input"${dis}>`;
   }
-  return `<div class="s-field">
+  const wrapStyle = disabled ? ' style="opacity:.42;pointer-events:none;user-select:none"' : '';
+  return `<div class="s-field"${wrapStyle}>
     <label for="${id}" class="s-label">${esc(label)} <code class="s-key">${key}</code></label>
     ${input}
     ${hint ? `<div class="s-hint">${esc(hint)}</div>` : ''}
@@ -4904,9 +4894,10 @@ const NOTIFY_EVENTS = [
 ];
 
 function renderSettings(vals, flash) {
-  const v = k => vals[k] || '';
+  const v     = k => vals[k] || '';
+  const p2pOn = v('PRX_P2P_ENABLED') === 'Y'; // P2P takes precedence over Redis/Upstash KB sync
 
-  const kbKeys     = ['PRX_KB_MODE','PRX_SOURCE_REPO_URL','PRX_KNOWLEDGE_DIR','PRX_KB_REPO','PRX_KB_LOCAL_CLONE','PRX_KB_KEY','PRX_REALTIME_KB_SYNC','PRX_UPSTASH_REDIS_URL','PRX_UPSTASH_REDIS_TOKEN','PRX_KB_SYNC_MACHINE','PRX_KB_SYNC_POLL_SECS','PRX_KB_SYNC_TRIGGER','PRX_KB_SYNC_DEBOUNCE_SECS','PRX_P2P_ENABLED','PRX_P2P_PORT','PRX_P2P_MDNS_ENABLED','PRX_P2P_BOOTSTRAP_NODES'];
+  const kbKeys     = ['PRX_KB_MODE','PRX_SOURCE_REPO_URL','PRX_KNOWLEDGE_DIR','PRX_KB_REPO','PRX_KB_LOCAL_CLONE','PRX_KB_KEY','PRX_REALTIME_KB_SYNC','PRX_UPSTASH_REDIS_URL','PRX_UPSTASH_REDIS_TOKEN','PRX_KB_SYNC_MACHINE','PRX_KB_SYNC_POLL_SECS','PRX_KB_SYNC_TRIGGER','PRX_KB_SYNC_DEBOUNCE_SECS','PRX_P2P_ENABLED','PRX_P2P_PORT','PRX_P2P_MDNS_ENABLED','PRX_P2P_BOOTSTRAP_NODES','PRX_P2P_SECRET','PRX_P2P_RECONCILE_MINS','PRX_P2P_ENCRYPT','PRX_P2P_TRICKLE','PRX_P2P_RSA_PRIVATE_KEY','PRX_P2P_RSA_PUBLIC_KEY'];
   const memKeys    = ['PRX_MEMORY_INDEX_ENABLED','PRX_MEMORY_LIMIT','PRX_REDIS_ENABLED','PRX_REDIS_URL','PRX_REDIS_PASSWORD','PRX_REDIS_PREFIX','PRX_REDIS_TTL_DAYS','PRX_BASIC_MEMORY_ENABLED','BASIC_MEMORY_HOME'];
   const emailKeys  = ['PRX_EMAIL_TO','PRX_SMTP_HOST','PRX_SMTP_PORT','PRX_SMTP_USER','PRX_SMTP_PASS'];
   const bryanKeys  = ['PRX_INCLUDE_SM_IN_SESSIONS_ENABLED','PRX_SKILL_UPGRADE_MIN_SESSIONS','PRX_SKILL_COMPACTION_INTERVAL','PRX_MONTHLY_BUDGET'];
@@ -5248,27 +5239,38 @@ function renderSettings(vals, flash) {
             ${fld('PRX_KB_KEY','Encryption Key (distributed)','password',v('PRX_KB_KEY'),'your-strong-passphrase','AES-256-CBC passphrase for encrypting KB files. Optional. Never commit this value.')}
           </div>
           <div class="s-field span2" style="border-top:1px solid #e5e7eb;padding-top:1rem;margin-top:.5rem">
-            <span class="s-label" style="font-weight:600">Real-time KB Sync <span style="font-size:10px;font-weight:400;color:#6b7280;margin-left:.4rem">Redis doorbell · Git mail carrier · <a href="https://upstash.com/" target="_blank" rel="noopener" style="color:#6b7280">upstash.com</a></span></span>
-            <span class="s-hint">Push/pull KB changes across machines the moment a session finishes. Redis carries only a ~100-byte notification (machine, ticket, commit). Git carries the actual KB files. Requires distributed mode.</span>
+            <span class="s-label" style="font-weight:600;${p2pOn ? 'opacity:.5' : ''}">Real-time KB Sync <span style="font-size:10px;font-weight:400;color:#6b7280;margin-left:.4rem">Redis doorbell · Git mail carrier · <a href="https://upstash.com/" target="_blank" rel="noopener" style="color:#6b7280">upstash.com</a></span></span>
+            <span class="s-hint" style="${p2pOn ? 'opacity:.5' : ''}">Push/pull KB changes across machines the moment a session finishes. Redis carries only a ~100-byte notification (machine, ticket, commit). Git carries the actual KB files. Requires distributed mode.</span>
           </div>
-          ${fld('PRX_REALTIME_KB_SYNC','Enable Real-time Sync','select',v('PRX_REALTIME_KB_SYNC') || 'N','','Requires PRX_KB_MODE=distributed and Upstash credentials below.',
-            [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
-          ${(v('PRX_REALTIME_KB_SYNC') === 'Y' && (v('PRX_KB_MODE') || 'local') !== 'distributed') ? `
+          ${p2pOn ? `
+          <div class="s-field span2">
+            <div style="display:flex;align-items:flex-start;gap:.6rem;background:linear-gradient(135deg,#e0f7fa,#f0f9ff);border:1px solid #0891b2;border-left:4px solid #0891b2;border-radius:6px;padding:.65rem .85rem;font-size:.79rem;color:#0c4a6e">
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#0891b2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:.05rem"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+              <span><strong>P2P sync is active — Redis/Upstash is not used.</strong><br>
+              When <code>PRX_P2P_ENABLED=Y</code>, peer-to-peer sync via libp2p GossipSub takes full precedence over both Git push/pull and Redis/Upstash signaling.
+              KB files are transferred directly between peers — no git remote or Upstash account is required.
+              The fields below are disabled; configure sync behaviour in the <strong>P2P KB Sync</strong> section instead.
+              <em style="display:block;margin-top:.35rem;color:#0891b2">Machine Name, Outbound Trigger, and Filesystem Debounce are still read by the P2P worker and remain editable.</em></span>
+            </div>
+          </div>` : ''}
+          ${(!p2pOn && v('PRX_REALTIME_KB_SYNC') === 'Y' && (v('PRX_KB_MODE') || 'local') !== 'distributed') ? `
           <div class="s-field span2" style="margin-top:-.5rem">
             <div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:.5rem .75rem;font-size:.78rem;color:#92400e">
               <strong>Inactive setting:</strong> <code>PRX_REALTIME_KB_SYNC=Y</code> has no effect while <code>PRX_KB_MODE=local</code>.
               Real-time sync only activates in distributed mode. Set <code>PRX_KB_MODE=distributed</code> to enable it, or set <code>PRX_REALTIME_KB_SYNC=N</code> to clear this warning.
             </div>
           </div>` : ''}
-          ${fld('PRX_UPSTASH_REDIS_URL','Upstash REST URL','text',v('PRX_UPSTASH_REDIS_URL'),'https://your-endpoint.upstash.io','REST endpoint from console.upstash.com → Database → REST API. Free tier is sufficient.')}
+          ${fld('PRX_REALTIME_KB_SYNC','Enable Real-time Sync','select',v('PRX_REALTIME_KB_SYNC') || 'N','','Requires PRX_KB_MODE=distributed and Upstash credentials below.',
+            [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}], p2pOn)}
+          ${fld('PRX_UPSTASH_REDIS_URL','Upstash REST URL','text',v('PRX_UPSTASH_REDIS_URL'),'https://your-endpoint.upstash.io','REST endpoint from console.upstash.com → Database → REST API. Free tier is sufficient.', undefined, p2pOn)}
           <div class="s-field">
-            ${fld('PRX_UPSTASH_REDIS_TOKEN','Upstash REST Token','password',v('PRX_UPSTASH_REDIS_TOKEN'),'your-token-here','REST token from console.upstash.com. Never commit this value.')}
+            ${fld('PRX_UPSTASH_REDIS_TOKEN','Upstash REST Token','password',v('PRX_UPSTASH_REDIS_TOKEN'),'your-token-here','REST token from console.upstash.com. Never commit this value.', undefined, p2pOn)}
           </div>
-          ${fld('PRX_KB_SYNC_MACHINE','Machine Name','text',v('PRX_KB_SYNC_MACHINE'),require('os').hostname(),'Override hostname used in sync notifications. Useful in Docker or cloud VMs where hostname is unstable.')}
-          ${fld('PRX_KB_SYNC_POLL_SECS','Poll Interval (seconds)','text',v('PRX_KB_SYNC_POLL_SECS'),'10','How often each machine checks Redis for new KB updates. Default: 10.')}
-          ${fld('PRX_KB_SYNC_TRIGGER','Outbound trigger','select',v('PRX_KB_SYNC_TRIGGER') || 'session','','What triggers an outbound KB notification on this machine.',
+          ${fld('PRX_KB_SYNC_MACHINE','Machine Name','text',v('PRX_KB_SYNC_MACHINE'),require('os').hostname(),'Override hostname used in sync notifications — also used by the P2P worker to identify this node.')}
+          ${fld('PRX_KB_SYNC_POLL_SECS','Poll Interval (seconds)','text',v('PRX_KB_SYNC_POLL_SECS'),'10','How often each machine checks Redis for new KB updates. Default: 10. Not used when P2P sync is active.', undefined, p2pOn)}
+          ${fld('PRX_KB_SYNC_TRIGGER','Outbound trigger','select',v('PRX_KB_SYNC_TRIGGER') || 'session','','What triggers an outbound KB sync. Used by both the Redis poller and the P2P worker.',
             [{v:'session',l:'session — SKILL.md signals after git push (recommended)'},{v:'filesystem',l:'filesystem — watch KB dir for manual edits'},{v:'both',l:'both — session + filesystem'}])}
-          ${fld('PRX_KB_SYNC_DEBOUNCE_SECS','Filesystem debounce (seconds)','text',v('PRX_KB_SYNC_DEBOUNCE_SECS'),'3','Seconds to wait after the last file change before committing. filesystem / both triggers only.')}
+          ${fld('PRX_KB_SYNC_DEBOUNCE_SECS','Filesystem debounce (seconds)','text',v('PRX_KB_SYNC_DEBOUNCE_SECS'),'3','Seconds to wait after the last file change before syncing. Used by both filesystem watcher and P2P worker.')}
         </div>
       </details>
 
@@ -5908,6 +5910,89 @@ function renderSettings(vals, flash) {
           ${fld('PRX_P2P_MDNS_ENABLED','LAN mDNS discovery','select',v('PRX_P2P_MDNS_ENABLED') || 'Y','','Y = auto-discover peers on the same LAN via multicast UDP. Set N in Docker or VMs where multicast is unavailable.',
             [{v:'Y',l:'Y — enabled (default)'},{v:'N',l:'N — disabled'}])}
           ${fld('PRX_P2P_BOOTSTRAP_NODES','Custom bootstrap nodes','text',v('PRX_P2P_BOOTSTRAP_NODES'),'(comma-separated multiaddrs)','Override hardcoded IPFS bootstrap nodes. Leave blank to use defaults. Example: /ip4/1.2.3.4/tcp/7001/p2p/QmXxx,...')}
+          ${fld('PRX_P2P_SECRET','Peer auth secret','password',v('PRX_P2P_SECRET'),'','HMAC-SHA256 shared secret. Set the same value on every machine in the P2P network. Messages from peers that cannot produce a valid signature are silently dropped. Leave blank to disable auth (trusted LAN only). Never commit this value.')}
+          ${fld('PRX_P2P_RECONCILE_MINS','Reconcile interval (mins)','number',v('PRX_P2P_RECONCILE_MINS'),'60','How often each node broadcasts its KB fingerprint so peers can detect and repair divergence without waiting for a file change event. Lower = faster drift detection, more background traffic. Default: 60.')}
+          ${fld('PRX_P2P_ENCRYPT','Encrypt files in transit','select',v('PRX_P2P_ENCRYPT') || 'N','','When Y, all KB file content is encrypted with AES-256-GCM before sending and decrypted on receipt. Requires PRX_P2P_SECRET — the encryption key is derived from the shared secret.',
+            [{v:'N',l:'N — plaintext (default)'},{v:'Y',l:'Y — AES-256-GCM encrypted'}])}
+          ${fld('PRX_P2P_TRICKLE','Transfer mode','select',v('PRX_P2P_TRICKLE') || 'N','','When Y, KB files are sent incrementally one small batch at a time. The batch size and inter-batch delay are self-tuning — they expand when the connection is fast and shrink when congested. Ideal for slow or unreliable links. N sends all changes in back-to-back GossipSub messages (faster on good connections).',
+            [{v:'N',l:'N — Bulk (default, fastest on good links)'},{v:'Y',l:'Y — Trickle (adaptive, suits slow/unreliable links)'}])}
+          <div class="s-field span2">
+            <div class="s-hint" style="margin-top:0;border-left:3px solid #e0f2fe;padding-left:.75rem">
+              <strong>RSA node identity keys</strong> — used for peer authentication and future key-exchange support.
+              Generate a key pair below; the private key stays on this machine, the public key can be shared with peers.
+              <div style="margin-top:.6rem;display:flex;gap:.5rem;align-items:center;flex-wrap:wrap">
+                <button type="button" id="p2p-gen-btn" onclick="p2pGenRsa()"
+                  ${v('PRX_P2P_RSA_PRIVATE_KEY') ? 'disabled' : ''}
+                  style="font-size:.72rem;padding:.2rem .6rem;border:1px solid #d1d5db;border-radius:4px;background:#f9fafb;cursor:pointer;color:#374151;${v('PRX_P2P_RSA_PRIVATE_KEY') ? 'opacity:.45;cursor:not-allowed' : ''}">
+                  Generate RSA-2048 Key Pair
+                </button>
+                <button type="button" id="p2p-del-btn" onclick="p2pDeleteRsaKeys()"
+                  style="font-size:.72rem;padding:.2rem .6rem;border:1px solid #fca5a5;border-radius:4px;background:#fff1f2;cursor:pointer;color:#dc2626;display:${v('PRX_P2P_RSA_PRIVATE_KEY') ? 'inline-flex' : 'none'};align-items:center;gap:.3rem">
+                  <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><line x1="2" y1="2" x2="8" y2="8"/><line x1="8" y1="2" x2="2" y2="8"/></svg>
+                  Delete Keys
+                </button>
+                <span id="p2p-rsa-status" style="font-size:.7rem;color:var(--text-3)">
+                  ${v('PRX_P2P_RSA_PRIVATE_KEY') ? '✓ Key pair is set — delete to regenerate.' : ''}
+                </span>
+              </div>
+            </div>
+          </div>
+          ${fld('PRX_P2P_RSA_PRIVATE_KEY','RSA private key (PEM)','textarea',v('PRX_P2P_RSA_PRIVATE_KEY'),'','Your node\'s RSA-2048 private key in PEM format. Keep this secret — never share it.')}
+          ${fld('PRX_P2P_RSA_PUBLIC_KEY','RSA public key (PEM)','textarea',v('PRX_P2P_RSA_PUBLIC_KEY'),'','Your node\'s RSA-2048 public key in PEM format. Share this with other nodes so they can verify your identity.')}
+          <script>
+            function p2pRsaSetState(hasKeys) {
+              var genBtn  = document.getElementById('p2p-gen-btn');
+              var delBtn  = document.getElementById('p2p-del-btn');
+              var statusEl = document.getElementById('p2p-rsa-status');
+              if (genBtn)  { genBtn.disabled = hasKeys; genBtn.style.opacity = hasKeys ? '.45' : '1'; genBtn.style.cursor = hasKeys ? 'not-allowed' : 'pointer'; }
+              if (delBtn)  { delBtn.style.display = hasKeys ? 'inline-flex' : 'none'; }
+              if (statusEl && hasKeys) statusEl.textContent = '✓ Key pair is set — delete to regenerate.';
+            }
+
+            function p2pGenRsa() {
+              var statusEl = document.getElementById('p2p-rsa-status');
+              var genBtn   = document.getElementById('p2p-gen-btn');
+              if (genBtn) { genBtn.disabled = true; genBtn.style.opacity = '.45'; genBtn.style.cursor = 'not-allowed'; }
+              if (statusEl) statusEl.textContent = 'Generating…';
+              window.crypto.subtle.generateKey(
+                { name: 'RSASSA-PKCS1-v1_5', modulusLength: 2048, publicExponent: new Uint8Array([1,0,1]), hash: 'SHA-256' },
+                true, ['sign','verify']
+              ).then(function(kp) {
+                return Promise.all([
+                  window.crypto.subtle.exportKey('pkcs8', kp.privateKey),
+                  window.crypto.subtle.exportKey('spki', kp.publicKey),
+                ]);
+              }).then(function(keys) {
+                function toPem(buf, type) {
+                  var b64 = btoa(String.fromCharCode.apply(null, new Uint8Array(buf)));
+                  var lines = b64.match(/.{1,64}/g).join('\\n');
+                  return '-----BEGIN ' + type + '-----\\n' + lines + '\\n-----END ' + type + '-----';
+                }
+                var privPem = toPem(keys[0], 'PRIVATE KEY');
+                var pubPem  = toPem(keys[1], 'PUBLIC KEY');
+                var privEl = document.getElementById('f_PRX_P2P_RSA_PRIVATE_KEY');
+                var pubEl  = document.getElementById('f_PRX_P2P_RSA_PUBLIC_KEY');
+                if (privEl) privEl.value = privPem;
+                if (pubEl)  pubEl.value  = pubPem;
+                if (statusEl) statusEl.textContent = '✓ Key pair generated — click Save to persist.';
+                p2pRsaSetState(true);
+              }).catch(function(e) {
+                if (statusEl) statusEl.textContent = 'Error: ' + e.message;
+                if (genBtn) { genBtn.disabled = false; genBtn.style.opacity = '1'; genBtn.style.cursor = 'pointer'; }
+              });
+            }
+
+            function p2pDeleteRsaKeys() {
+              if (!confirm('Delete both RSA keys from this machine? You will need to generate a new pair and update any peers that have your public key.')) return;
+              var privEl = document.getElementById('f_PRX_P2P_RSA_PRIVATE_KEY');
+              var pubEl  = document.getElementById('f_PRX_P2P_RSA_PUBLIC_KEY');
+              if (privEl) privEl.value = '';
+              if (pubEl)  pubEl.value  = '';
+              var statusEl = document.getElementById('p2p-rsa-status');
+              if (statusEl) statusEl.textContent = 'Keys cleared — click Save to remove from .env.';
+              p2pRsaSetState(false);
+            }
+          </script>
 
           <!-- Live peers panel -->
           <div class="s-field span2" style="margin-top:1rem" id="p2p-peers-panel">
@@ -8079,7 +8164,7 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'PRX_KB_REPO', 'PRX_KB_LOCAL_CLONE', 'PRX_KB_KEY',
     'PRX_REALTIME_KB_SYNC', 'PRX_UPSTASH_REDIS_URL', 'PRX_UPSTASH_REDIS_TOKEN',
     'PRX_KB_SYNC_MACHINE', 'PRX_KB_SYNC_POLL_SECS', 'PRX_KB_SYNC_TRIGGER', 'PRX_KB_SYNC_DEBOUNCE_SECS',
-    'PRX_P2P_ENABLED', 'PRX_P2P_PORT', 'PRX_P2P_MDNS_ENABLED', 'PRX_P2P_BOOTSTRAP_NODES',
+    'PRX_P2P_ENABLED', 'PRX_P2P_PORT', 'PRX_P2P_MDNS_ENABLED', 'PRX_P2P_BOOTSTRAP_NODES', 'PRX_P2P_SECRET', 'PRX_P2P_RECONCILE_MINS', 'PRX_P2P_ENCRYPT', 'PRX_P2P_TRICKLE', 'PRX_P2P_RSA_PRIVATE_KEY', 'PRX_P2P_RSA_PUBLIC_KEY',
     'CLAUDE_REPORT_DIR',
     'AUTO_MODE', 'FORCE_FULL_RUN', 'PRX_REPORT_VERBOSITY',
     'PRX_JIRA_PROJECT', 'PRX_ATTACHMENT_MAX_MB',

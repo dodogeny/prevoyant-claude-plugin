@@ -1,4 +1,4 @@
-# Prevoyant - Claude Code Plugin `v1.3.2`
+# Prevoyant - Claude Code Plugin `v1.3.4`
 
 **Prevoyant** is a [Claude Code](https://claude.ai/code) plugin — an AI agent team that runs a structured, end-to-end developer workflow for Jira tickets. Four modes:
 
@@ -265,6 +265,27 @@ Connects Prevoyant to a local [Hermes](https://github.com/nousresearch/hermes-ag
 | `PRX_HERMES_ENABLED` | `N` | Set to `Y` to activate Hermes mode. Hermes becomes the front door for all Jira/GitHub events; Prevoyant exposes `POST /internal/enqueue` instead of `POST /jira-events`. Requires server restart. |
 | `PRX_HERMES_GATEWAY_URL` | `http://localhost:8080` | Base URL of the Hermes gateway process. Prevoyant POSTs job results here so Hermes can deliver them to Telegram, Slack, Discord, etc. |
 | `PRX_HERMES_SECRET` | — | Shared secret Hermes must send in the `X-Hermes-Secret` header when calling `/internal/enqueue`. Leave blank to skip validation (trusted network only). |
+
+### P2P KB Sync (optional)
+
+Peer-to-peer knowledge-base propagation via libp2p. When `PRX_P2P_ENABLED=Y`, the server starts a libp2p node that discovers peers via mDNS (LAN) and optional bootstrap nodes, then broadcasts KB changes over GossipSub — no Redis or Upstash account needed. When P2P is active, the Redis/Upstash real-time sync fields in Settings are automatically disabled.
+
+Set `PRX_P2P_ENABLED=Y` to activate.
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PRX_P2P_ENABLED` | `N` | Set to `Y` to start the libp2p node and enable P2P KB sync. Hot-toggled from Settings — no restart required. |
+| `PRX_P2P_PORT` | `7001` | TCP port the libp2p node listens on. Must be open and reachable by peers. |
+| `PRX_P2P_MDNS_ENABLED` | `Y` | Set to `Y` to enable mDNS LAN peer discovery. Disable on networks where mDNS is blocked. |
+| `PRX_P2P_BOOTSTRAP_NODES` | — | Comma-separated list of bootstrap node multiaddrs for WAN peer discovery, e.g. `/ip4/1.2.3.4/tcp/7001/p2p/<peerId>`. Leave blank to rely on mDNS only. |
+| `PRX_P2P_SECRET` | `LetMeInPrevoyant@2026` | HMAC-SHA256 shared secret used to authenticate every GossipSub message. Change this before sharing the setup with teammates. |
+| `PRX_P2P_RECONCILE_MINS` | `60` | Interval in minutes between full reconciliation syncs (delta sync on change is immediate). |
+| `PRX_P2P_ENCRYPT` | `N` | Set to `Y` to encrypt KB file content with AES-256-GCM (key derived from `PRX_P2P_SECRET`) before sending. Peers without the same secret receive unreadable ciphertext. |
+| `PRX_P2P_TRICKLE` | `N` | Set to `Y` to enable trickle mode: files are sent in small adaptive batches rather than one bulk message. Batch size and inter-batch delay self-adjust based on measured network RTT (1–10 files/batch, 100 ms–10 s delay). Default `N` is bulk mode. |
+| `PRX_P2P_RSA_PRIVATE_KEY` | — | PEM-encoded RSA-2048 private key for future per-peer key exchange. Generate from Settings → P2P KB Sync using the in-browser Web Crypto API. Stored as a single-line `"\n"`-escaped value in `.env`. |
+| `PRX_P2P_RSA_PUBLIC_KEY` | — | PEM-encoded RSA-2048 public key corresponding to `PRX_P2P_RSA_PRIVATE_KEY`. |
+
+> **Precedence:** when `PRX_P2P_ENABLED=Y`, `startKbSync()` (Redis/Upstash) is skipped automatically. `PRX_REALTIME_KB_SYNC`, `PRX_UPSTASH_REDIS_URL`, `PRX_UPSTASH_REDIS_TOKEN`, and `PRX_KB_SYNC_POLL_SECS` have no effect while P2P is active. `PRX_KB_SYNC_TRIGGER`, `PRX_KB_SYNC_MACHINE`, and `PRX_KB_SYNC_DEBOUNCE_SECS` are still read by the P2P worker.
 
 ### Notifications (optional)
 
@@ -593,6 +614,7 @@ An optional Node.js service that runs alongside the plugin as an always-on ambie
 - **Disk monitor** — tracks `~/.prevoyant/` disk usage against a configurable quota; alerts at threshold and runs periodic cleanup (sessions, server logs, watch logs, KB Flow Analyst run logs)
 - **Update checker** — polls GitHub for new plugin releases and surfaces an upgrade prompt on the dashboard
 - **WhatsApp notifications** — sends ticket and report events via WaSender API (zero new dependencies)
+- **P2P KB sync** — optional libp2p transport layer (TCP · Noise · Yamux · GossipSub) for direct machine-to-machine KB propagation without Redis or Upstash; supports trickle mode, AES-256-GCM encryption, mDNS LAN discovery, and RSA-2048 node identity. Dashboard shows live peer count, animated mesh topology, and sync counters. Takes precedence over Redis sync when active.
 - **Redis memory index** — dual-backend agent memory (Redis primary, JSON fallback) for KB query enrichment
 - **Session persistence** — state survives server restarts; automatic PDF report discovery
 
@@ -726,10 +748,13 @@ Standalone mode with no Jira ticket. Processes all three knowledge-buildup queue
 │   │   ├── watchManager.js       # Coordinates add/stop/resume across worker + routes
 │   │   └── watchStore.js         # CRUD on ~/.prevoyant/server/watched-tickets.json
 │   ├── webhooks/                 # Jira webhook receiver
+│   ├── runner/
+│   │   └── p2pBridge.js          # In-process P2P state store (peer list, sync counters, last-sync timestamp)
 │   ├── workers/                  # Background worker threads
 │   │   ├── diskMonitor.js        # Disk space tracking and alerts
 │   │   ├── healthMonitor.js      # Watchdog: polls /health, emails on DOWN/UP
 │   │   ├── kbFlowAnalystWorker.js # Autonomous KB Flow Analyst: Jira-driven CMM proposals → kbflow-pending.md
+│   │   ├── kbP2pWorker.js        # P2P KB sync worker: libp2p node, GossipSub broadcast, trickle/bulk transfer
 │   │   ├── kbSyncWorker.js       # KB sync worker: Redis XREAD poll loop
 │   │   ├── kbStalenessScanner.js # Validates file:line KB refs against live codebase
 │   │   ├── memoryPatternMinerWorker.js # Scans agent memories → pattern-proposals.md
@@ -1557,6 +1582,34 @@ rm -rf ~/.prevoyant/reports   # or the path set in CLAUDE_REPORT_DIR
 ---
 
 ## Changelog
+
+### v1.3.4 — P2P KB Sync — Trickle Mode, Visual Indicators & Reliability Fixes
+
+- **Encrypted-file transfer fix (critical bugfix):** When `PRX_P2P_ENCRYPT=Y`, the worker sets `content: null` on every file before encrypting. The old `filter(f => f.content !== null)` guard silently discarded all of them, resulting in zero files sent over the network. Fixed to `filter(f => typeof f.content === 'string' || f.encrypted)` so encrypted payloads are included. Batch size calculation also hardened with a new `filePayloadSize()` helper that handles both plaintext and AES-256-GCM payloads without throwing a TypeError.
+
+- **Trickle Update mode (`PRX_P2P_TRICKLE`):** New Y/N setting for incremental, network-adaptive GossipSub delivery. When enabled, KB files are sent in small batches starting at 2 files; batch size and inter-batch delay self-adjust based on measured network RTT — fast links converge to 10 files/batch with 100 ms gaps, slow or congested links back off to 1 file/batch with up to 10 s gaps. Default: `N` (bulk — all files in one or two large messages). Configurable from Settings → P2P KB Sync. Delay and batch thresholds are self-determined by the worker; only the on/off toggle is user-facing.
+
+- **Animated mesh network topology icons:** The P2P Network panel now uses SMIL SVG mesh icons instead of socket plug icons. Three live states — **Connected** (cyan: 3-node triangle with all edges lit, staggered per-node glow rings, and a white data-packet traversing the edges), **Searching** (amber: single node with two expanding sonar rings and 4 ghost peer nodes fading at the corners), **Starting/off** (grey: single dimmed node with a slow pulse ring). Icons update in real time as peer count changes.
+
+- **Animated P2P header badge:** When `PRX_P2P_ENABLED=Y`, a cyan flashing badge labelled "P2P" appears in the dashboard header beside the Cortex badge. The badge pulses with a slow glow animation (2.4 s cycle) and links directly to the P2P Network section on the main dashboard. In autonomous-mode the badge renders white/muted to match the orange header style.
+
+- **Redis/Upstash fields disabled when P2P is active:** In Settings → Real-time KB Sync, the `PRX_REALTIME_KB_SYNC`, `PRX_UPSTASH_REDIS_URL`, `PRX_UPSTASH_REDIS_TOKEN`, and `PRX_KB_SYNC_POLL_SECS` fields are greyed out and non-interactive when `PRX_P2P_ENABLED=Y`, with a cyan info banner explaining that P2P takes precedence over Redis/Upstash for KB sync. Fields shared with the P2P worker (`PRX_KB_SYNC_MACHINE`, `PRX_KB_SYNC_TRIGGER`, `PRX_KB_SYNC_DEBOUNCE_SECS`) remain editable.
+
+- **RSA key field fixes:** Two bugs prevented RSA key pairs from persisting after clicking Save. (1) The "Generate RSA Key Pair" and "Delete Keys" JavaScript functions targeted `inp-PRX_P2P_RSA_*` element IDs, but `fld()` generates `f_PRX_P2P_RSA_*` — the fields were never populated. (2) `<input type="password/text">` strips newlines — PEM content was truncated to the first line on every save. Both fields are now rendered as `<textarea>` and all element ID references corrected.
+
+- **PEM key serialisation hardened:** A new `envSerialize()` helper wraps any multi-line value in a double-quoted, `\n`-escaped single line before writing to `.env`. `readEnvValues()` expands `\n` escape sequences back to real newlines on read. Raw multi-line PEM blocks previously written to `.env` are skipped and replaced on the next save, eliminating the bug where only the first line of a key was loaded across restarts.
+
+- **Retry with exponential backoff:** `requestDeltaSync` retries failed stream dials up to 3 times (2 s → 4 s delay). GossipSub `publish` calls also retry up to 3 times with 1 s → 2 s delays before logging a warning. Network transients no longer cause lost KB updates.
+
+- **AES-256-GCM file-content encryption (`PRX_P2P_ENCRYPT=Y`):** when enabled, every KB file's content is encrypted with AES-256-GCM (random IV per file) before leaving the machine. The encryption key is derived from `PRX_P2P_SECRET`. Peers without the same secret receive unreadable ciphertext. Applies to both GossipSub broadcast and stream-based sync. Default: N (plaintext — suitable for private networks).
+
+- **RSA-2048 node identity keys (`PRX_P2P_RSA_PRIVATE_KEY` / `PRX_P2P_RSA_PUBLIC_KEY`):** each node can hold a persistent RSA-2048 key pair for future per-peer key exchange. A **Generate RSA Key Pair** button in Settings → P2P KB Sync creates both keys in-browser using the Web Crypto API and pre-fills the fields — no tooling required.
+
+- **Non-blocking async file I/O:** `gatherAllFiles` and `gatherChangedFiles` now use `fs.promises` (async) instead of `fs.readFileSync`. The libp2p event loop stays responsive during large KB scans; peer connections and GossipSub messages are processed concurrently with file transfers.
+
+- **Settings page additions:** `PRX_P2P_SECRET`, `PRX_P2P_RECONCILE_MINS`, `PRX_P2P_ENCRYPT`, `PRX_P2P_TRICKLE`, `PRX_P2P_RSA_PRIVATE_KEY`, and `PRX_P2P_RSA_PUBLIC_KEY` are all configurable from Settings → P2P KB Sync without editing `.env` manually.
+
+- **`PRX_P2P_SECRET` default:** `.env` ships with `PRX_P2P_SECRET=LetMeInPrevoyant@2026`. Change this to your own strong secret before sharing the setup with teammates.
 
 ### v1.3.3 — P2P KB Sync (libp2p)
 

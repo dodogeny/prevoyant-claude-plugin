@@ -355,6 +355,12 @@ function startKbP2p() {
     if (msg.type === 'reconcile-needed') {
       if (kbP2pWorker) kbP2pWorker.postMessage({ type: 'trigger-reconcile-sync', peerId: msg.peerId });
     }
+    if (msg.type === 'transfer-progress') {
+      p2pBridge.updateState({
+        transfer: msg.phase === 'done' ? null
+          : { phase: msg.phase, done: msg.done || 0, total: msg.total || 0, file: msg.file || '' },
+      });
+    }
     if (msg.type === 'p2p-error') {
       console.error('[p2p] Worker error:', msg.reason);
       activityLog.record('p2p_error', null, 'system', { reason: msg.reason });
