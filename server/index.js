@@ -324,8 +324,21 @@ function startKbP2p() {
     if (!msg) return;
     if (msg.type === 'log') return; // already printed inside worker
     if (msg.type === 'p2p-started') {
-      p2pBridge.updateState({ selfId: msg.selfId, addrs: msg.addrs, topic: msg.topic });
+      p2pBridge.updateState({ selfId: msg.selfId, addrs: msg.addrs, topic: msg.topic, cortexMeshEnabled: process.env.PRX_CORTEX_P2P_ENABLED === 'Y' });
       activityLog.record('p2p_started', null, 'system', { selfId: msg.selfId, addrs: msg.addrs });
+      // Seed the P2P worker's cortex cache with all current local observations
+      if (process.env.PRX_CORTEX_P2P_ENABLED === 'Y' && process.env.PRX_CORTEX_ENABLED === 'Y') {
+        setTimeout(() => {
+          try {
+            const cortexLayer = require('./runner/cortexLayer');
+            const observations = cortexLayer.memory().list({ tag: 'agent-observed' });
+            if (observations.length) {
+              kbP2pWorker.postMessage({ type: 'cortex-snapshot', observations });
+              console.log(`[cortex-mesh] Seeded P2P worker cache with ${observations.length} observation(s)`);
+            }
+          } catch (_) {}
+        }, 5000);
+      }
     }
     if (msg.type === 'peers-updated' || msg.type === 'addrs-updated') {
       p2pBridge.updateState({ selfId: msg.selfId, addrs: msg.addrs, peers: msg.peers || p2pBridge.getState().peers });
@@ -364,6 +377,39 @@ function startKbP2p() {
     if (msg.type === 'p2p-error') {
       console.error('[p2p] Worker error:', msg.reason);
       activityLog.record('p2p_error', null, 'system', { reason: msg.reason });
+    }
+    // ── Collective Intelligence Mesh ─────────────────────────────────────
+    if (msg.type === 'cortex-obs-received' && process.env.PRX_CORTEX_P2P_ENABLED === 'Y' && process.env.PRX_CORTEX_ENABLED === 'Y') {
+      try {
+        const cortexLayer = require('./runner/cortexLayer');
+        cortexLayer.memory().mergeObservation(msg.key, msg.value, msg.tags, msg.sourceNode);
+        if (cortexWorker) cortexWorker.postMessage({ type: 'observe-written', detail: { key: msg.key, fromNetwork: true } });
+        activityLog.record('cortex_mesh_obs_received', null, 'system', {
+          key: msg.key, sourceNode: msg.sourceNode, machine: msg.machine,
+        });
+      } catch (e) {
+        console.warn('[cortex-mesh] mergeObservation failed:', e.message);
+      }
+    }
+    if (msg.type === 'cortex-stats') {
+      const s = p2pBridge.getState();
+      p2pBridge.updateState({
+        cortexObsIn:    s.cortexObsIn  + (msg.observationsIn  || 0),
+        cortexObsOut:   s.cortexObsOut + (msg.observationsOut || 0),
+        cortexTotal:    msg.total !== undefined ? msg.total : s.cortexTotal,
+        lastCortexSync: msg.observationsIn
+          ? { ts: Date.now(), direction: 'in',  count: msg.observationsIn  }
+          : msg.observationsOut
+            ? { ts: Date.now(), direction: 'out', count: msg.observationsOut }
+            : s.lastCortexSync,
+      });
+    }
+    if (msg.type === 'cortex-retract-received' && process.env.PRX_CORTEX_P2P_ENABLED === 'Y' && process.env.PRX_CORTEX_ENABLED === 'Y') {
+      try {
+        const cortexLayer = require('./runner/cortexLayer');
+        cortexLayer.memory().del(msg.key);
+        if (cortexWorker) cortexWorker.postMessage({ type: 'observe-written', detail: { key: msg.key, fromNetwork: true } });
+      } catch (_) {}
     }
   });
 
@@ -770,6 +816,11 @@ serverEvents.on('settings-saved', () => {
   if (cortexOn && !cortexWorker)                         startCortex();
   if (!cortexOn && cortexWorker)                         stopCortex();
 
+  // Cortex mesh: update bridge state immediately so dashboard reflects the toggle.
+  // The P2P worker reads the env var directly at runtime — no restart needed for
+  // the topic subscription (worker checks cortexMeshEnabled() on each message).
+  p2pBridge.updateState({ cortexMeshEnabled: process.env.PRX_CORTEX_P2P_ENABLED === 'Y' });
+
   // Settings-saved transition: PRX_REPOWISE_ENABLED flipped to Y.  Auto-install
   // if missing (idempotent — installer no-ops when already present).
   const repowiseInstaller = require('./runner/repowiseInstaller');
@@ -830,12 +881,35 @@ serverEvents.on('cortex-repowise-now', () => {
   if (cortexWorker) cortexWorker.postMessage({ type: 'repowise-now' });
 });
 
+// Quality gate for Collective Intelligence Mesh broadcasts.
+// Only high-signal observations propagate to peers — prevents raw context
+// dumps and ephemeral low-value writes from flooding the GossipSub topic.
+function isMeshQualityObservation(value) {
+  if (!value || typeof value !== 'object') return false;
+  const HIGH_SIGNAL_TYPES = new Set([
+    'pattern', 'decision', 'architectural-finding', 'lesson-learned',
+    'session-summary', 'hotspot', 'business-rule', 'risk',
+  ]);
+  if (HIGH_SIGNAL_TYPES.has(value.type)) return true;
+  // Generic 'context' observations only if they carry a meaningful summary
+  return typeof value.summary === 'string' && value.summary.trim().length >= 30;
+}
+
 // When an agent writes a discovery via POST /cortex/memory/observe, forward
 // the event to the cortex worker so it can trigger a debounced re-synthesis.
-// This closes the feedback loop: agent observation → fresh facts in seconds,
-// not at the next 6-hour heartbeat.
+// Also broadcast to the P2P Collective Intelligence Mesh when enabled.
 serverEvents.on('cortex-observation-written', (detail) => {
   if (cortexWorker) cortexWorker.postMessage({ type: 'observe-written', detail });
+
+  if (kbP2pWorker && process.env.PRX_CORTEX_P2P_ENABLED === 'Y' && !detail.fromNetwork) {
+    try {
+      const cortexLayer = require('./runner/cortexLayer');
+      const value = cortexLayer.memory().get(detail.key);
+      if (value && isMeshQualityObservation(value)) {
+        kbP2pWorker.postMessage({ type: 'cortex-broadcast', key: detail.key, value, tags: detail.tags || [] });
+      }
+    } catch (_) {}
+  }
 });
 
 // ── Server listen ─────────────────────────────────────────────────────────────

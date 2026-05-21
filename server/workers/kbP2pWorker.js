@@ -32,6 +32,10 @@ const crypto          = require('crypto');
 
 const TOPIC         = 'prevoyant/kb-sync/1';
 const SYNC_PROTO    = '/prevoyant/kb-sync-req/1';
+const CORTEX_OBS_TOPIC     = 'prevoyant/cortex-sync/observations/1'; // lightweight facts: context, pattern, decision, hotspot…
+const CORTEX_SESSION_TOPIC = 'prevoyant/cortex-sync/sessions/1';      // session-summary type (larger, infrequent)
+const CORTEX_TOPIC_LEGACY  = 'prevoyant/cortex-sync/1';               // kept for backward compat with pre-1.3.5 nodes
+const CORTEX_PROTO         = '/prevoyant/cortex-query/1';
 const KEY_FILE      = path.join(os.homedir(), '.prevoyant', 'server', 'p2p-key.b64');
 const SIGNAL_FILE   = path.join(os.homedir(), '.prevoyant', '.kb-updated');
 const MANIFEST_FILE = path.join(os.homedir(), '.prevoyant', '.p2p-manifest.json');
@@ -58,6 +62,7 @@ const machineName     = () => (process.env.PRX_KB_SYNC_MACHINE || os.hostname())
 const p2pSecret       = () => (process.env.PRX_P2P_SECRET || '').trim();
 const reconcileMins   = () => parseInt(process.env.PRX_P2P_RECONCILE_MINS    || '60', 10);
 const trickleEnabled   = () => (process.env.PRX_P2P_TRICKLE || 'N').toUpperCase() === 'Y';
+const cortexMeshEnabled = () => (process.env.PRX_CORTEX_P2P_ENABLED || 'N').toUpperCase() === 'Y';
 // Trickle internals are self-deterministic — initial values, then adapted per-batch by RTT feedback.
 const TRICKLE_INIT_DELAY_MS   = 500;
 const TRICKLE_INIT_BATCH_SIZE = 2;
@@ -77,6 +82,35 @@ function log(level, msg) {
   if (parentPort) parentPort.postMessage({ type: 'log', level, msg, ts });
   console.log(`[${ts}] [p2p/${level}] ${msg}`);
 }
+
+// ── Cortex mesh cache ─────────────────────────────────────────────────────────
+//
+// In-worker observation store — populated from:
+//   (a) main thread snapshots   (cortex-snapshot / cortex-broadcast messages)
+//   (b) peer GossipSub messages (CORTEX_TOPIC)
+// Used to answer /prevoyant/cortex-query/1 stream requests from other peers.
+
+const MAX_CORTEX_CACHE = 2000;
+const cortexCache = new Map(); // key → { key, value, tags, sourceNode, ts }
+
+function cortexCacheSet(key, value, tags, sourceNode) {
+  cortexCache.set(key, {
+    key,
+    value:      value      || null,
+    tags:       tags       || [],
+    sourceNode: sourceNode || null,
+    ts:         (value && value.ts) || Date.now(),
+  });
+  if (cortexCache.size > MAX_CORTEX_CACHE) {
+    // Evict the oldest entry (Map preserves insertion order)
+    cortexCache.delete(cortexCache.keys().next().value);
+  }
+}
+
+// ── Per-peer cortex sync timestamps (differential sync) ───────────────────────
+// Tracks the last successful observation dump from each peer so reconnects
+// only pull observations added since the last successful sync — not a full replay.
+const peerCortexSyncTs = new Map(); // peerIdStr → lastSuccessfulDumpMs
 
 // ── HMAC authentication ───────────────────────────────────────────────────────
 
@@ -409,6 +443,77 @@ function broadcastPeers(node, selfId, addrs) {
   });
 }
 
+// ── Cortex observation broadcast ──────────────────────────────────────────────
+
+async function broadcastCortexObs(node, key, value, tags) {
+  const payload = {
+    type:       'cortex-observe',
+    machine:    machineName(),
+    key,
+    value:      value || null,
+    tags:       tags  || [],
+    sourceNode: machineName(),
+    ts:         Date.now(),
+  };
+  cortexCacheSet(key, value, tags, machineName());
+  try {
+    const envelope    = signEnvelope(payload);
+    // Route session summaries to their own topic so per-session agent queries
+    // aren't burdened with large infrequent blobs.
+    const obsType     = (value && value.type) || 'context';
+    const targetTopic = obsType === 'session-summary' ? CORTEX_SESSION_TOPIC : CORTEX_OBS_TOPIC;
+    await node.services.pubsub.publish(targetTopic, new TextEncoder().encode(envelope));
+    if (parentPort) parentPort.postMessage({ type: 'cortex-stats', observationsOut: 1, total: cortexCache.size });
+  } catch (e) {
+    log('warn', `Cortex broadcast failed: ${e.message}`);
+  }
+}
+
+// ── Cortex dump request (stream-based full pull from a peer) ──────────────────
+
+async function requestCortexDump(node, peerId, sinceMs) {
+  const reqBody = { sinceMs: sinceMs || 0, machine: machineName() };
+  const sig     = p2pSecret() ? hmacSign(JSON.stringify(reqBody)) : '';
+  const req     = Buffer.from(JSON.stringify({ ...reqBody, sig }));
+  try {
+    const stream = await node.dialProtocol(peerId, CORTEX_PROTO);
+    await stream.sink([req]);
+    const chunks = [];
+    for await (const chunk of stream.source) {
+      chunks.push(chunk instanceof Uint8Array ? chunk : Buffer.from(chunk.slice()));
+    }
+    if (!chunks.length) return;
+    const resp = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    let merged = 0;
+    for (const obs of (resp.observations || [])) {
+      if (!obs.key) continue;
+      cortexCacheSet(obs.key, obs.value, obs.tags, obs.sourceNode || resp.machine);
+      if (parentPort) parentPort.postMessage({
+        type:       'cortex-obs-received',
+        key:        obs.key,
+        value:      obs.value,
+        tags:       obs.tags || [],
+        sourceNode: obs.sourceNode || resp.machine,
+        machine:    resp.machine,
+      });
+      merged++;
+    }
+    if (merged > 0) {
+      log('info', `Cortex dump from ${resp.machine}: ${merged} observation(s) received`);
+      if (parentPort) parentPort.postMessage({ type: 'cortex-stats', observationsIn: merged, total: cortexCache.size });
+    }
+    // Record success timestamp regardless of merge count so reconnects use
+    // differential pull even when the peer had nothing new this time.
+    const peerIdStr = peerId.toString ? peerId.toString() : String(peerId);
+    peerCortexSyncTs.set(peerIdStr, Date.now());
+  } catch (e) {
+    const msg = String(e.message || '').toLowerCase();
+    if (!msg.includes('protocol') && !msg.includes('unsupported') && !msg.includes('no handler')) {
+      log('warn', `Cortex dump request failed: ${e.message}`);
+    }
+  }
+}
+
 // ── Payload size helper ───────────────────────────────────────────────────────
 
 // Returns serialized byte estimate for a file entry (works for plaintext + encrypted payloads).
@@ -686,6 +791,18 @@ if (parentPort) {
       if (libp2pNode) libp2pNode.stop().catch(() => {});
     }
     if (msg?.type === 'get-peers' && libp2pNode) broadcastPeers(libp2pNode);
+
+    // Collective Intelligence Mesh — outbound broadcast
+    if (msg?.type === 'cortex-broadcast' && libp2pNode && cortexMeshEnabled()) {
+      broadcastCortexObs(libp2pNode, msg.key, msg.value, msg.tags).catch(() => {});
+    }
+    // Populate cache from main thread's current observation set (sent once on startup)
+    if (msg?.type === 'cortex-snapshot') {
+      for (const obs of (msg.observations || [])) {
+        if (obs.key) cortexCacheSet(obs.key, obs.value, obs.tags, obs.sourceNode || machineName());
+      }
+      log('info', `Cortex cache seeded: ${cortexCache.size} observation(s) from main thread snapshot`);
+    }
   });
 }
 
@@ -770,9 +887,51 @@ if (parentPort) {
   // ── GossipSub subscriber ──────────────────────────────────────────────────
   libp2pNode.services.pubsub.subscribe(TOPIC);
 
+  if (cortexMeshEnabled()) {
+    libp2pNode.services.pubsub.subscribe(CORTEX_OBS_TOPIC);
+    libp2pNode.services.pubsub.subscribe(CORTEX_SESSION_TOPIC);
+    libp2pNode.services.pubsub.subscribe(CORTEX_TOPIC_LEGACY); // backward compat with pre-1.3.5 peers
+    log('info', `Cortex P2P mesh active — obs=${CORTEX_OBS_TOPIC} sessions=${CORTEX_SESSION_TOPIC}`);
+  }
+
   libp2pNode.services.pubsub.addEventListener('message', async evt => {
     try {
       const { topic, data } = evt.detail;
+
+      // ── Cortex mesh messages ────────────────────────────────────────────
+      // Accept on typed topics (obs/sessions) and legacy topic for backward compat.
+      if ((topic === CORTEX_OBS_TOPIC || topic === CORTEX_SESSION_TOPIC || topic === CORTEX_TOPIC_LEGACY) && cortexMeshEnabled()) {
+        const raw = new TextDecoder().decode(data);
+        let outer, innerPeek;
+        try { outer = JSON.parse(raw); } catch (_) { return; }
+        const innerRaw = (outer.v === 2 && outer.payload) ? outer.payload : raw;
+        try { innerPeek = JSON.parse(innerRaw); } catch (_) {}
+        if (innerPeek?.machine === machineName()) return; // own echo
+        const payload = verifyEnvelope(raw);
+        if (!payload) return;
+        const { type: msgType, key, value, tags, sourceNode } = payload;
+        if (msgType === 'cortex-observe' || msgType === 'cortex-confirm') {
+          if (key) {
+            cortexCacheSet(key, value, tags, sourceNode || payload.machine);
+            if (parentPort) {
+              parentPort.postMessage({
+                type:       'cortex-obs-received',
+                key,
+                value,
+                tags:       tags || [],
+                sourceNode: sourceNode || payload.machine,
+                machine:    payload.machine,
+              });
+              parentPort.postMessage({ type: 'cortex-stats', observationsIn: 1, total: cortexCache.size });
+            }
+          }
+        } else if (msgType === 'cortex-retract' && key) {
+          cortexCache.delete(key);
+          if (parentPort) parentPort.postMessage({ type: 'cortex-retract-received', key });
+        }
+        return;
+      }
+
       if (topic !== TOPIC) return;
       const raw = new TextDecoder().decode(data);
 
@@ -898,6 +1057,42 @@ if (parentPort) {
     }
   }
 
+  // ── Cortex query stream handler ───────────────────────────────────────────
+  if (cortexMeshEnabled()) {
+    await libp2pNode.handle(CORTEX_PROTO, async ({ stream, connection }) => {
+      const from = connection.remotePeer.toString().slice(0, 12);
+      try {
+        const chunks = [];
+        for await (const chunk of stream.source) {
+          chunks.push(chunk instanceof Uint8Array ? chunk : Buffer.from(chunk.slice()));
+        }
+        const raw = Buffer.concat(chunks).toString('utf8');
+        let req;
+        try { req = JSON.parse(raw); } catch (_) { return; }
+
+        if (p2pSecret() && !hmacVerify(JSON.stringify({ sinceMs: req.sinceMs, machine: req.machine }), req.sig || '')) {
+          log('warn', `Cortex query from ${from}: HMAC verification failed`);
+          return;
+        }
+
+        const sinceMs = typeof req.sinceMs === 'number' ? req.sinceMs : 0;
+        let observations = [...cortexCache.values()];
+        if (sinceMs > 0) observations = observations.filter(o => (o.ts || 0) >= sinceMs);
+
+        log('info', `Cortex query from ${req.machine || from} → ${observations.length} observation(s)`);
+        const resp = { machine: machineName(), observations, networkSize: cortexCache.size, ts: Date.now() };
+        await stream.sink([Buffer.from(JSON.stringify(resp))]);
+      } catch (e) {
+        log('warn', `Cortex query handler error from ${from}: ${e.message}`);
+        try {
+          await stream.sink([Buffer.from(JSON.stringify({
+            machine: machineName(), observations: [], networkSize: 0, ts: Date.now(),
+          }))]);
+        } catch (_) {}
+      }
+    });
+  }
+
   // ── Peer connect / disconnect ─────────────────────────────────────────────
   libp2pNode.addEventListener('peer:connect', evt => {
     const id = evt.detail?.toString ? evt.detail.toString() : String(evt.detail);
@@ -908,6 +1103,14 @@ if (parentPort) {
       // sinceMs = persisted last-sync stamp (0 = brand-new node → full dump)
       const sinceMs = loadLastSyncTs();
       setTimeout(() => requestDeltaSync(evt.detail, sinceMs), 2000);
+    }
+
+    // Pull collective intelligence from the new peer.
+    // Pass per-peer last-sync timestamp so established peers do a delta pull
+    // (only observations added since last successful dump) instead of a full replay.
+    if (cortexMeshEnabled()) {
+      const sinceMs = peerCortexSyncTs.get(id) || 0;
+      setTimeout(() => requestCortexDump(libp2pNode, evt.detail, sinceMs), 3500);
     }
   });
 
@@ -948,6 +1151,32 @@ if (parentPort) {
 
   // Also broadcast once at startup (after a short delay to allow peer discovery)
   setTimeout(broadcastReconcile, 15_000);
+
+  // ── Cortex mesh ping (presence + observation count broadcast) ─────────────
+  if (cortexMeshEnabled()) {
+    const cortexPingInterval = setInterval(async () => {
+      if (halted) { clearInterval(cortexPingInterval); return; }
+      const payload = {
+        type:             'cortex-ping',
+        machine:          machineName(),
+        observationCount: cortexCache.size,
+        ts:               Date.now(),
+      };
+      try {
+        const envelope = signEnvelope(payload);
+        await libp2pNode.services.pubsub.publish(CORTEX_OBS_TOPIC, new TextEncoder().encode(envelope));
+      } catch (_) {}
+    }, reconcileMins() * 60_000);
+
+    // Initial ping after peer discovery window
+    setTimeout(async () => {
+      const payload = { type: 'cortex-ping', machine: machineName(), observationCount: cortexCache.size, ts: Date.now() };
+      try {
+        const envelope = signEnvelope(payload);
+        await libp2pNode.services.pubsub.publish(CORTEX_OBS_TOPIC, new TextEncoder().encode(envelope));
+      } catch (_) {}
+    }, 20_000);
+  }
 
   // ── KB watchers ───────────────────────────────────────────────────────────
   if (syncTrigger() === 'session' || syncTrigger() === 'both') startSignalWatcher(libp2pNode);

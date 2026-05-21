@@ -1,4 +1,4 @@
-# Prevoyant - Claude Code Plugin `v1.3.4`
+# Prevoyant - Claude Code Plugin `v1.3.5`
 
 **Prevoyant** is a [Claude Code](https://claude.ai/code) plugin — an AI agent team that runs a structured, end-to-end developer workflow for Jira tickets. Four modes:
 
@@ -1582,6 +1582,28 @@ rm -rf ~/.prevoyant/reports   # or the path set in CLAUDE_REPORT_DIR
 ---
 
 ## Changelog
+
+### v1.3.5 — Collective Intelligence Mesh
+
+- **Collective Intelligence Mesh (`PRX_CORTEX_P2P_ENABLED`):** extends the P2P KB Sync layer into a shared agent-observation network. When `PRX_CORTEX_P2P_ENABLED=Y`, every node's Cortex agent observations (findings, patterns, decisions recorded during sessions) are broadcast via a new `prevoyant/cortex-sync/1` GossipSub topic and merged into each connected node's local `CortexMemory`. Observations confirmed by 2+ independent nodes receive a higher `confirmCount` and can auto-promote to the KB when `PRX_CORTEX_P2P_CONSENSUS_PROMOTE_PCT` threshold is met. Requires `PRX_P2P_ENABLED=Y` and `PRX_CORTEX_ENABLED=Y`.
+
+- **Organic network growth:** as new nodes join the P2P mesh, they immediately request a dump of the current observation cache via the `/prevoyant/cortex-query/1` stream protocol (dialed 3.5 s after first peer connect). New nodes start with the accumulated collective intelligence of the entire network without any manual sync step.
+
+- **Agent access to network intelligence (Layer 0c):** when `PRX_CORTEX_P2P_ENABLED=Y`, the dev skill's Step 0 now includes a new **Layer 0c — Collective Intelligence Network Query** pass. At session start, agents call `GET /dashboard/cortex/network/query?minConfirms=2&limit=20` to retrieve cross-node confirmed observations and inject them into the Prior Knowledge block under a `NETWORK INTELLIGENCE` heading. Observations confirmed by 3+ nodes and promoted carry the same authority as local cortex facts.
+
+- **HMAC-authenticated cortex messages:** all `cortex-observe`, `cortex-confirm`, and `cortex-retract` GossipSub messages are signed with `PRX_P2P_SECRET` using the existing HMAC-SHA256 envelope from the KB sync layer. Unsigned or tampered messages are silently dropped.
+
+- **In-worker observation cache:** `kbP2pWorker.js` maintains a `Map<key, obs>` capped at 2000 entries. Peer observation requests are served entirely from this cache without touching LMDB (which remains main-thread only). Main thread merges received observations via `CortexMemory.mergeObservation()` — preserving local promotion state and taking `max(confirmCount)` across sources.
+
+- **Infinite-loop guard:** `cortex-observation-written` events broadcast to peers only when `fromNetwork !== true`, preventing re-broadcast of observations already received from the network.
+
+- **Animated Mesh badge in dashboard header:** when both `PRX_CORTEX_P2P_ENABLED=Y` and `PRX_P2P_ENABLED=Y`, an animated violet **Mesh** badge appears in the dashboard header beside the P2P badge. The badge features a 4-node diamond SVG with staggered per-edge glow animations and links to the Collective Intelligence Mesh settings section.
+
+- **Settings UI — Collective Intelligence Mesh section:** new section in Settings with three controls: `PRX_CORTEX_P2P_ENABLED` (enable/disable mesh), `PRX_CORTEX_QUERY_ENABLED` (expose the `/cortex/network/query` API to agents), and `PRX_CORTEX_P2P_CONSENSUS_PROMOTE_PCT` (minimum % of network confirmation required for auto-promotion). Includes a live stats panel showing connected peers, observations in/out, and last mesh sync timestamp.
+
+- **New API endpoints:** `GET /dashboard/cortex/network/peers` (mesh health + stats from bridge state) and `GET /dashboard/cortex/network/query` (merged observation list, filterable by `type`, `tag`, `minConfirms`, `limit`).
+
+- **Cortex ping:** each node broadcasts a `cortex-ping` message every reconcile interval (default 60 min) and once 20 s after startup, advertising its `observationCount`. Peers use this to decide whether to request a full dump.
 
 ### v1.3.4 — P2P KB Sync — Trickle Mode, Visual Indicators & Reliability Fixes
 

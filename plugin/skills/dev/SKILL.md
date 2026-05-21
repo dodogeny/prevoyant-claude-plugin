@@ -30,6 +30,7 @@ Full end-to-end developer workflow for Jira tickets. Guides Claude through readi
 | SC-015 | v1.5.1 | 2026-05-19 | — | Feature | Step 13i: mirror each agent's session memory to basic-memory MCP (`write_note`) for semantic search. Layer 5b standalone mode: supplement 5-most-recent KB file reads with `basic-memory search` using ticket key terms to surface relevant older sessions. | ACTIVE |
 | SC-016 | v1.5.2 | 2026-05-19 | — | Feature | Step 13k: Pattern Miner review — panel votes on `pattern-proposals.md` entries (same unanimous gate as 13j); approved entries promoted to `shared/patterns.md`. Closes the Pattern Miner loop that previously produced proposals with no auto-promotion path. | ACTIVE |
 | SC-017 | v1.5.2 | 2026-05-19 | — | Feature | Step 13l: Decision Outcome apply — reads `decision-outcomes.md` grades (CONFIRMED/CONTRADICTED) and writes them back to source KB files; CONFIRMED increments `confirmed:` counter; CONTRADICTED appends a warning flag. Closes the Decision Outcome Worker loop. Autonomy level raised to 2 (confidence-gated). | ACTIVE |
+| SC-018 | v1.3.5 | 2026-05-21 | — | Feature | Step 0b Layer 0c: Collective Intelligence Mesh query — when PRX_CORTEX_P2P_ENABLED=Y, calls `/cortex/network/query?minConfirms=2` at session start and injects network-confirmed cross-node observations into Prior Knowledge under `NETWORK INTELLIGENCE` heading. | ACTIVE |
 
 ## Configuration
 
@@ -1702,6 +1703,46 @@ curl -s -m 2 -X POST "$SERVER/dashboard/cortex/referenced" \
 (Where `HITS` is a comma-separated list of `[CORTEX HIT]` filenames from the read pass, and `MISS_COUNT`/`EST_PCT` come from the roll-up line above. `jq` is optional — if missing, emit `[]` for `hits` and the dashboard still records the hit count.)
 
 If `PRX_CORTEX_ENABLED=N` or the cortex directory does not exist, skip Layer 0 silently and continue with Layer 1.
+
+**Layer 0c — Collective Intelligence Network Query (runs after Layer 0, optional):**
+
+When `PRX_CORTEX_P2P_ENABLED=Y` is set, the Cortex layer has been enhanced with a **Collective Intelligence Mesh** — a P2P-shared observation store where every connected node's agent observations are merged in real time via the `prevoyant/cortex-sync/1` GossipSub topic. Observations confirmed by multiple independent nodes carry higher authority (`confirmCount ≥ 2`).
+
+At session start, query the mesh for high-confidence cross-node observations relevant to this ticket:
+
+```bash
+# Only run when Collective Intelligence Mesh is enabled
+if [ "${PRX_CORTEX_P2P_ENABLED:-N}" = "Y" ] && [ "${PRX_CORTEX_QUERY_ENABLED:-Y}" = "Y" ]; then
+  SERVER="http://localhost:${PRX_SERVER_PORT:-3000}"
+  TICKET_KEY="${TICKET_KEY:-}"
+
+  # Fetch network-confirmed observations (confirmed by ≥2 nodes, latest 20)
+  MESH_RESP=$(curl -s -m 5 \
+    "$SERVER/dashboard/cortex/network/query?minConfirms=2&limit=20&type=context" \
+    2>/dev/null)
+
+  if [ -n "$MESH_RESP" ]; then
+    MESH_COUNT=$(echo "$MESH_RESP" | grep -o '"total":[0-9]*' | grep -o '[0-9]*' | head -1)
+    echo "[MESH] Network observations available: ${MESH_COUNT:-0} cross-node confirmed entries"
+  else
+    echo "[MESH SKIP] Collective Intelligence endpoint unreachable — continuing without network layer"
+  fi
+fi
+```
+
+**How to use mesh observations:**
+- Include relevant mesh observations in the **Prior Knowledge** block under a `NETWORK INTELLIGENCE` heading, tagging each with `[confirmed by N nodes]`.
+- Observations with `confirmCount ≥ 3` and `promoted: true` carry the same authority as local cortex facts — use them to narrow Layers 1b/2/3 the same way as Layer 0 cortex hits.
+- Observations with `confirmCount = 2` are supporting evidence — include them but do not replace KB reads on their basis alone.
+- Never repeat a fact already covered by Layer 0 cortex hits — the mesh supplements, it does not duplicate.
+
+**What mesh observations contain:** agent-recorded context from sessions on other nodes — ticket decisions, architectural findings, patterns discovered mid-implementation, lessons learned that haven't yet propagated to the full KB. They grow organically as more nodes join the network and run sessions.
+
+**When to skip Layer 0c:**
+- `PRX_CORTEX_P2P_ENABLED=N` — mesh disabled, skip silently.
+- `PRX_CORTEX_QUERY_ENABLED=N` — query endpoint disabled by operator preference.
+- Dashboard endpoint returns a non-2xx or network error — skip silently, never block the workflow.
+- No observations with `minConfirms=2` returned — log `[MESH] 0 confirmed observations` and continue.
 
 **Layer 1 — Memory Palace (primary, fast path — ALWAYS runs, even on CORTEX HIT):**
 

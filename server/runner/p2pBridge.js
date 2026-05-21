@@ -20,6 +20,12 @@ let state = {
   syncsOut:      0,
   filesIn:       0,
   filesOut:      0,
+  // Collective Intelligence Mesh
+  cortexMeshEnabled: false,
+  cortexObsIn:       0,   // observations received from network peers
+  cortexObsOut:      0,   // observations broadcast to network
+  cortexTotal:       0,   // current size of the worker's observation cache
+  lastCortexSync:    null, // { ts, direction: 'in'|'out', count }
 };
 
 function updateState(patch) {

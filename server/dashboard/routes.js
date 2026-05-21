@@ -546,6 +546,51 @@ const BASE_CSS = `
     50%      { opacity: 1;   transform: scale(1.15); }
   }
 
+  /* ── Collective Intelligence Mesh badge ─────────────────────── */
+  .cortex-mesh-badge {
+    display: inline-flex; align-items: center; gap: .45rem;
+    background: linear-gradient(135deg, rgba(139,92,246,.10), rgba(167,139,250,.08));
+    border: 1px solid rgba(139,92,246,.32);
+    border-radius: 20px;
+    padding: .28rem .75rem .28rem .55rem;
+    color: #c4b5fd;
+    font-size: .72rem;
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: background .2s, border-color .2s, color .2s, box-shadow .2s;
+    animation: mesh-badge-glow 2.8s ease-in-out infinite;
+  }
+  .cortex-mesh-badge:hover {
+    background: linear-gradient(135deg, rgba(139,92,246,.20), rgba(167,139,250,.16));
+    border-color: rgba(139,92,246,.6);
+    color: #ddd6fe;
+    box-shadow: 0 0 14px rgba(139,92,246,.35);
+    animation: none;
+  }
+  @keyframes mesh-badge-glow {
+    0%, 100% { box-shadow: 0 0 0px rgba(139,92,246,0);    border-color: rgba(139,92,246,.32); }
+    50%      { box-shadow: 0 0 12px rgba(139,92,246,.5);  border-color: rgba(139,92,246,.7); }
+  }
+  .mesh-pulse-dot {
+    width: 6px; height: 6px;
+    border-radius: 50%;
+    background: #8b5cf6;
+    box-shadow: 0 0 8px rgba(139,92,246,.9);
+    flex-shrink: 0;
+    animation: mesh-dot-pulse 2s ease-in-out infinite;
+  }
+  @keyframes mesh-dot-pulse {
+    0%, 100% { opacity: .5;  transform: scale(.8); }
+    50%      { opacity: 1;   transform: scale(1.3); }
+  }
+  header.autonomous-mode .cortex-mesh-badge {
+    background: rgba(255,255,255,.07);
+    border-color: rgba(255,255,255,.2);
+    color: rgba(255,255,255,.75);
+    animation: none;
+  }
+
   .version-badge {
     background: rgba(255,255,255,.07);
     border: 1px solid rgba(255,255,255,.12);
@@ -1308,6 +1353,33 @@ function renderDashboard(stats, budget) {
         <circle cx="12" cy="12" r="2" fill="currentColor"><animate attributeName="opacity" values="1;0.3;1" dur="1.8s" begin="1.2s" repeatCount="indefinite"/></circle>
       </svg>
       <span>P2P</span>
+    </a>` : ''}
+    ${process.env.PRX_CORTEX_P2P_ENABLED === 'Y' && process.env.PRX_P2P_ENABLED === 'Y' ? `<a href="/dashboard/settings#cortex-mesh" class="cortex-mesh-badge" title="Collective Intelligence Mesh active — observations shared across nodes (click to configure)">
+      <span class="mesh-pulse-dot"></span>
+      <svg width="14" height="14" viewBox="0 0 16 16" xmlns="http://www.w3.org/2000/svg" fill="none">
+        <!-- diamond: top=8,1  right=15,8  bottom=8,15  left=1,8 -->
+        <line x1="8" y1="1" x2="15" y2="8" stroke="currentColor" stroke-width="1" stroke-linecap="round">
+          <animate attributeName="opacity" values="0.4;1;0.4" dur="2s" begin="0s" repeatCount="indefinite"/>
+        </line>
+        <line x1="15" y1="8" x2="8" y2="15" stroke="currentColor" stroke-width="1" stroke-linecap="round">
+          <animate attributeName="opacity" values="0.4;1;0.4" dur="2s" begin="0.5s" repeatCount="indefinite"/>
+        </line>
+        <line x1="8" y1="15" x2="1" y2="8" stroke="currentColor" stroke-width="1" stroke-linecap="round">
+          <animate attributeName="opacity" values="0.4;1;0.4" dur="2s" begin="1s" repeatCount="indefinite"/>
+        </line>
+        <line x1="1" y1="8" x2="8" y2="1" stroke="currentColor" stroke-width="1" stroke-linecap="round">
+          <animate attributeName="opacity" values="0.4;1;0.4" dur="2s" begin="1.5s" repeatCount="indefinite"/>
+        </line>
+        <!-- diagonal cross-links -->
+        <line x1="8" y1="1" x2="8" y2="15" stroke="currentColor" stroke-width=".5" stroke-dasharray="2,2" opacity=".35"/>
+        <line x1="1" y1="8" x2="15" y2="8" stroke="currentColor" stroke-width=".5" stroke-dasharray="2,2" opacity=".35"/>
+        <!-- nodes -->
+        <circle cx="8" cy="1" r="1.8" fill="currentColor"><animate attributeName="opacity" values="1;0.35;1" dur="2s" begin="0s" repeatCount="indefinite"/></circle>
+        <circle cx="15" cy="8" r="1.8" fill="currentColor"><animate attributeName="opacity" values="1;0.35;1" dur="2s" begin="0.5s" repeatCount="indefinite"/></circle>
+        <circle cx="8" cy="15" r="1.8" fill="currentColor"><animate attributeName="opacity" values="1;0.35;1" dur="2s" begin="1s" repeatCount="indefinite"/></circle>
+        <circle cx="1" cy="8" r="1.8" fill="currentColor"><animate attributeName="opacity" values="1;0.35;1" dur="2s" begin="1.5s" repeatCount="indefinite"/></circle>
+      </svg>
+      <span>Mesh</span>
     </a>` : ''}
     ${process.env.PRX_HERMES_ENABLED === 'Y' ? `<a id="dash-hermes-badge" href="/dashboard/hermes-config" class="hermes-agent-badge" title="Hermes — click to manage">
       <span id="dash-hermes-dot" class="hermes-pulse-dot"></span>
@@ -6055,6 +6127,111 @@ function renderSettings(vals, flash) {
         </div>
       </details>
 
+      <!-- Collective Intelligence Mesh -->
+      <details class="s-section" id="cortex-mesh" ${process.env.PRX_CORTEX_P2P_ENABLED === 'Y' ? 'open' : ''}>
+        <summary>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="3" r="2"/><circle cx="20" cy="12" r="2"/><circle cx="12" cy="21" r="2"/><circle cx="4" cy="12" r="2"/><line x1="12" y1="5" x2="20" y2="10"/><line x1="20" y1="14" x2="12" y2="19"/><line x1="12" y1="19" x2="4" y2="14"/><line x1="4" y1="10" x2="12" y2="5"/><line x1="12" y1="5" x2="12" y2="19" stroke-dasharray="2 2"/><line x1="4" y1="12" x2="20" y2="12" stroke-dasharray="2 2"/></svg>
+          Collective Intelligence Mesh
+          <svg id="s-mesh-live-icon" width="22" height="14" viewBox="0 0 44 14" xmlns="http://www.w3.org/2000/svg" style="opacity:${process.env.PRX_CORTEX_P2P_ENABLED === 'Y' ? '.35' : '.12'};flex-shrink:0;transition:opacity .5s;margin-left:.25rem"><style>#s-mesh-live-icon.live polyline{animation:sMeshWire 1.1s linear infinite}@keyframes sMeshWire{to{stroke-dashoffset:-24}}</style><polyline points="0,7 5,7 8,2 11,12 14,4 17,10 20,7 24,7 27,2 30,12 33,4 36,10 39,7 44,7" fill="none" stroke="#a78bfa" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="8 4"/></svg>
+          <span class="s-opt">Optional — requires P2P + Cortex</span>
+          ${process.env.PRX_CORTEX_P2P_ENABLED === 'Y' ? '<span class="nav-menu-flag" style="background:rgba(139,92,246,.2);color:#c4b5fd;border-color:rgba(139,92,246,.4)">active</span>' : ''}
+          <span class="s-chevron">›</span>
+        </summary>
+        <div class="s-body">
+          <div class="s-field span2">
+            <div class="s-hint" style="margin-top:0">
+              Propagates agent observations peer-to-peer across all connected nodes using the existing libp2p P2P network
+              (same port, same HMAC auth). Each node's AI agents contribute discoveries to a shared
+              <strong>cortex mesh</strong> — patterns, decisions, and anomalies observed by one agent become
+              available to agents on every peer within seconds.<br><br>
+              Observations confirmed by multiple independent nodes gain <strong>network confidence</strong>
+              (based on confirm count ÷ network size) and can trigger auto-promotion to the shared KB at a configurable
+              consensus threshold. Agents query the mesh at session start via a new <strong>Layer 0c</strong>
+              intelligence pass, surfacing multi-node-confirmed knowledge before the local KB walk.<br><br>
+              New nodes joining the network automatically receive a full observation dump from their first connected peer —
+              the collective intelligence grows organically as the mesh expands.<br><br>
+              <strong>Requirements:</strong> <code>PRX_P2P_ENABLED=Y</code> (P2P running) <strong>and</strong> <code>PRX_CORTEX_ENABLED=Y</code>.
+              A server restart is needed after enabling to subscribe to the cortex GossipSub topic.
+            </div>
+          </div>
+          ${process.env.PRX_P2P_ENABLED !== 'Y' || process.env.PRX_CORTEX_ENABLED !== 'Y' ? `
+          <div class="s-field span2">
+            <div style="display:flex;align-items:flex-start;gap:.55rem;background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:.65rem .9rem;font-size:.82rem;color:#92400e">
+              <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:1px"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+              <span>
+                ${process.env.PRX_P2P_ENABLED !== 'Y' ? '<strong>P2P is disabled</strong> — set <code>PRX_P2P_ENABLED=Y</code> in the P2P KB Sync section above first.' : ''}
+                ${process.env.PRX_CORTEX_ENABLED !== 'Y' ? '<strong>Cortex is disabled</strong> — set <code>PRX_CORTEX_ENABLED=Y</code> in the Cortex section above first.' : ''}
+              </span>
+            </div>
+          </div>` : ''}
+          ${fld('PRX_CORTEX_P2P_ENABLED','Enable Collective Intelligence Mesh','select',v('PRX_CORTEX_P2P_ENABLED') || 'N','','When Y, agent observations propagate across all connected P2P nodes in real time. Requires PRX_P2P_ENABLED=Y and PRX_CORTEX_ENABLED=Y. Restart required after enabling.',
+            [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled (restart required)'}])}
+          ${fld('PRX_CORTEX_QUERY_ENABLED','Allow cross-node queries','select',v('PRX_CORTEX_QUERY_ENABLED') || 'Y','','Y = agents can call GET /cortex/network/query during tasks to retrieve multi-node confirmed observations from the mesh. N = observations still sync but agents do not query.',
+            [{v:'Y',l:'Y — enabled (agents query mesh at session start)'},{v:'N',l:'N — sync-only (no agent queries)'}])}
+          ${fld('PRX_CORTEX_P2P_CONSENSUS_PROMOTE_PCT','Consensus promote threshold (%)','number',v('PRX_CORTEX_P2P_CONSENSUS_PROMOTE_PCT'),'50','Percentage of connected nodes that must independently confirm an observation before it is eligible for network-consensus auto-promotion to the shared KB. Example: 50 means at least half the mesh must agree. Requires PRX_CORTEX_AUTONOMY_LEVEL ≥ 2. Default: 50.')}
+
+          <!-- Live mesh stats panel -->
+          <div class="s-field span2" style="margin-top:1rem" id="mesh-stats-panel">
+            <span class="s-label" style="font-weight:600;display:flex;align-items:center;gap:.5rem">
+              Mesh Network Stats
+              <button onclick="refreshMeshStats()" style="font-size:.72rem;padding:.15rem .55rem;border:1px solid #d1d5db;border-radius:4px;background:#f9fafb;cursor:pointer;color:#374151">↻ Refresh</button>
+            </span>
+            <div id="mesh-stats-content" style="margin-top:.5rem;font-family:monospace;font-size:.78rem;background:#0f172a;color:#94a3b8;border-radius:6px;padding:.75rem 1rem;min-height:3rem">
+              ${process.env.PRX_CORTEX_P2P_ENABLED === 'Y'
+                ? '<span style="color:#64748b">Loading mesh stats…</span>'
+                : '<span style="color:#64748b">Collective Intelligence Mesh is disabled</span>'}
+            </div>
+          </div>
+          <script>
+            function refreshMeshStats() {
+              const el = document.getElementById('mesh-stats-content');
+              if (!el) return;
+              el.innerHTML = '<span style="color:#64748b">Fetching…</span>';
+              Promise.all([
+                fetch('/dashboard/cortex/network/peers').then(r => r.json()),
+                fetch('/dashboard/cortex/network/query?minConfirms=2&limit=10').then(r => r.json()),
+              ]).then(([peers, query]) => {
+                const liveIcon = document.getElementById('s-mesh-live-icon');
+                const hasData  = (peers.cortexObsIn || 0) + (peers.cortexObsOut || 0) > 0;
+                if (liveIcon) { liveIcon.style.opacity = hasData ? '1' : '.35'; liveIcon.classList.toggle('live', hasData); }
+                if (!peers.cortexMeshEnabled) {
+                  el.innerHTML = '<span style="color:#64748b">Mesh disabled — set PRX_CORTEX_P2P_ENABLED=Y and restart.</span>';
+                  return;
+                }
+                const obsLine = '<div style="color:#fbbf24;margin-bottom:.5rem">⚡ Observations in mesh: ' + (peers.cortexTotal || 0) + '</div>';
+                const statsLine = '<div style="color:#64748b;font-size:.72rem;margin-bottom:.75rem">' +
+                  'Received from peers: ' + (peers.cortexObsIn || 0) +
+                  ' &nbsp;·&nbsp; Broadcast out: ' + (peers.cortexObsOut || 0) +
+                  ' &nbsp;·&nbsp; Connected peers: ' + (peers.peers || []).length + '</div>';
+                let topObs = '<div style="color:#475569;font-size:.7rem;margin-bottom:.3rem">Top network-confirmed observations (≥2 nodes):</div>';
+                if (query.ok && query.observations && query.observations.length) {
+                  topObs += query.observations.slice(0, 5).map(o => {
+                    const v = o.value || {};
+                    const cc = (v.confirmCount || 1);
+                    const nodes = (v.sourceNodes || []).length;
+                    return '<div style="margin-bottom:.3rem;color:#a78bfa">◆ ' + esc(o.key) + '</div>' +
+                           '<div style="color:#64748b;font-size:.7rem;margin-left:1rem;margin-bottom:.4rem">type:' + (v.type||'—') + ' confirms:' + cc + ' nodes:' + nodes + (v.summary ? ' — ' + esc(v.summary.slice(0,80)) : '') + '</div>';
+                  }).join('');
+                } else {
+                  topObs += '<div style="color:#64748b;font-size:.7rem">No multi-node observations yet — peers need to independently confirm the same key.</div>';
+                }
+                el.innerHTML = obsLine + statsLine + topObs;
+              }).catch(e => {
+                el.innerHTML = '<span style="color:#f87171">Error: ' + e.message + '</span>';
+              });
+              function esc(s) { return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+            }
+            if (document.readyState === 'loading') {
+              document.addEventListener('DOMContentLoaded', () => {
+                if (${process.env.PRX_CORTEX_P2P_ENABLED === 'Y' ? 'true' : 'false'}) refreshMeshStats();
+              });
+            } else {
+              if (${process.env.PRX_CORTEX_P2P_ENABLED === 'Y' ? 'true' : 'false'}) refreshMeshStats();
+            }
+          </script>
+        </div>
+      </details>
+
       <!-- Advanced / disabled-by-default workers -->
       <details class="s-section" id="advanced-workers">
         <summary>
@@ -7979,6 +8156,58 @@ router.get('/p2p/peers', (_req, res) => {
   res.json(p2pBridge.getState());
 });
 
+// ── Collective Intelligence Mesh — query & peer API ───────────────────────────
+
+router.get('/cortex/network/peers', (_req, res) => {
+  const state = p2pBridge.getState();
+  res.json({
+    ok:               true,
+    cortexMeshEnabled: process.env.PRX_CORTEX_P2P_ENABLED === 'Y',
+    peers:            state.peers || [],
+    cortexObsIn:      state.cortexObsIn  || 0,
+    cortexObsOut:     state.cortexObsOut || 0,
+    cortexTotal:      state.cortexTotal  || 0,
+    lastCortexSync:   state.lastCortexSync || null,
+    selfId:           state.selfId || null,
+  });
+});
+
+router.get('/cortex/network/query', (req, res) => {
+  if (process.env.PRX_CORTEX_ENABLED !== 'Y')
+    return res.json({ ok: false, error: 'Cortex not enabled (PRX_CORTEX_ENABLED=Y required)' });
+
+  const cortex      = require('../runner/cortexLayer');
+  const mem         = cortex.memory();
+  const tag         = (req.query.tag         || 'agent-observed').toString().slice(0, 64);
+  const type        = (req.query.type        || '').toString().slice(0, 32) || null;
+  const minConfirms = Math.max(1, parseInt(req.query.minConfirms || '1', 10));
+  const limit       = Math.min(200, parseInt(req.query.limit || '50', 10));
+
+  let observations = mem.list({ tag });
+  if (type)            observations = observations.filter(o => o.value && o.value.type === type);
+  if (minConfirms > 1) observations = observations.filter(o => (o.value && (o.value.confirmCount || 1)) >= minConfirms);
+
+  // Sort: network-confirmed first (confirmCount desc), then newest
+  observations.sort((a, b) => {
+    const ca = (a.value && a.value.confirmCount) || 1;
+    const cb = (b.value && b.value.confirmCount) || 1;
+    if (cb !== ca) return cb - ca;
+    return (b.ts || 0) - (a.ts || 0);
+  });
+  observations = observations.slice(0, limit);
+
+  const p2pState = p2pBridge.getState();
+  res.json({
+    ok:               true,
+    observations,
+    total:            observations.length,
+    networkPeers:     (p2pState.peers || []).length,
+    cortexObsIn:      p2pState.cortexObsIn  || 0,
+    cortexObsOut:     p2pState.cortexObsOut || 0,
+    cortexMeshEnabled: process.env.PRX_CORTEX_P2P_ENABLED === 'Y',
+  });
+});
+
 // ── Settings ──────────────────────────────────────────────────────────────────
 
 router.get('/settings', (_req, res) => {
@@ -8190,6 +8419,7 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'PRX_CORTEX_ENABLED', 'PRX_CORTEX_DEBOUNCE_SECS', 'PRX_CORTEX_RESYNC_HOURS', 'PRX_CORTEX_DISTRIBUTED', 'PRX_CORTEX_FORCE_BUILDER',
     'PRX_CORTEX_AUTONOMY_LEVEL', 'PRX_CORTEX_AUTO_PROMOTE_THRESHOLD', 'PRX_CORTEX_AUTO_PROMOTE_DELAY_HOURS', 'PRX_CORTEX_AUTO_PROMOTE_MIN_AGE_DAYS',
     'PRX_REPOWISE_ENABLED', 'PRX_REPOWISE_INTERVAL_DAYS', 'PRX_REPOWISE_PATH', 'PRX_REPOWISE_AUTO_INSTALL',
+    'PRX_CORTEX_P2P_ENABLED', 'PRX_CORTEX_QUERY_ENABLED', 'PRX_CORTEX_P2P_CONSENSUS_PROMOTE_PCT',
     'PRX_WASENDER_ENABLED', 'PRX_WASENDER_API_KEY', 'PRX_WASENDER_TO',
     'PRX_WASENDER_PUBLIC_URL', 'PRX_WASENDER_EVENTS', 'PRX_WASENDER_PDF_PASSWORD',
     'PRX_HERMES_ENABLED', 'PRX_HERMES_GATEWAY_URL', 'PRX_HERMES_SECRET', 'PRX_HERMES_JIRA_WRITEBACK',

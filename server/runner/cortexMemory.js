@@ -230,6 +230,19 @@ class LmdbBackend {
     return entries.sort((a, b) => b.seq - a.seq).slice(0, n);
   }
 
+  list(opts = {}) {
+    const { tag } = opts;
+    const now = nowMs();
+    const result = [];
+    for (const { key, value } of this._db.getRange({ start: 'e:', end: 'e;' })) {
+      if (!value) continue;
+      if (isExpired(value)) continue;
+      if (tag && !(value.tags || []).includes(tag)) continue;
+      result.push({ key: key.slice(2), value: value.v, tags: value.tags || [], ts: value.ts });
+    }
+    return result;
+  }
+
   // Scan and remove expired entries.
   compact() {
     const now      = nowMs();
@@ -432,6 +445,26 @@ class JsonlBackend {
     return [...bucket].filter(k => { const m = this._meta[k]; return m && !(m.ttl > 0 && (now - m.ts) > m.ttl); });
   }
 
+  list(opts = {}) {
+    const { tag } = opts;
+    const now = nowMs();
+    return Object.keys(this._meta)
+      .filter(k => {
+        const m = this._meta[k];
+        if (!m) return false;
+        if (m.ttl > 0 && (now - m.ts) > m.ttl) return false;
+        if (tag && !(m.tags || []).includes(tag)) return false;
+        return true;
+      })
+      .map(k => {
+        const v = this.get(k);
+        if (v === null) return null;
+        const m = this._meta[k];
+        return { key: k, value: v, tags: m.tags || [], ts: m.ts };
+      })
+      .filter(Boolean);
+  }
+
   recent(n = 10, opts = {}) {
     const { tag } = opts;
     const raw  = readSafe(this._store);
@@ -615,6 +648,44 @@ class CortexMemory {
   del(key)                            { return this._backend.del(key); }
   byTag(tag)                          { return this._backend.byTag(tag); }
   recent(n = 10, opts = {})           { return this._backend.recent(n, opts); }
+  list(opts = {})                     { return this._backend.list(opts); }
+
+  // Merge an observation received from a network peer.
+  // Preserves local promotion/rejection state; takes max confirmCount.
+  mergeObservation(key, value, tags, sourceNode) {
+    if (!key || !value) return null;
+    const existing = this.get(key);
+    const prev     = (existing && typeof existing === 'object') ? existing : {};
+
+    const existingNodes = new Set(prev.sourceNodes || []);
+    if (sourceNode) existingNodes.add(sourceNode);
+
+    const confirmCount = Math.max(prev.confirmCount || 0, value.confirmCount || 0);
+
+    const merged = {
+      type:        value.type    || prev.type    || 'context',
+      summary:     value.summary || prev.summary || '',
+      ticket:      value.ticket  || prev.ticket  || null,
+      ts:          Math.max(value.ts || 0, prev.ts || 0) || nowMs(),
+      raw:         value.raw  ?? prev.raw  ?? null,
+      persona:     value.persona || prev.persona || null,
+      confirmCount,
+      sourceNodes: [...existingNodes],
+      promoted:             prev.promoted             || false,
+      rejected:             prev.rejected             || false,
+      queuedForPromotionAt: prev.queuedForPromotionAt || null,
+      promotedTo:           prev.promotedTo           || null,
+      promotedAt:           prev.promotedAt           || null,
+      mergedAt:             nowMs(),
+    };
+
+    const mergedTags = new Set(tags || []);
+    if (!mergedTags.has('agent-observed')) mergedTags.add('agent-observed');
+    if (merged.type) mergedTags.add(merged.type);
+    if (merged.type === 'session-summary') mergedTags.add('session-memory');
+
+    return this.put(key, merged, { tags: [...mergedTags], ttl: 0 });
+  }
 
   async getOrCompute(key, factory, opts = {}) {
     const existing = this.get(key);
