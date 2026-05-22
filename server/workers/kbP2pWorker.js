@@ -87,7 +87,7 @@ function log(level, msg) {
 //
 // In-worker observation store — populated from:
 //   (a) main thread snapshots   (cortex-snapshot / cortex-broadcast messages)
-//   (b) peer GossipSub messages (CORTEX_TOPIC)
+//   (b) peer GossipSub messages (CORTEX_OBS_TOPIC / CORTEX_SESSION_TOPIC / CORTEX_TOPIC_LEGACY)
 // Used to answer /prevoyant/cortex-query/1 stream requests from other peers.
 
 const MAX_CORTEX_CACHE = 2000;

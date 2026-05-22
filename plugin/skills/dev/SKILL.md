@@ -1706,19 +1706,21 @@ If `PRX_CORTEX_ENABLED=N` or the cortex directory does not exist, skip Layer 0 s
 
 **Layer 0c — Collective Intelligence Network Query (runs after Layer 0, optional):**
 
-When `PRX_CORTEX_P2P_ENABLED=Y` is set, the Cortex layer has been enhanced with a **Collective Intelligence Mesh** — a P2P-shared observation store where every connected node's agent observations are merged in real time via the `prevoyant/cortex-sync/1` GossipSub topic. Observations confirmed by multiple independent nodes carry higher authority (`confirmCount ≥ 2`).
+When `PRX_CORTEX_P2P_ENABLED=Y` is set, the Cortex layer is enhanced with a **Collective Intelligence Mesh** — a P2P-shared observation store where every connected node's agent observations are merged in real time. The mesh uses two typed GossipSub topics: `prevoyant/cortex-sync/observations/1` for high-signal facts (patterns, decisions, architectural findings, lessons learned) and `prevoyant/cortex-sync/sessions/1` for session summaries. Only quality observations propagate — low-signal raw context dumps are gated on the server side before broadcast. Observations confirmed by multiple independent nodes carry higher authority (`confirmCount ≥ 2`).
 
-At session start, query the mesh for high-confidence cross-node observations relevant to this ticket:
+At session start, query the mesh for high-confidence cross-node observations:
 
 ```bash
 # Only run when Collective Intelligence Mesh is enabled
 if [ "${PRX_CORTEX_P2P_ENABLED:-N}" = "Y" ] && [ "${PRX_CORTEX_QUERY_ENABLED:-Y}" = "Y" ]; then
   SERVER="http://localhost:${PRX_SERVER_PORT:-3000}"
-  TICKET_KEY="${TICKET_KEY:-}"
 
-  # Fetch network-confirmed observations (confirmed by ≥2 nodes, latest 20)
+  # Fetch network-confirmed observations (confirmed by ≥2 nodes, latest 20).
+  # No type filter needed — broadcast-side quality gate ensures only high-signal
+  # observations (pattern, decision, architectural-finding, lesson-learned, etc.)
+  # reach the mesh; generic context entries require a 30+ char summary to qualify.
   MESH_RESP=$(curl -s -m 5 \
-    "$SERVER/dashboard/cortex/network/query?minConfirms=2&limit=20&type=context" \
+    "$SERVER/dashboard/cortex/network/query?minConfirms=2&limit=20" \
     2>/dev/null)
 
   if [ -n "$MESH_RESP" ]; then
@@ -1734,9 +1736,10 @@ fi
 - Include relevant mesh observations in the **Prior Knowledge** block under a `NETWORK INTELLIGENCE` heading, tagging each with `[confirmed by N nodes]`.
 - Observations with `confirmCount ≥ 3` and `promoted: true` carry the same authority as local cortex facts — use them to narrow Layers 1b/2/3 the same way as Layer 0 cortex hits.
 - Observations with `confirmCount = 2` are supporting evidence — include them but do not replace KB reads on their basis alone.
+- `session-summary` type observations give context on what other nodes worked on recently; use them to avoid re-discovering known patterns but don't let them substitute ticket-specific reads.
 - Never repeat a fact already covered by Layer 0 cortex hits — the mesh supplements, it does not duplicate.
 
-**What mesh observations contain:** agent-recorded context from sessions on other nodes — ticket decisions, architectural findings, patterns discovered mid-implementation, lessons learned that haven't yet propagated to the full KB. They grow organically as more nodes join the network and run sessions.
+**What mesh observations contain:** only quality-gated agent discoveries — patterns, architectural decisions, lessons learned, and hotspots found during sessions on other nodes. Low-value raw context writes never reach the mesh (filtered server-side before broadcast). They grow organically as more nodes join and run sessions.
 
 **When to skip Layer 0c:**
 - `PRX_CORTEX_P2P_ENABLED=N` — mesh disabled, skip silently.
