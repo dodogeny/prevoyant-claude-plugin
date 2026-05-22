@@ -697,11 +697,23 @@ else
     BREW=$(brew_bin 2>/dev/null || echo "")
     [ -n "$BREW" ] && "$BREW" install qpdf 2>&1 | tail -5 && QPDF_OK=1
   elif command -v apt-get &>/dev/null; then
-    sudo apt-get install -y qpdf 2>&1 | tail -3 && QPDF_OK=1
+    if sudo -n true 2>/dev/null; then
+      sudo apt-get install -y qpdf 2>&1 | tail -3 && QPDF_OK=1
+    else
+      warn "qpdf skipped — sudo not available non-interactively. Optional; only needed for WhatsApp PDF encryption."
+    fi
   elif command -v dnf &>/dev/null; then
-    sudo dnf install -y qpdf 2>&1 | tail -3 && QPDF_OK=1
+    if sudo -n true 2>/dev/null; then
+      sudo dnf install -y qpdf 2>&1 | tail -3 && QPDF_OK=1
+    else
+      warn "qpdf skipped — sudo not available non-interactively. Optional; only needed for WhatsApp PDF encryption."
+    fi
   elif command -v yum &>/dev/null; then
-    sudo yum install -y qpdf 2>&1 | tail -3 && QPDF_OK=1
+    if sudo -n true 2>/dev/null; then
+      sudo yum install -y qpdf 2>&1 | tail -3 && QPDF_OK=1
+    else
+      warn "qpdf skipped — sudo not available non-interactively. Optional; only needed for WhatsApp PDF encryption."
+    fi
   fi
 
   if command -v qpdf &>/dev/null; then
@@ -915,7 +927,7 @@ else
       info "  Alternatively, check https://github.com/kriszyp/lmdb-js/releases for a"
       info "  newer lmdb that ships a prebuilt for your Node.js version."
     else
-      err "npm install in server/ failed (exit $__NPM_EXIT)"
+      err "npm install in server/ failed (exit $_NPM_EXIT)"
       info "Check the output above. To retry with verbose output:"
       info "  npm --prefix '$SERVER_DIR' install --loglevel=verbose"
     fi
@@ -1193,7 +1205,17 @@ printf "\n═══════════════════════�
 if [ "$ERRORS" -eq 0 ]; then
   printf "${GREEN}${BOLD}Setup complete!${NC}\n"
 else
-  printf "${YELLOW}${BOLD}Setup finished with %d issue(s) — see above.${NC}\n" "$ERRORS"
+  printf "${YELLOW}${BOLD}Setup finished with %d issue(s).${NC}\n" "$ERRORS"
+
+  # Surface actionable fix commands for the most common hard errors so the user
+  # doesn't have to scroll back through the full output.
+  if [ ! -d "$SERVER_DIR/node_modules/.bin" ] && command -v npm &>/dev/null; then
+    printf "\n${BOLD}Fix required — server/node_modules not installed:${NC}\n"
+    if [ "$_OS" = "Linux" ]; then
+      printf "  sudo apt-get install -y build-essential python3   # if you see 'gyp ERR'\n"
+    fi
+    printf "  npm --prefix '%s' install\n" "$SERVER_DIR"
+  fi
 fi
 
 printf "\n${BOLD}Next steps:${NC}\n"

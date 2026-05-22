@@ -357,17 +357,44 @@ if (-not (Test-Path $ServerPkg)) {
     ok "server/node_modules already present — skipping npm install"
 } else {
     info "Running npm install in server/ (libp2p, lmdb, express, …)..."
+
+    # Capture full output to a temp file AND stream to terminal.
+    # $LASTEXITCODE after npm is checked; Select-Object -Last 5 would lose it.
+    $NpmLog = Join-Path $env:TEMP "prx-npm-$([System.IO.Path]::GetRandomFileName()).log"
     Push-Location $ServerDir
-    npm install --loglevel=warn 2>&1 | Select-Object -Last 5 | ForEach-Object { info $_ }
+    npm install --loglevel=warn 2>&1 | Tee-Object -FilePath $NpmLog
+    $NpmExit = $LASTEXITCODE
     Pop-Location
-    if (Test-Path $ServerMods) {
+
+    if ($NpmExit -eq 0 -and (Test-Path $ServerMods)) {
         ok "server npm dependencies installed"
+        Remove-Item $NpmLog -ErrorAction SilentlyContinue
     } else {
-        err "npm install in server/ failed — check above for errors"
-        if (-not $BuildToolsOk) {
-            info "Build tool check above failed — this is the likely cause; install VS Build Tools first"
+        # Diagnose the failure
+        $NpmOutput = if (Test-Path $NpmLog) { Get-Content $NpmLog -Raw } else { '' }
+        $IsGypErr  = $NpmOutput -match 'gyp ERR|node-pre-gyp|node-gyp|MSBUILD : error|cl\.exe|Cannot find module.*node-gyp|ELIFECYCLE'
+
+        if ($IsGypErr) {
+            err "npm install failed — lmdb native module could not compile"
+            info ""
+            info "  lmdb ships prebuilt binaries for Windows x64 but none matched this"
+            info "  Node.js version, so npm tried to compile from source and failed."
+            info ""
+            info "  Fix — install Visual Studio C++ Build Tools, then retry:"
+            info "    winget install Microsoft.VisualStudio.2022.BuildTools"
+            info "    # Select 'Desktop development with C++' when prompted"
+            info "    Push-Location server ; npm install --loglevel=warn ; Pop-Location"
+            info ""
+            info "  Or check https://github.com/kriszyp/lmdb-js/releases for a newer"
+            info "  lmdb prebuilt matching your Node.js version."
+        } else {
+            err "npm install in server/ failed (exit $NpmExit)"
+            info "Check output above. To retry with verbose logging:"
+            info "  Push-Location '$ServerDir' ; npm install --loglevel=verbose ; Pop-Location"
         }
-        info "Retry: Push-Location server ; npm install --loglevel=warn ; Pop-Location"
+
+        impact "Prevoyant Server will not start until 'npm install' in server/ succeeds"
+        Remove-Item $NpmLog -ErrorAction SilentlyContinue
     }
 }
 
@@ -586,7 +613,14 @@ Write-Host "`n======================================"
 if ($ERRORS -eq 0) {
     Write-Host "Setup complete!" -ForegroundColor Green
 } else {
-    Write-Host "Setup finished with $ERRORS issue(s) — see above." -ForegroundColor Yellow
+    Write-Host "Setup finished with $ERRORS issue(s)." -ForegroundColor Yellow
+
+    # Surface actionable fix commands for the most common hard errors.
+    if (-not (Test-Path $ServerMods) -and (cmd_exists 'npm')) {
+        Write-Host "`nFix required — server/node_modules not installed:" -ForegroundColor Yellow
+        Write-Host "  winget install Microsoft.VisualStudio.2022.BuildTools   # if you see 'gyp ERR'"
+        Write-Host "  Push-Location '$ServerDir' ; npm install --loglevel=warn ; Pop-Location"
+    }
 }
 
 Write-Host "`nNext steps:"
