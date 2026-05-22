@@ -26,7 +26,7 @@ fi
 # ── Dependencies ──────────────────────────────────────────────────────────────
 if [ ! -d "$SERVER_DIR/node_modules" ]; then
   echo "[prevoyant-server] node_modules not found — running npm install..."
-  npm install --prefix "$SERVER_DIR" --silent
+  npm install --prefix "$SERVER_DIR" --loglevel=warn
   echo "[prevoyant-server] Dependencies installed."
 fi
 

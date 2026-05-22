@@ -10,7 +10,7 @@
   "plugins": [
     {
       "name": "prevoyant",
-      "version": "1.3.3",
+      "version": "1.4.0",
       "source": "./plugin",
       "description": "Claude Code plugin for structured Jira-driven developer workflow"
     }

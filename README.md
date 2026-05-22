@@ -1,4 +1,4 @@
-# Prevoyant - Claude Code Plugin `v1.3.5`
+# Prevoyant - Claude Code Plugin `v1.4.0`
 
 **Prevoyant** is a [Claude Code](https://claude.ai/code) plugin — an AI agent team that runs a structured, end-to-end developer workflow for Jira tickets. Four modes:
 
@@ -88,6 +88,7 @@ git clone https://github.com/dodogeny/prevoyant-claude-plugin.git `
 
 The setup script:
 - Installs prerequisites: `uvx` (Jira MCP), Node.js (budget tracking), pandoc (PDF reports)
+- Runs `npm install` in `server/` (libp2p, lmdb, express, …) and warns if native build tools are missing
 - **Prompts for your Jira URL, email, API token, and repo path** — writes them to `.env` directly
 - Registers the plugin marketplace in `~/.claude/settings.json`
 - Installs and enables the `prevoyant@dodogeny` plugin
@@ -266,11 +267,15 @@ Connects Prevoyant to a local [Hermes](https://github.com/nousresearch/hermes-ag
 | `PRX_HERMES_GATEWAY_URL` | `http://localhost:8080` | Base URL of the Hermes gateway process. Prevoyant POSTs job results here so Hermes can deliver them to Telegram, Slack, Discord, etc. |
 | `PRX_HERMES_SECRET` | — | Shared secret Hermes must send in the `X-Hermes-Secret` header when calling `/internal/enqueue`. Leave blank to skip validation (trusted network only). |
 
-### P2P KB Sync (optional)
+### P2P KB Sync + Collective Intelligence Mesh (optional)
 
 Peer-to-peer knowledge-base propagation via libp2p. When `PRX_P2P_ENABLED=Y`, the server starts a libp2p node that discovers peers via mDNS (LAN) and optional bootstrap nodes, then broadcasts KB changes over GossipSub — no Redis or Upstash account needed. When P2P is active, the Redis/Upstash real-time sync fields in Settings are automatically disabled.
 
-Set `PRX_P2P_ENABLED=Y` to activate.
+When `PRX_CORTEX_P2P_ENABLED=Y`, extends into the **Collective Intelligence Mesh**: every node's Cortex observations are broadcast across all connected nodes, confirmed by cross-node evidence, and auto-promoted to KB when consensus thresholds are met. New nodes joining the mesh instantly inherit the accumulated intelligence of all connected nodes via the `/prevoyant/cortex-query/1` stream protocol.
+
+→ **[Full documentation: docs/P2P.md](docs/P2P.md)**
+
+Set `PRX_P2P_ENABLED=Y` to activate Tier 1 (KB sync). Add `PRX_CORTEX_P2P_ENABLED=Y` for Tier 2 (intelligence mesh).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -284,6 +289,14 @@ Set `PRX_P2P_ENABLED=Y` to activate.
 | `PRX_P2P_TRICKLE` | `N` | Set to `Y` to enable trickle mode: files are sent in small adaptive batches rather than one bulk message. Batch size and inter-batch delay self-adjust based on measured network RTT (1–10 files/batch, 100 ms–10 s delay). Default `N` is bulk mode. |
 | `PRX_P2P_RSA_PRIVATE_KEY` | — | PEM-encoded RSA-2048 private key for future per-peer key exchange. Generate from Settings → P2P KB Sync using the in-browser Web Crypto API. Stored as a single-line `"\n"`-escaped value in `.env`. |
 | `PRX_P2P_RSA_PUBLIC_KEY` | — | PEM-encoded RSA-2048 public key corresponding to `PRX_P2P_RSA_PRIVATE_KEY`. |
+
+**Collective Intelligence Mesh** (`PRX_CORTEX_P2P_ENABLED=Y` — requires Tier 1 above):
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `PRX_CORTEX_P2P_ENABLED` | `N` | Set to `Y` to enable the Collective Intelligence Mesh. Broadcasts Cortex observations across nodes; new nodes inherit the network's full observation cache on first connect. Requires `PRX_P2P_ENABLED=Y` and `PRX_CORTEX_ENABLED=Y`. |
+| `PRX_CORTEX_QUERY_ENABLED` | `N` | Expose `GET /dashboard/cortex/network/query` for agent Layer 0c queries. |
+| `PRX_CORTEX_P2P_CONSENSUS_PROMOTE_PCT` | `0` | Minimum % of connected peers that must have confirmed an observation before it can auto-promote to KB. `0` disables the peer-consensus gate (local `PRX_CORTEX_AUTO_PROMOTE_THRESHOLD` still applies). |
 
 > **Precedence:** when `PRX_P2P_ENABLED=Y`, `startKbSync()` (Redis/Upstash) is skipped automatically. `PRX_REALTIME_KB_SYNC`, `PRX_UPSTASH_REDIS_URL`, `PRX_UPSTASH_REDIS_TOKEN`, and `PRX_KB_SYNC_POLL_SECS` have no effect while P2P is active. `PRX_KB_SYNC_TRIGGER`, `PRX_KB_SYNC_MACHINE`, and `PRX_KB_SYNC_DEBOUNCE_SECS` are still read by the P2P worker.
 
@@ -423,6 +436,60 @@ Verify: `graphify --version`. If `graphify` is not on PATH after install, run `u
 
 ### Git
 The repository at `REPO_DIR` must be present locally. The skill creates branches there.
+
+### P2P KB Sync — libp2p prerequisites (`PRX_P2P_ENABLED=Y` only)
+
+The Prevoyant Server's P2P layer uses [js-libp2p](https://github.com/libp2p/js-libp2p) with TCP transport, Noise encryption, Yamux multiplexing, GossipSub, and mDNS peer discovery. Most packages are pure JavaScript, but `lmdb` (used by the Cortex layer) ships prebuilt native binaries and falls back to compilation if no matching prebuilt exists.
+
+#### Native build tools (needed only if prebuilt binaries are absent)
+
+| Platform | When needed | How to install |
+|----------|-------------|----------------|
+| **macOS** | Non-standard arch or prebuilt mismatch | `xcode-select --install` |
+| **Linux** | Missing `cc`, `make`, or `python3` | `sudo apt install -y build-essential python3` (Debian/Ubuntu)<br>`sudo dnf groupinstall 'Development Tools' && sudo dnf install python3` (RHEL/Fedora) |
+| **Windows** | Prebuilt binary unavailable (rare on x64) | `winget install Microsoft.VisualStudio.2022.BuildTools`<br>or install VS 2019/2022 with **Desktop development with C++**<br>or `npm install --global windows-build-tools` (Node 16-era fallback) |
+
+> **In practice**: lmdb ships prebuilt binaries for macOS x64/arm64, Linux x64/arm64, and Windows x64. Build tools are only needed if your platform falls outside these targets. If `npm install` in `server/` fails with `gyp ERR! build error`, install the tools for your platform above and retry.
+
+#### Firewall — TCP port for peer connectivity
+
+Peers on other machines reach your node on `PRX_P2P_PORT` (default `7001`). Open this port before expecting WAN peers.
+
+**macOS:**
+```
+System Settings → Firewall → Options → allow incoming connections for node
+```
+Or temporarily disable the firewall for testing (not recommended in production).
+
+**Linux (ufw):**
+```bash
+sudo ufw allow 7001/tcp
+```
+
+**Linux (firewalld):**
+```bash
+sudo firewall-cmd --permanent --add-port=7001/tcp && sudo firewall-cmd --reload
+```
+
+**Windows (PowerShell — run as Administrator):**
+```powershell
+New-NetFirewallRule -DisplayName "Prevoyant P2P" -Direction Inbound `
+  -Protocol TCP -LocalPort 7001 -Action Allow
+```
+
+> Substitute `7001` with your actual `PRX_P2P_PORT` value if you changed it.
+
+#### mDNS LAN discovery — platform notes
+
+mDNS (used for automatic peer discovery on the local network) has platform-specific requirements:
+
+| Platform | Notes |
+|----------|-------|
+| **macOS** | Works out of the box via Bonjour. No extra setup needed. |
+| **Linux** | Works if port 5353 UDP is not blocked. Some corporate firewalls block mDNS — disable `PRX_P2P_MDNS_ENABLED` and use `PRX_P2P_BOOTSTRAP_NODES` for WAN-only setups. |
+| **Windows** | Requires the network adapter profile to be set to **Private** (not Public). Public profile blocks multicast. Fix:<br>`Settings → Network → [adapter] → Properties → Private network`<br>or PowerShell: `Set-NetConnectionProfile -InterfaceAlias (Get-NetAdapter | Where-Object Status -eq Up | Select-Object -First 1).Name -NetworkCategory Private` |
+
+> If mDNS doesn't discover peers, set `PRX_P2P_BOOTSTRAP_NODES` with the multiaddr of at least one known peer and disable `PRX_P2P_MDNS_ENABLED=N`. The server dashboard shows live peer count so you can verify discovery is working.
 
 ---
 
@@ -614,7 +681,7 @@ An optional Node.js service that runs alongside the plugin as an always-on ambie
 - **Disk monitor** — tracks `~/.prevoyant/` disk usage against a configurable quota; alerts at threshold and runs periodic cleanup (sessions, server logs, watch logs, KB Flow Analyst run logs)
 - **Update checker** — polls GitHub for new plugin releases and surfaces an upgrade prompt on the dashboard
 - **WhatsApp notifications** — sends ticket and report events via WaSender API (zero new dependencies)
-- **P2P KB sync** — optional libp2p transport layer (TCP · Noise · Yamux · GossipSub) for direct machine-to-machine KB propagation without Redis or Upstash; supports trickle mode, AES-256-GCM encryption, mDNS LAN discovery, and RSA-2048 node identity. Dashboard shows live peer count, animated mesh topology, and sync counters. Takes precedence over Redis sync when active.
+- **P2P KB sync + Collective Intelligence Mesh** — optional libp2p transport layer (TCP · Noise · Yamux · GossipSub) for direct machine-to-machine KB propagation without Redis or Upstash; supports trickle mode, AES-256-GCM encryption, mDNS LAN discovery, and RSA-2048 node identity. When `PRX_CORTEX_P2P_ENABLED=Y`, extends into a Collective Intelligence Mesh: Cortex observations are broadcast across all connected nodes, confirmed by cross-node evidence, and auto-promoted to KB when consensus thresholds are met — new nodes inherit the full network's accumulated intelligence on first connect. Dashboard shows live peer count, animated mesh topology, and sync counters. Takes precedence over Redis sync when active. **→ [docs/P2P.md](docs/P2P.md)**
 - **Redis memory index** — dual-backend agent memory (Redis primary, JSON fallback) for KB query enrichment
 - **Session persistence** — state survives server restarts; automatic PDF report discovery
 
@@ -770,7 +837,11 @@ Standalone mode with no Jira ticket. Processes all three knowledge-buildup queue
 │       ├── stop.cmd              # Stop server (Windows — CMD / double-click wrapper)
 │       └── ensure-qpdf.js        # Checks and installs qpdf for PDF password protection
 ├── docs/
-│   └── prevoyant-server.md       # Full Prevoyant Server documentation
+│   ├── prevoyant-server.md       # Full Prevoyant Server documentation
+│   ├── CORTEX.md                 # Cortex intelligence layer — synthesis, distribution, repowise
+│   ├── AUTONOMY.md               # Cortex autonomy levels — confidence-gated self-improvement
+│   ├── P2P.md                    # P2P Intelligence Network — KB sync & Collective Intelligence Mesh
+│   └── hermes-integration.md     # Hermes integration — multi-platform notifications + routing
 ├── scripts/
 │   ├── setup.sh                  # One-shot prerequisite installer (macOS / Linux / WSL / Git Bash)
 │   ├── setup.ps1                 # One-shot prerequisite installer (Windows — PowerShell)

@@ -748,7 +748,7 @@ step "6/11  graphify  (codebase knowledge graph)  [augments grep/ast-grep]"
 # SKILL.md Step 5 (Pass 0 structural search) and the KB integrity sweep at
 # Step 0a (auto-heal stale file:line refs against the live symbol graph).
 # CLI is installed here; the initial graph extraction runs at the end of
-# step 10 once .env has been written and PRX_REPO_DIR is known.
+# step 11 once .env has been written and PRX_REPO_DIR is known.
 
 if command -v graphify &>/dev/null; then
   ok "graphify already installed ($(graphify --version 2>/dev/null | head -1 || echo 'found'))"
@@ -797,6 +797,53 @@ step "7/11  Server npm dependencies  (libp2p, lmdb, express, …)  [required]"
 
 SERVER_DIR="$PROJECT_ROOT/server"
 
+# ── 7a. Native build-tool probe (needed if lmdb/libp2p prebuilts are absent) ─
+# lmdb and some libp2p modules ship prebuilt binaries for common platforms.
+# If no matching prebuilt exists, npm falls back to compiling from source and
+# will fail with a cryptic error unless build tools are present.  We probe
+# here so the failure message is actionable rather than a raw gyp stack trace.
+_OS="$(uname -s 2>/dev/null)"
+_BUILD_TOOLS_OK=1
+case "$_OS" in
+  Darwin)
+    if ! xcode-select -p &>/dev/null; then
+      warn "Xcode Command Line Tools not found — required if lmdb prebuilts are absent"
+      info "Install with: xcode-select --install"
+      info "Then re-run setup.  lmdb ships prebuilt binaries for macOS x64/arm64, so"
+      info "build tools are usually only needed on non-standard architectures."
+      _BUILD_TOOLS_OK=0
+    fi
+    ;;
+  Linux)
+    _MISSING_TOOLS=""
+    command -v cc  &>/dev/null || _MISSING_TOOLS="$_MISSING_TOOLS cc(gcc)"
+    command -v make &>/dev/null || _MISSING_TOOLS="$_MISSING_TOOLS make"
+    command -v python3 &>/dev/null || _MISSING_TOOLS="$_MISSING_TOOLS python3"
+    if [ -n "$_MISSING_TOOLS" ]; then
+      warn "Native build tools missing:$_MISSING_TOOLS"
+      info "Debian/Ubuntu: sudo apt install -y build-essential python3"
+      info "RHEL/Fedora:   sudo dnf groupinstall 'Development Tools' && sudo dnf install python3"
+      info "lmdb ships prebuilt binaries for Linux x64/arm64 so this is usually not needed."
+      _BUILD_TOOLS_OK=0
+    fi
+    ;;
+esac
+
+# ── 7b. P2P port note ─────────────────────────────────────────────────────────
+# When PRX_P2P_ENABLED=Y the server binds TCP on PRX_P2P_PORT (default 7001).
+# Peers on other machines need to reach this port.  Remind the user if a
+# firewall rule is likely to be needed (we can detect nothing here, but a note
+# costs nothing).
+if grep -q 'PRX_P2P_ENABLED=Y' "$PROJECT_ROOT/.env" 2>/dev/null || \
+   grep -q 'PRX_P2P_ENABLED=Y' "$PROJECT_ROOT/.env.example" 2>/dev/null; then
+  P2P_PORT="$(grep -E '^PRX_P2P_PORT=' "$PROJECT_ROOT/.env" 2>/dev/null | cut -d= -f2 | tr -d '[:space:]')"
+  P2P_PORT="${P2P_PORT:-7001}"
+  info "P2P enabled — ensure TCP port $P2P_PORT is open in your firewall for peer connectivity"
+  info "On Linux:  sudo ufw allow $P2P_PORT/tcp  (or equivalent for your firewall)"
+  info "On macOS:  System Settings → Firewall → allow incoming connections for node"
+  info "mDNS (LAN discovery) uses UDP 5353 — typically open by default"
+fi
+
 if [ ! -f "$SERVER_DIR/package.json" ]; then
   warn "server/package.json not found — skipping server npm install"
   impact "Prevoyant Server may fail to start until server/ dependencies are installed"
@@ -812,6 +859,9 @@ else
   else
     err "npm install in server/ failed — check above for errors"
     impact "Prevoyant Server will not start until dependencies are installed"
+    if [ "$_BUILD_TOOLS_OK" -eq 0 ]; then
+      info "Build tool check above failed — this is the likely cause; install them first"
+    fi
     info "Retry manually: npm --prefix server install"
   fi
 fi
@@ -971,7 +1021,7 @@ fi
 # .claude/settings.json and work without this file.  This file only adds
 # pre-approved permissions so common commands don't trigger prompts.
 
-step "9/10  settings.local.json  (permission allowlist)  [optional]"
+step "10/11  settings.local.json  (permission allowlist)  [optional]"
 
 LOCAL_SETTINGS="$PROJECT_ROOT/.claude/settings.local.json"
 mkdir -p "$PROJECT_ROOT/.claude"
@@ -1025,7 +1075,7 @@ fi
 
 # ── 9. Plugin install + enable ────────────────────────────────────────────────
 
-step "10/10  plugin install + enable  [required]"
+step "11/11  plugin install + enable  [required]"
 
 PLUGIN_OK=0
 if command -v claude &>/dev/null; then
@@ -1053,7 +1103,7 @@ else
   info "  claude plugin install prevoyant@dodogeny && claude plugin enable prevoyant@dodogeny"
 fi
 
-# ── 10b. Initial graphify extraction (depends on .env from step 7) ───────────
+# ── 11b. Initial graphify extraction (depends on .env from step 8) ──────────
 # Builds graph.json + GRAPH_REPORT.md at PRX_REPO_DIR so SKILL.md Pass 0 and
 # the KB integrity sweep can use the graph from session 1. Skipped if PRX_REPO_DIR
 # is unset (the skill will retry lazily on first use).

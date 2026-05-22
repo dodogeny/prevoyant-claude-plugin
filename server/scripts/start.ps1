@@ -27,7 +27,7 @@ if (Test-Path $pidFile) {
 if (-not (Test-Path (Join-Path $serverDir 'node_modules'))) {
     Write-Host "[prevoyant-server] node_modules not found — running npm install..."
     Push-Location $serverDir
-    npm install --silent
+    npm install --loglevel=warn
     Pop-Location
     Write-Host "[prevoyant-server] Dependencies installed."
 }

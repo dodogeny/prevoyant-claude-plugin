@@ -41,7 +41,7 @@ Write-Host "Repo     : $PROJECT_ROOT"
 Write-Host "======================================"
 
 # ── 1. uvx (Jira MCP) ─────────────────────────────────────────────────────────
-step "1/10  uvx  (Jira MCP server)  [required]"
+step "1/11  uvx  (Jira MCP server)  [required]"
 
 if (cmd_exists 'uvx') {
     ok "uvx already installed"
@@ -65,7 +65,7 @@ if (cmd_exists 'uvx') {
 }
 
 # ── 2. Node.js (codeburn) ─────────────────────────────────────────────────────
-step "2/10  Node.js  (budget tracking + Prevoyant Server)  [required]"
+step "2/11  Node.js  (budget tracking + Prevoyant Server)  [required]"
 
 if (cmd_exists 'node') {
     ok "Node.js already installed ($(node --version 2>$null))"
@@ -110,7 +110,7 @@ if (cmd_exists 'node') {
 }
 
 # ── 3. pandoc (PDF generation) ────────────────────────────────────────────────
-step "3/10  pandoc  (PDF reports)  [optional — Chrome headless or HTML fallback]"
+step "3/11  pandoc  (PDF reports)  [optional — Chrome headless or HTML fallback]"
 
 if (cmd_exists 'pandoc') {
     ok "pandoc already installed ($(pandoc --version 2>$null | Select-Object -First 1))"
@@ -157,7 +157,7 @@ if (cmd_exists 'pandoc') {
 }
 
 # ── 4. qpdf (PDF encryption for WhatsApp delivery) ───────────────────────────
-step "4/10  qpdf  (PDF encryption)  [optional — needed for PRX_WASENDER_PDF_PASSWORD]"
+step "4/11  qpdf  (PDF encryption)  [optional — needed for PRX_WASENDER_PDF_PASSWORD]"
 
 if (cmd_exists 'qpdf') {
     ok "qpdf already installed ($((qpdf --version 2>$null | Select-Object -First 1) -replace '.*qpdf version ','qpdf '))"
@@ -204,7 +204,7 @@ if (cmd_exists 'qpdf') {
 }
 
 # ── 5. basic-memory (per-agent personal memory MCP) ──────────────────────────
-step "5/10  basic-memory  (per-agent MCP)  [downloads & configures]"
+step "5/11  basic-memory  (per-agent MCP)  [downloads & configures]"
 
 if (cmd_exists 'uvx') {
     info "Pre-fetching basic-memory package (priming uvx cache)..."
@@ -228,13 +228,13 @@ if (cmd_exists 'uvx') {
 }
 
 # ── 6. graphify (codebase knowledge graph) ───────────────────────────────────
-step "6/10  graphify  (codebase knowledge graph)  [augments grep/ast-grep]"
+step "6/11  graphify  (codebase knowledge graph)  [augments grep/ast-grep]"
 
 # graphify produces graph.json + GRAPH_REPORT.md at the repo root, used by
 # SKILL.md Step 5 (Pass 0 structural search) and the KB integrity sweep at
 # Step 0a (auto-heal stale file:line refs against the live symbol graph).
 # CLI is installed here; the initial graph extraction runs at the end of
-# step 10 once .env has been written and PRX_REPO_DIR is known.
+# step 11 once .env has been written and PRX_REPO_DIR is known.
 
 if (cmd_exists 'graphify') {
     $gfVersion = (& graphify --version 2>$null | Select-Object -First 1)
@@ -297,8 +297,82 @@ if (cmd_exists 'graphify') {
     }
 }
 
-# ── 7. .env ───────────────────────────────────────────────────────────────────
-step "7/10  .env  (environment file)  [required]"
+# ── 7. Server npm dependencies ───────────────────────────────────────────────
+step "7/11  Server npm dependencies  (libp2p, lmdb, express, …)  [required]"
+
+$ServerDir = Join-Path $PROJECT_ROOT "server"
+$ServerPkg = Join-Path $ServerDir "package.json"
+$ServerMods = Join-Path $ServerDir "node_modules\.bin"
+
+# ── 7a. Native build-tool probe (needed if lmdb prebuilts are absent) ────────
+# lmdb ships prebuilt binaries for Windows x64.  If no matching prebuilt is
+# found, npm falls back to compiling from source via node-gyp and will fail
+# unless Visual Studio Build Tools are installed.  We detect this here so the
+# error message is actionable rather than a raw gyp stack trace.
+$BuildToolsOk = $true
+$vsWhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
+$hasMsBuild = $false
+if (Test-Path $vsWhere) {
+    $vsInfo = & $vsWhere -latest -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null
+    $hasMsBuild = ($vsInfo -ne $null -and $vsInfo.Trim() -ne '')
+}
+# Also accept if node-gyp can find its own toolchain (npm config msvs_version set)
+if (-not $hasMsBuild) {
+    $ngypCfg = (npm config get msvs_version 2>$null)
+    if ($ngypCfg -and $ngypCfg -ne 'undefined' -and $ngypCfg.Trim() -ne '') {
+        $hasMsBuild = $true
+    }
+}
+if (-not $hasMsBuild) {
+    warn "Visual Studio C++ Build Tools not detected"
+    info "lmdb ships prebuilt binaries for Windows x64 so compilation is usually NOT needed."
+    info "If npm install fails with 'gyp ERR', install build tools with one of:"
+    info "  winget install Microsoft.VisualStudio.2022.BuildTools"
+    info "  npm install --global windows-build-tools  (older approach, Node 16 era)"
+    info "  Or install VS 2019/2022 with 'Desktop development with C++'"
+    $BuildToolsOk = $false
+}
+
+# ── 7b. P2P port + mDNS note (Windows-specific) ──────────────────────────────
+$EnvNow = Join-Path $PROJECT_ROOT ".env"
+$P2pEnabled = $false
+if (Test-Path $EnvNow) {
+    $P2pEnabled = (Get-Content $EnvNow -Raw) -match '(?m)^PRX_P2P_ENABLED\s*=\s*Y'
+}
+if ($P2pEnabled) {
+    $P2pPortMatch = [regex]::Match((Get-Content $EnvNow -Raw -ErrorAction SilentlyContinue), '(?m)^PRX_P2P_PORT\s*=\s*(\d+)')
+    $P2pPort = if ($P2pPortMatch.Success) { $P2pPortMatch.Groups[1].Value } else { '7001' }
+    info "P2P enabled — Windows Firewall steps for peer connectivity:"
+    info "  New-NetFirewallRule -DisplayName 'Prevoyant P2P' -Direction Inbound -Protocol TCP -LocalPort $P2pPort -Action Allow"
+    info "mDNS (LAN discovery) requires network profile = Private, not Public:"
+    info "  Set-NetConnectionProfile -InterfaceAlias (Get-NetAdapter | Where-Object Status -eq Up).Name -NetworkCategory Private"
+    info "  Or: Settings → Network → Properties → set to 'Private network'"
+}
+
+if (-not (Test-Path $ServerPkg)) {
+    warn "server/package.json not found — skipping server npm install"
+} elseif (-not (cmd_exists 'npm')) {
+    warn "npm not found — skipping server npm install (install Node.js first)"
+} elseif (Test-Path $ServerMods) {
+    ok "server/node_modules already present — skipping npm install"
+} else {
+    info "Running npm install in server/ (libp2p, lmdb, express, …)..."
+    Push-Location $ServerDir
+    npm install --loglevel=warn 2>&1 | Select-Object -Last 5 | ForEach-Object { info $_ }
+    Pop-Location
+    if (Test-Path $ServerMods) {
+        ok "server npm dependencies installed"
+    } else {
+        err "npm install in server/ failed — check above for errors"
+        if (-not $BuildToolsOk) {
+            info "Build tool check above failed — this is the likely cause; install VS Build Tools first"
+        }
+        info "Retry: Push-Location server ; npm install --loglevel=warn ; Pop-Location"
+    }
+}
+
+# ── 8. .env ───────────────────────────────────────────────────────────────────
+step "8/11  .env  (environment file)  [required]"
 
 $EnvFile       = Join-Path $PROJECT_ROOT ".env"
 $EnvExample    = Join-Path $PROJECT_ROOT ".env.example"
@@ -356,8 +430,8 @@ if (Test-Path $EnvFile) {
     }
 }
 
-# ── 8. Claude Code settings.json (marketplace registration) ───────────────────
-step "8/10  Claude Code marketplace registration  [required]"
+# ── 9. Claude Code settings.json (marketplace registration) ───────────────────
+step "9/11  Claude Code marketplace registration  [required]"
 
 $SettingsFile = Join-Path $env:USERPROFILE ".claude\settings.json"
 $SettingsDir  = Split-Path -Parent $SettingsFile
@@ -395,11 +469,11 @@ try {
     info "Add the marketplace manually (see README)"
 }
 
-# ── 9. .claude/settings.local.json (permissions) ─────────────────────────────
+# ── 10. .claude/settings.local.json (permissions) ────────────────────────────
 # SessionStart hooks (load-env + check-budget) live in the committed
 # .claude/settings.json and work without this file.  This file only adds
 # pre-approved permissions so common commands don't trigger prompts.
-step "9/10  settings.local.json  (permission allowlist)  [optional]"
+step "10/11  settings.local.json  (permission allowlist)  [optional]"
 
 $LocalSettings = Join-Path $PROJECT_ROOT ".claude\settings.local.json"
 $LocalDir = Split-Path -Parent $LocalSettings
@@ -427,8 +501,8 @@ if (Test-Path $LocalSettings) {
     }
 }
 
-# ── 10. Plugin install + enable ───────────────────────────────────────────────
-step "10/10  plugin install + enable  [required]"
+# ── 11. Plugin install + enable ───────────────────────────────────────────────
+step "11/11  plugin install + enable  [required]"
 
 $PLUGIN_OK = $false
 if (cmd_exists 'claude') {
@@ -465,7 +539,7 @@ if (cmd_exists 'claude') {
     info "  claude plugin install prevoyant@dodogeny && claude plugin enable prevoyant@dodogeny"
 }
 
-# ── 10b. Initial graphify extraction (depends on .env from step 7) ───────────
+# ── 11b. Initial graphify extraction (depends on .env from step 8) ──────────
 # Builds graph.json + GRAPH_REPORT.md at PRX_REPO_DIR so SKILL.md Pass 0 and
 # the KB integrity sweep can use the graph from session 1. Skipped if PRX_REPO_DIR
 # is unset (the skill will retry lazily on first use).

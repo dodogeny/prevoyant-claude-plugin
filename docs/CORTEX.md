@@ -215,6 +215,7 @@ All editable from the Settings page — no `.env` editing required.
 
 ## See also
 
+- [P2P.md](P2P.md) — how the Collective Intelligence Mesh extends Cortex across the network: observation broadcast, cross-node confirmation, and organic network growth
 - [Settings page](http://localhost:3000/dashboard/settings#cortex) — all cortex envs editable from the UI
 - [Cortex dashboard](http://localhost:3000/dashboard/cortex) — live view of every fact file
 - [SKILL.md Step 0a / 5 / 7b-0](../plugin/skills/dev/SKILL.md) — agent-side consultation logic

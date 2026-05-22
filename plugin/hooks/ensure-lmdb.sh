@@ -13,6 +13,13 @@
 #   invoke install-lmdb.js directly via Node (the hook exits early below if
 #   MSYS/MINGW is detected without a proper npm on PATH).
 
+# On native Windows Git Bash (MSYS/MINGW/Cygwin) outside WSL, the postinstall
+# script handles lmdb; this hook exits early to avoid running in that context.
+case "$(uname -s 2>/dev/null)" in
+  MINGW*|MSYS*|CYGWIN*)
+    exit 0 ;;
+esac
+
 # Only run when Cortex is enabled.
 if [ "${PRX_CORTEX_ENABLED:-N}" != "Y" ]; then
   exit 0
