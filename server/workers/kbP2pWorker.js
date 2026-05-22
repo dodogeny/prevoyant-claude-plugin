@@ -27,6 +27,7 @@ const fs              = require('fs');
 const path            = require('path');
 const os              = require('os');
 const crypto          = require('crypto');
+const https           = require('https');
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 
@@ -36,10 +37,15 @@ const CORTEX_OBS_TOPIC     = 'prevoyant/cortex-sync/observations/1'; // lightwei
 const CORTEX_SESSION_TOPIC = 'prevoyant/cortex-sync/sessions/1';      // session-summary type (larger, infrequent)
 const CORTEX_TOPIC_LEGACY  = 'prevoyant/cortex-sync/1';               // kept for backward compat with pre-1.3.5 nodes
 const CORTEX_PROTO         = '/prevoyant/cortex-query/1';
-const KEY_FILE      = path.join(os.homedir(), '.prevoyant', 'server', 'p2p-key.b64');
-const SIGNAL_FILE   = path.join(os.homedir(), '.prevoyant', '.kb-updated');
-const MANIFEST_FILE = path.join(os.homedir(), '.prevoyant', '.p2p-manifest.json');
-const SYNC_TS_FILE  = path.join(os.homedir(), '.prevoyant', '.p2p-synced-at');
+const KEY_FILE             = path.join(os.homedir(), '.prevoyant', 'server', 'p2p-key.b64');
+const SIGNAL_FILE          = path.join(os.homedir(), '.prevoyant', '.kb-updated');
+const MANIFEST_FILE        = path.join(os.homedir(), '.prevoyant', '.p2p-manifest.json');
+const SYNC_TS_FILE         = path.join(os.homedir(), '.prevoyant', '.p2p-synced-at');
+const CORTEX_SYNC_TS_FILE  = path.join(os.homedir(), '.prevoyant', '.p2p-cortex-sync.json');
+
+// Upstash peer-presence keys
+const P2P_PEER_KEY_PREFIX = 'prx:p2p:peer:';
+const P2P_PEER_TTL_SECS   = 7200; // 2 h — refreshed each reconcile cycle
 
 // GossipSub hard limit is 1 MB; stay well under it
 const MAX_GOSSIP_BYTES  = 750_000;
@@ -110,7 +116,8 @@ function cortexCacheSet(key, value, tags, sourceNode) {
 // ── Per-peer cortex sync timestamps (differential sync) ───────────────────────
 // Tracks the last successful observation dump from each peer so reconnects
 // only pull observations added since the last successful sync — not a full replay.
-const peerCortexSyncTs = new Map(); // peerIdStr → lastSuccessfulDumpMs
+// Loaded from disk so the delta window survives worker restarts.
+const peerCortexSyncTs = loadCortexSyncTs(); // peerIdStr → lastSuccessfulDumpMs
 
 // ── HMAC authentication ───────────────────────────────────────────────────────
 
@@ -214,6 +221,105 @@ function loadLastSyncTs() {
 
 function saveLastSyncTs(ts) {
   try { writeAtomic(SYNC_TS_FILE, String(ts)); } catch (_) {}
+}
+
+// ── Persisted per-peer cortex sync timestamps ─────────────────────────────────
+
+function loadCortexSyncTs() {
+  try {
+    const raw = JSON.parse(fs.readFileSync(CORTEX_SYNC_TS_FILE, 'utf8'));
+    return new Map(Object.entries(raw).map(([k, v]) => [k, Number(v)]));
+  } catch (_) { return new Map(); }
+}
+
+function saveCortexSyncTs(map) {
+  try {
+    const obj = {};
+    for (const [k, v] of map) obj[k] = v;
+    writeAtomic(CORTEX_SYNC_TS_FILE, JSON.stringify(obj));
+  } catch (_) {}
+}
+
+// ── Upstash peer discovery (WAN bootstrap) ────────────────────────────────────
+// Publishes this node's multiaddrs to Upstash so peers on other networks
+// can discover each other without hardcoded bootstrap addresses.
+
+function upstashP2PRequest(command) {
+  const url   = process.env.PRX_UPSTASH_REDIS_URL   || '';
+  const token = process.env.PRX_UPSTASH_REDIS_TOKEN  || '';
+  if (!url || !token) return Promise.resolve(null);
+  let parsed;
+  try { parsed = new URL(url.endsWith('/') ? url.slice(0, -1) : url); }
+  catch (_) { return Promise.resolve(null); }
+  const payload = Buffer.from(JSON.stringify(command));
+  return new Promise((resolve) => {
+    const req = https.request({
+      hostname: parsed.hostname,
+      path:     '/',
+      method:   'POST',
+      headers: {
+        'Authorization':  `Bearer ${token}`,
+        'Content-Type':   'application/json',
+        'Content-Length': payload.length,
+      },
+    }, res => {
+      let raw = '';
+      res.on('data', chunk => { raw += chunk; });
+      res.on('end', () => {
+        try { resolve(JSON.parse(raw).result); } catch (_) { resolve(null); }
+      });
+    });
+    req.on('error', () => resolve(null));
+    req.setTimeout(5000, () => { req.destroy(); resolve(null); });
+    req.write(payload);
+    req.end();
+  });
+}
+
+async function upstashP2PPublish(addrs) {
+  if (!addrs || !addrs.length) return;
+  try {
+    await upstashP2PRequest([
+      'SET', `${P2P_PEER_KEY_PREFIX}${machineName()}`,
+      JSON.stringify({ machine: machineName(), addrs, ts: Date.now() }),
+      'EX', P2P_PEER_TTL_SECS,
+    ]);
+    log('info', `P2P presence published to Upstash (${addrs.length} addr(s))`);
+  } catch (e) {
+    log('warn', `Upstash P2P publish failed: ${e.message}`);
+  }
+}
+
+async function upstashP2PDiscover() {
+  const url   = process.env.PRX_UPSTASH_REDIS_URL   || '';
+  const token = process.env.PRX_UPSTASH_REDIS_TOKEN  || '';
+  if (!url || !token) {
+    log('info', 'Upstash WAN peer discovery skipped — PRX_UPSTASH_REDIS_URL / PRX_UPSTASH_REDIS_TOKEN not set. ' +
+      'To enable cross-network peer discovery: (1) sign up free at https://upstash.com, ' +
+      '(2) create a Redis database, (3) copy the REST URL and token into PRX_UPSTASH_REDIS_URL / PRX_UPSTASH_REDIS_TOKEN. ' +
+      'mDNS LAN discovery and any PRX_P2P_BOOTSTRAP_NODES remain active.');
+    return [];
+  }
+  try {
+    const keys = await upstashP2PRequest(['KEYS', `${P2P_PEER_KEY_PREFIX}*`]);
+    if (!Array.isArray(keys) || !keys.length) return [];
+    const remoteKeys = keys.filter(k => k !== `${P2P_PEER_KEY_PREFIX}${machineName()}`);
+    if (!remoteKeys.length) return [];
+    const values = await upstashP2PRequest(['MGET', ...remoteKeys]);
+    const discovered = [];
+    for (const v of (values || [])) {
+      if (!v) continue;
+      try {
+        const peer = JSON.parse(v);
+        if (Array.isArray(peer.addrs)) discovered.push(...peer.addrs);
+      } catch (_) {}
+    }
+    if (discovered.length) log('info', `Upstash P2P discovery: ${discovered.length} addr(s) from ${remoteKeys.length} remote node(s)`);
+    return discovered;
+  } catch (e) {
+    log('warn', `Upstash P2P discovery failed: ${e.message}`);
+    return [];
+  }
 }
 
 // ── File scanning ─────────────────────────────────────────────────────────────
@@ -506,6 +612,7 @@ async function requestCortexDump(node, peerId, sinceMs) {
     // differential pull even when the peer had nothing new this time.
     const peerIdStr = peerId.toString ? peerId.toString() : String(peerId);
     peerCortexSyncTs.set(peerIdStr, Date.now());
+    saveCortexSyncTs(peerCortexSyncTs);
   } catch (e) {
     const msg = String(e.message || '').toLowerCase();
     if (!msg.includes('protocol') && !msg.includes('unsupported') && !msg.includes('no handler')) {
@@ -834,7 +941,11 @@ if (parentPort) {
     return;
   }
 
-  peerDiscoveryPlugins.push(bootstrap({ list: bootstrapList() }));
+  // Discover WAN peers from Upstash before initialising the bootstrap plugin.
+  // Falls back to empty list silently if Upstash is not configured.
+  const upstashPeers = await upstashP2PDiscover();
+  const allBootstrap = [...new Set([...bootstrapList(), ...upstashPeers])];
+  peerDiscoveryPlugins.push(bootstrap({ list: allBootstrap }));
 
   if (mdnsEnabled()) {
     try {
@@ -883,6 +994,9 @@ if (parentPort) {
   const addrs  = libp2pNode.getMultiaddrs().map(a => a.toString());
   log('info', `Node started — peer ID: ${selfId}`);
   if (parentPort) parentPort.postMessage({ type: 'p2p-started', selfId, addrs, topic: TOPIC });
+
+  // Publish our multiaddrs to Upstash so WAN peers can find us.
+  upstashP2PPublish(addrs).catch(() => {});
 
   // ── GossipSub subscriber ──────────────────────────────────────────────────
   libp2pNode.services.pubsub.subscribe(TOPIC);
@@ -1147,6 +1261,8 @@ if (parentPort) {
   const reconcileInterval = setInterval(async () => {
     if (halted) { clearInterval(reconcileInterval); return; }
     await broadcastReconcile();
+    // Refresh Upstash presence so our TTL doesn't expire between reconcile cycles.
+    upstashP2PPublish(libp2pNode.getMultiaddrs().map(a => a.toString())).catch(() => {});
   }, reconcileMins() * 60_000);
 
   // Also broadcast once at startup (after a short delay to allow peer discovery)

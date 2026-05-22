@@ -537,7 +537,7 @@ printf "════════════════════════
 
 # ── 1. uvx (Jira MCP) ─────────────────────────────────────────────────────────
 
-step "1/10  uvx  (Jira MCP server)  [required]"
+step "1/11  uvx  (Jira MCP server)  [required]"
 
 if command -v uvx &>/dev/null; then
   ok "uvx already installed"
@@ -564,7 +564,7 @@ fi
 
 # ── 2. Node.js + codeburn ─────────────────────────────────────────────────────
 
-step "2/10  Node.js  (budget tracking + Prevoyant Server)  [required]"
+step "2/11  Node.js  (budget tracking + Prevoyant Server)  [required]"
 
 if locate_npx &>/dev/null; then
   ok "Node.js already installed ($(node --version 2>/dev/null || echo 'found'))"
@@ -627,7 +627,7 @@ fi
 
 # ── 3. pandoc (PDF generation) ────────────────────────────────────────────────
 
-step "3/10  pandoc  (PDF reports)  [optional — Chrome headless or HTML fallback]"
+step "3/11  pandoc  (PDF reports)  [optional — Chrome headless or HTML fallback]"
 
 if command -v pandoc &>/dev/null; then
   ok "pandoc already installed ($(pandoc --version 2>/dev/null | head -1 || echo 'found'))"
@@ -683,7 +683,7 @@ fi
 
 # ── 4. qpdf (PDF encryption for WhatsApp delivery) ───────────────────────────
 
-step "4/10  qpdf  (PDF encryption)  [optional — needed for PRX_WASENDER_PDF_PASSWORD]"
+step "4/11  qpdf  (PDF encryption)  [optional — needed for PRX_WASENDER_PDF_PASSWORD]"
 
 if command -v qpdf &>/dev/null; then
   ok "qpdf already installed ($(qpdf --version 2>/dev/null | head -1 || echo 'found'))"
@@ -723,7 +723,7 @@ fi
 
 # ── 5. basic-memory (per-agent personal memory MCP) ──────────────────────────
 
-step "5/10  basic-memory  (per-agent MCP)  [downloads & configures]"
+step "5/11  basic-memory  (per-agent MCP)  [downloads & configures]"
 
 if command -v uvx &>/dev/null; then
   info "Pre-fetching basic-memory package (priming uvx cache)..."
@@ -742,7 +742,7 @@ fi
 
 # ── 6. graphify (codebase knowledge graph) ───────────────────────────────────
 
-step "6/10  graphify  (codebase knowledge graph)  [augments grep/ast-grep]"
+step "6/11  graphify  (codebase knowledge graph)  [augments grep/ast-grep]"
 
 # graphify produces graph.json + GRAPH_REPORT.md at the repo root, used by
 # SKILL.md Step 5 (Pass 0 structural search) and the KB integrity sweep at
@@ -791,9 +791,34 @@ else
   fi
 fi
 
-# ── 7. .env ───────────────────────────────────────────────────────────────────
+# ── 7. Server npm dependencies ────────────────────────────────────────────────
 
-step "7/10  .env  (environment file)  [required]"
+step "7/11  Server npm dependencies  (libp2p, lmdb, express, …)  [required]"
+
+SERVER_DIR="$PROJECT_ROOT/server"
+
+if [ ! -f "$SERVER_DIR/package.json" ]; then
+  warn "server/package.json not found — skipping server npm install"
+  impact "Prevoyant Server may fail to start until server/ dependencies are installed"
+elif ! command -v npm &>/dev/null; then
+  warn "npm not found — skipping server npm install (install Node.js first)"
+  impact "Prevoyant Server dependencies not installed; run: npm --prefix server install"
+elif [ -d "$SERVER_DIR/node_modules/.bin" ]; then
+  ok "server/node_modules already present — skipping npm install"
+else
+  info "Installing server dependencies (libp2p, lmdb, express, …)…"
+  if npm --prefix "$SERVER_DIR" install --loglevel=warn 2>&1 | tail -10; then
+    ok "server/node_modules installed"
+  else
+    err "npm install in server/ failed — check above for errors"
+    impact "Prevoyant Server will not start until dependencies are installed"
+    info "Retry manually: npm --prefix server install"
+  fi
+fi
+
+# ── 8. .env ───────────────────────────────────────────────────────────────────
+
+step "8/11  .env  (environment file)  [required]"
 
 ENV_FILE="$PROJECT_ROOT/.env"
 ENV_EXAMPLE="$PROJECT_ROOT/.env.example"
@@ -863,9 +888,9 @@ else
   fi
 fi
 
-# ── 7. Claude Code settings.json (marketplace registration) ───────────────────
+# ── 9. Claude Code settings.json (marketplace registration) ───────────────────
 
-step "8/10  Claude Code marketplace registration  [required]"
+step "9/11  Claude Code marketplace registration  [required]"
 
 # On WSL, Claude Code runs on Windows — write to the Windows user profile.
 # On Git Bash, $HOME already maps to the Windows user folder.

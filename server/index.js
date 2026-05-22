@@ -383,6 +383,25 @@ function startKbP2p() {
       try {
         const cortexLayer = require('./runner/cortexLayer');
         cortexLayer.memory().mergeObservation(msg.key, msg.value, msg.tags, msg.sourceNode);
+
+        // If the network-merged observation already meets the promotion threshold
+        // (i.e. confirmCount accumulated on the source node), queue it locally
+        // so the autonomy scheduler can promote it after the review window.
+        // Without this, P2P observations bypass the /observe route and never
+        // enter the pending-promotion queue regardless of their confirmCount.
+        const autonomyLevel = parseInt(process.env.PRX_CORTEX_AUTONOMY_LEVEL || '0', 10);
+        const threshold     = parseInt(process.env.PRX_CORTEX_AUTO_PROMOTE_THRESHOLD || '3', 10);
+        if (autonomyLevel >= 2) {
+          const merged = cortexLayer.memory().get(msg.key);
+          if (merged && typeof merged === 'object' &&
+              !merged.promoted && !merged.rejected && !merged.queuedForPromotionAt &&
+              (merged.confirmCount || 0) >= threshold) {
+            const updatedTags = ['agent-observed', merged.type || 'context', 'pending-promotion'];
+            cortexLayer.memory().put(msg.key, { ...merged, queuedForPromotionAt: Date.now() }, { tags: updatedTags, ttl: 0 });
+            console.log(`[cortex-mesh] Queued '${msg.key}' for promotion (confirmCount=${merged.confirmCount} from ${msg.sourceNode})`);
+          }
+        }
+
         if (cortexWorker) cortexWorker.postMessage({ type: 'observe-written', detail: { key: msg.key, fromNetwork: true } });
         activityLog.record('cortex_mesh_obs_received', null, 'system', {
           key: msg.key, sourceNode: msg.sourceNode, machine: msg.machine,
