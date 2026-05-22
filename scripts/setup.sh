@@ -844,6 +844,30 @@ if grep -q 'PRX_P2P_ENABLED=Y' "$PROJECT_ROOT/.env" 2>/dev/null || \
   info "mDNS (LAN discovery) uses UDP 5353 — typically open by default"
 fi
 
+# ── 7c. Auto-install build tools on Linux/WSL before npm (if missing + sudo ok)
+# lmdb ships prebuilt binaries for Linux x64/arm64 but falls back to
+# compilation if the download fails.  Installing tools proactively prevents
+# a confusing compile failure mid-install.
+if [ "$_OS" = "Linux" ] && [ "$_BUILD_TOOLS_OK" -eq 0 ] && command -v sudo &>/dev/null; then
+  if command -v apt-get &>/dev/null; then
+    info "Attempting to pre-install build tools (sudo apt-get install -y build-essential python3)…"
+    if sudo apt-get install -y build-essential python3 2>&1 | tail -4; then
+      ok "build-essential + python3 installed"
+      _BUILD_TOOLS_OK=1
+    else
+      warn "Auto-install of build tools failed — proceeding; npm install may fail if lmdb prebuilts are unavailable"
+    fi
+  elif command -v dnf &>/dev/null; then
+    info "Attempting to pre-install build tools (sudo dnf install -y gcc-c++ make python3)…"
+    if sudo dnf install -y gcc-c++ make python3 2>&1 | tail -4; then
+      ok "gcc-c++ + make + python3 installed"
+      _BUILD_TOOLS_OK=1
+    else
+      warn "Auto-install of build tools failed — proceeding; npm install may fail if lmdb prebuilts are unavailable"
+    fi
+  fi
+fi
+
 if [ ! -f "$SERVER_DIR/package.json" ]; then
   warn "server/package.json not found — skipping server npm install"
   impact "Prevoyant Server may fail to start until server/ dependencies are installed"
@@ -854,15 +878,50 @@ elif [ -d "$SERVER_DIR/node_modules/.bin" ]; then
   ok "server/node_modules already present — skipping npm install"
 else
   info "Installing server dependencies (libp2p, lmdb, express, …)…"
-  if npm --prefix "$SERVER_DIR" install --loglevel=warn 2>&1 | tail -10; then
+
+  # Capture output + get npm's real exit code via PIPESTATUS.
+  # tee streams output to terminal in real time; PIPESTATUS[0] is npm's exit.
+  _NPM_LOG="$(mktemp /tmp/prx-npm-XXXXXX.log)"
+  npm --prefix "$SERVER_DIR" install --loglevel=warn 2>&1 | tee "$_NPM_LOG"
+  _NPM_EXIT="${PIPESTATUS[0]}"
+
+  if [ "$_NPM_EXIT" -eq 0 ] && [ -d "$SERVER_DIR/node_modules/.bin" ]; then
     ok "server/node_modules installed"
+    rm -f "$_NPM_LOG"
   else
-    err "npm install in server/ failed — check above for errors"
-    impact "Prevoyant Server will not start until dependencies are installed"
-    if [ "$_BUILD_TOOLS_OK" -eq 0 ]; then
-      info "Build tool check above failed — this is the likely cause; install them first"
+    # ── Diagnose the failure ───────────────────────────────────────────────
+    _IS_GYP_ERR=0
+    if grep -qiE 'gyp ERR|make: command not found|python.*not found|node-pre-gyp|node-gyp|Cannot find module.*node-gyp|ELIFECYCLE' \
+         "$_NPM_LOG" 2>/dev/null; then
+      _IS_GYP_ERR=1
     fi
-    info "Retry manually: npm --prefix server install"
+
+    if [ "$_IS_GYP_ERR" -eq 1 ]; then
+      err "npm install failed — lmdb native module could not compile"
+      info ""
+      info "  lmdb ships prebuilt binaries for Linux x64/arm64 but none matched this"
+      info "  platform/Node version, so npm tried to compile from source and failed."
+      info ""
+      info "  Fix — install native build tools and retry:"
+      if command -v apt-get &>/dev/null; then
+        info "    sudo apt-get install -y build-essential python3"
+      elif command -v dnf &>/dev/null; then
+        info "    sudo dnf install -y gcc-c++ make python3"
+      else
+        info "    Install gcc, make, python3 via your package manager"
+      fi
+      info "    npm --prefix '$SERVER_DIR' install"
+      info ""
+      info "  Alternatively, check https://github.com/kriszyp/lmdb-js/releases for a"
+      info "  newer lmdb that ships a prebuilt for your Node.js version."
+    else
+      err "npm install in server/ failed (exit $__NPM_EXIT)"
+      info "Check the output above. To retry with verbose output:"
+      info "  npm --prefix '$SERVER_DIR' install --loglevel=verbose"
+    fi
+
+    impact "Prevoyant Server will not start until 'npm --prefix server install' succeeds"
+    rm -f "$_NPM_LOG"
   fi
 fi
 
