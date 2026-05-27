@@ -396,6 +396,8 @@ async function runFieldQuery(question, history = []) {
       // Derive a short summary for the P2P observation from the first meaningful line
       const summaryLine = entry.split('\n').find(l => l.startsWith('##')) || question.slice(0, 100);
       _broadcastObservation(`[CODE INVESTIGATION] ${summaryLine.replace(/^#+\s*/, '')}`, ['code-investigation']);
+can you proff      // Trigger Cortex re-synthesis so the new KB entry is reflected immediately
+      serverEvents.emit('cortex-run-now');
     } catch (writeErr) {
       console.warn('[fieldIntelAgent] KB entry write failed (non-fatal):', writeErr.message);
     }
