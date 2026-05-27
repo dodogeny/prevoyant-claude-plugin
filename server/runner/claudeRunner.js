@@ -78,7 +78,7 @@ function buildBasicMemoryServers() {
   const home = process.env.BASIC_MEMORY_HOME
     || path.join(os.homedir(), '.prevoyant', 'personal-memory');
 
-  const agents = ['morgan', 'alex', 'sam', 'jordan', 'henk', 'riley', 'bryan'];
+  const agents = ['morgan', 'alex', 'sam', 'jordan', 'henk', 'riley', 'bryan', 'field-engineer'];
   return Object.fromEntries(agents.map(agent => [
     `basic-memory-${agent}`,
     { command: 'uvx', args: ['basic-memory', 'mcp'], env: { BASIC_MEMORY_PROJECT: agent, BASIC_MEMORY_HOME: home } },

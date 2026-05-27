@@ -245,6 +245,11 @@ function buildPrompt(kbDir, repoDir) {
     `REPO_DIR      : ${repoDir}`,
     `DATE          : ${today}`,
     `MAX_FLOWS     : ${maxFlows()}`,
+    jiraProject ? `JIRA_PROJECT  : ${jiraProject}` : '',
+    ``,
+    jiraProject
+      ? `HARD CONSTRAINT — Jira scope: EVERY Jira MCP call you make MUST include \`project = ${jiraProject}\` in the JQL. This applies to all queries in every step — initial fetch, follow-up lookups, linked-issue checks, everything. Never fetch or reference tickets from any other project.`
+      : '',
     ``,
     `Follow these steps exactly, announcing each one:`,
     ``,
@@ -267,6 +272,8 @@ function buildPrompt(kbDir, repoDir) {
     `Use the Jira MCP. Run this JQL query:`,
     ``,
     `  ${jqlScope}updated >= -${lookbackDays()}d ORDER BY updated DESC`,
+    ``,
+    jiraProject ? `Reminder: ALL further Jira lookups in this and every subsequent step must also include \`project = ${jiraProject}\`. Do not fetch tickets, linked issues, or subtasks from any other project.` : '',
     ``,
     `Fetch up to 50 tickets. For each, collect: key, summary, description (first 300 chars),`,
     `labels, components, issue type, priority, resolution status.`,

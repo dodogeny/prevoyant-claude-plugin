@@ -1654,6 +1654,28 @@ rm -rf ~/.prevoyant/reports   # or the path set in CLAUDE_REPORT_DIR
 
 ## Changelog
 
+### v1.3.6 — Field Assistant + P2P Mesh Validation
+
+- **Field Assistant (`/dashboard/field`):** new dashboard tab giving field engineers a direct, bidirectional interface to team knowledge. Four tabs: **Ask the Team** (chat-style KB query backed by Cortex facts, shared KB files, and P2P mesh observations), **Record Field Finding** (structured form for logging site discoveries to `shared/field-intel.md`), **Session History** (saved Q&A sessions, local only), and **Field Intel KB** (live read of the field intel log).
+
+- **AI-assisted field finding entry:** entering a Jira ticket key and tabbing away triggers an auto-synthesis pass. Claude reads the Jira description and all comments, then pre-fills symptom, root cause, fix, component, and tags — highlighted in amber to distinguish AI-populated fields from manual entries. Root cause field is intentionally left for manual review.
+
+- **P2P mesh validation:** when a field finding is saved, the observation is broadcast to all connected mesh peers via the Collective Intelligence Mesh (`PRX_CORTEX_P2P_ENABLED=Y`). Each peer independently validates the finding against its local Cortex (Claude evaluates technical credibility and KB value). Valid findings are re-broadcast with an incremented `confirmCount`; invalid ones are re-broadcast with a `meshRejected` flag. When the originating machine's observation reaches `PRX_CORTEX_AUTO_PROMOTE_THRESHOLD` confirms, the KB entry is promoted from `[FIELD VERIFIED pending]` to `[MESH VALIDATED — N nodes confirmed]`. Peer machines write their own idempotent KB entries once threshold is reached.
+
+- **Full finding payload survives mesh transit:** the complete payload (symptom, root cause, fix, Jira metadata, `obsKey`) is stored in the observation's `raw` field so it survives `mergeObservation`'s standard-field-only merge and is available to every peer validator.
+
+- **`field-intel` added to high-signal mesh types:** `field-intel` observations now propagate to peers via the quality gate in `isMeshQualityObservation()`. Previously the type was missing from `HIGH_SIGNAL_TYPES` and observations were silently dropped.
+
+- **Browser notifications for mesh validation results:** the Field Assistant polls `GET /dashboard/field/notifications` every 5 seconds. When a validation result arrives (accepted or flagged), a dismissible banner card appears above the tabs with status, reason, finding reference, and node count. If the user has granted OS notification permission, a native browser notification also pops — visible even when the tab is in the background. Fixed a `SyntaxError: Unexpected string` that prevented the entire Field Assistant script block from parsing (caused by `\'` inside a backtick template literal being reduced to `'` by Node.js, breaking the single-quoted string in the generated client JS). Fixed by replacing `document.getElementById(\'id\').remove()` with `this.parentElement.remove()` in the dismiss button.
+
+- **Email notifications for mesh validation results:** in addition to browser notifications, `PRX_EMAIL_TO` receives an email when validation completes — ACCEPTED with node count and reason, or FLAGGED with the peer's rejection reason. Uses the new reusable `server/notifications/email.js` SMTP module (extracted from `ticketWatcherWorker.js`).
+
+- **Generic field engineer persona (no personal names in server):** all references to a specific engineer name removed from the server codebase. The Field Assistant hero now reads "Field Engineer · Record Field Finding"; chat bubbles display "You"; activity log actor is `field-engineer`; Cortex observations use `persona: 'field-engineer'`. Persona file renamed to `plugin/config/personas/field-engineer.md`.
+
+- **Knowledge Builder — `PRX_JIRA_PROJECT` scope enforced on all Jira calls:** previously only the Step J2 initial query included `project = IV AND ...`; Claude's subsequent Jira MCP calls (follow-up lookups, linked issues, subtasks) had no project filter and pulled tickets from other projects. Fixed by adding a `HARD CONSTRAINT` in the prompt preamble and a per-step reminder at Step J2 — both conditional on `PRX_JIRA_PROJECT` being set — that require every Jira MCP call in the session to include the project scope.
+
+- **New files:** `server/runner/fieldIntelAgent.js` (context builder, KB writer, AI synthesiser, mesh validator, session store), `server/notifications/email.js` (reusable SMTP module), `server/notifications/browserQueue.js` (in-memory notification queue for browser polling), `docs/FIELD_ASSISTANT.md`, `plugin/config/personas/field-engineer.md`.
+
 ### v1.3.5 — Collective Intelligence Mesh
 
 - **Collective Intelligence Mesh (`PRX_CORTEX_P2P_ENABLED`):** extends the P2P KB Sync layer into a shared agent-observation network. When `PRX_CORTEX_P2P_ENABLED=Y`, every node's Cortex agent observations (findings, patterns, decisions recorded during sessions) are broadcast via a new `prevoyant/cortex-sync/1` GossipSub topic and merged into each connected node's local `CortexMemory`. Observations confirmed by 2+ independent nodes receive a higher `confirmCount` and can auto-promote to the KB when `PRX_CORTEX_P2P_CONSENSUS_PROMOTE_PCT` threshold is met. Requires `PRX_P2P_ENABLED=Y` and `PRX_CORTEX_ENABLED=Y`.

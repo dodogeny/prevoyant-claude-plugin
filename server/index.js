@@ -406,6 +406,73 @@ function startKbP2p() {
         activityLog.record('cortex_mesh_obs_received', null, 'system', {
           key: msg.key, sourceNode: msg.sourceNode, machine: msg.machine,
         });
+
+        // ── Field Intel mesh validation ─────────────────────────────────────
+        if (msg.value && msg.value.type === 'field-intel') {
+          let payload = {};
+          try { payload = msg.value.raw ? JSON.parse(msg.value.raw) : {}; } catch (_) {}
+          const obsKey = payload.obsKey;
+
+          if (obsKey) {
+            if (_pendingFieldIntelObs.has(obsKey)) {
+              // ── Originating node: watch for threshold or rejection ────────
+              const pending = _pendingFieldIntelObs.get(obsKey);
+              const merged  = cortexLayer.memory().get(msg.key);
+              const count   = (merged && merged.confirmCount) || (msg.value.confirmCount || 1);
+
+              if (!pending.notified && count >= threshold) {
+                pending.notified = true;
+                setImmediate(async () => {
+                  try {
+                    const agent = require('./runner/fieldIntelAgent');
+                    agent.markFieldIntelValidated(obsKey, count);
+                    await agent.notifyFieldIntelResult({ payload, valid: true, reason: `${count} mesh node${count !== 1 ? 's' : ''} independently confirmed this finding`, confirmCount: count });
+                  } catch (e) { console.warn('[field-intel] accept-notify error:', e.message); }
+                });
+              } else if (!pending.rejectionNotified && msg.value.meshRejected) {
+                pending.rejectionNotified = true;
+                setImmediate(async () => {
+                  try {
+                    const agent = require('./runner/fieldIntelAgent');
+                    await agent.notifyFieldIntelResult({ payload, valid: false, reason: msg.value.rejectReason || 'Inconsistency detected by a peer node', confirmCount: count });
+                  } catch (e) { console.warn('[field-intel] reject-notify error:', e.message); }
+                });
+              }
+            } else if (!_validatedFieldIntelKeys.has(obsKey)) {
+              // ── Peer node: validate and re-broadcast ─────────────────────
+              _validatedFieldIntelKeys.add(obsKey);
+              const currentCount = msg.value.confirmCount || 1;
+
+              setImmediate(async () => {
+                try {
+                  const agent = require('./runner/fieldIntelAgent');
+                  const { valid, reason } = await agent.validateFieldIntel(payload);
+
+                  if (valid) {
+                    const newCount    = currentCount + 1;
+                    const updatedValue = { ...msg.value, confirmCount: newCount };
+                    // Persist updated count so subsequent merges see it
+                    cortexLayer.memory().mergeObservation(msg.key, updatedValue, msg.tags || [], 'local-validation');
+                    // Re-broadcast to propagate incremented count back to originator and other peers
+                    if (kbP2pWorker) kbP2pWorker.postMessage({ type: 'cortex-broadcast', key: msg.key, value: updatedValue, tags: msg.tags || [] });
+                    console.log(`[field-intel] Validated '${obsKey}' — re-broadcast with confirmCount=${newCount}`);
+                    // Write peer KB entry once threshold is reached
+                    if (newCount >= threshold) {
+                      agent.writePeerFieldIntelEntry(payload, newCount);
+                    }
+                  } else {
+                    // Re-broadcast with rejection flag so originator gets notified
+                    const rejValue = { ...msg.value, meshRejected: true, rejectReason: reason };
+                    if (kbP2pWorker) kbP2pWorker.postMessage({ type: 'cortex-broadcast', key: msg.key, value: rejValue, tags: msg.tags || [] });
+                    console.log(`[field-intel] Rejected '${obsKey}' — reason: ${reason}`);
+                  }
+                } catch (e) {
+                  console.warn('[field-intel] peer validation error:', e.message);
+                }
+              });
+            }
+          }
+        }
       } catch (e) {
         console.warn('[cortex-mesh] mergeObservation failed:', e.message);
       }
@@ -900,6 +967,16 @@ serverEvents.on('cortex-repowise-now', () => {
   if (cortexWorker) cortexWorker.postMessage({ type: 'repowise-now' });
 });
 
+// ── Field Intel mesh validation state ────────────────────────────────────────
+// obsKeys this node has already validated (peer role) — prevents double-validation
+const _validatedFieldIntelKeys = new Set();
+// obsKeys originated on this node (originator role) — used to detect threshold + notify
+const _pendingFieldIntelObs    = new Map(); // obsKey → { notified: false, rejectionNotified: false }
+
+serverEvents.on('field-intel-originated', ({ obsKey }) => {
+  if (obsKey) _pendingFieldIntelObs.set(obsKey, { notified: false, rejectionNotified: false });
+});
+
 // Quality gate for Collective Intelligence Mesh broadcasts.
 // Only high-signal observations propagate to peers — prevents raw context
 // dumps and ephemeral low-value writes from flooding the GossipSub topic.
@@ -907,7 +984,7 @@ function isMeshQualityObservation(value) {
   if (!value || typeof value !== 'object') return false;
   const HIGH_SIGNAL_TYPES = new Set([
     'pattern', 'decision', 'architectural-finding', 'lesson-learned',
-    'session-summary', 'hotspot', 'business-rule', 'risk',
+    'session-summary', 'hotspot', 'business-rule', 'risk', 'field-intel',
   ]);
   if (HIGH_SIGNAL_TYPES.has(value.type)) return true;
   // Generic 'context' observations only if they carry a meaningful summary

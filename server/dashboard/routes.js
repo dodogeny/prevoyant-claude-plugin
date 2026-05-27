@@ -1417,6 +1417,10 @@ function renderDashboard(stats, budget) {
           Cortex
           ${process.env.PRX_CORTEX_ENABLED === 'Y' ? `<span class="nav-menu-flag" style="background:rgba(236,72,153,.2);color:#fbcfe8;border-color:rgba(236,72,153,.4)">active</span>` : ''}
         </a>
+        <a href="/dashboard/field" class="nav-menu-item" role="menuitem">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+          Field Assistant
+        </a>
         <a href="/dashboard/disk" class="nav-menu-item" role="menuitem">
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/></svg>
           Disk Monitor
@@ -2545,6 +2549,9 @@ const EVENT_DISPLAY = {
   p2p_started:                { label: 'P2P Node Started',           bg: '#ecfdf5', color: '#065f46' },
   p2p_kb_synced:              { label: 'P2P KB Sync In',             bg: '#f0fdf4', color: '#166534' },
   p2p_error:                  { label: 'P2P Error',                  bg: '#fee2e2', color: '#991b1b' },
+  field_query:                { label: 'Field Query',                bg: '#ede9fe', color: '#5b21b6' },
+  field_investigation:        { label: 'Field Investigation',        bg: '#fdf4ff', color: '#7c3aed' },
+  field_intel_logged:         { label: 'Field Intel Logged',         bg: '#fdf4ff', color: '#7e22ce' },
 };
 
 const ACTOR_STYLE = {
@@ -2555,6 +2562,7 @@ const ACTOR_STYLE = {
   manual:  { bg: '#dcfce7', color: '#166534' },
   hermes:  { bg: '#ede9fe', color: '#5b21b6' },
   claude:  { bg: '#fae8ff', color: '#86198f' },
+  'field-engineer': { bg: '#f3e8ff', color: '#7c3aed' },
 };
 
 function renderActivity(results, chartData, allTypes, allActors, actStats, filters) {
@@ -10181,6 +10189,1148 @@ router.post('/settings/decision-outcome/run-now', express.json(), (_req, res) =>
   }
   serverEvents.emit('decision-outcome-run-now');
   res.json({ ok: true });
+});
+
+// ── Field Assistant (Record Field Finding) ────────────────────────────────────
+
+const _FIELD_CSS = `
+  .field-layout { max-width: 860px; margin: 0 auto; padding: 2rem 1.5rem 4rem; }
+  .field-tabs { display: flex; gap: 0; border-bottom: 1px solid var(--border); margin-bottom: 1.5rem; }
+  .field-tab {
+    padding: .5rem 1.1rem; font-size: .82rem; font-weight: 600; color: var(--text-2);
+    cursor: pointer; border: none; background: none; border-bottom: 2px solid transparent;
+    margin-bottom: -1px; transition: color .15s, border-color .15s;
+  }
+  .field-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+  .field-tab:hover:not(.active) { color: var(--text); }
+  .field-panel { display: none; }
+  .field-panel.active { display: block; }
+  .field-card {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--r-lg); padding: 1.5rem; box-shadow: var(--shadow); margin-bottom: 1.25rem;
+  }
+  .field-card h3 { font-size: .88rem; font-weight: 700; color: var(--text); margin-bottom: .75rem; }
+  .field-textarea {
+    width: 100%; font-size: .84rem; font-family: inherit; color: var(--text);
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-md);
+    padding: .65rem .85rem; resize: vertical; min-height: 90px; line-height: 1.55;
+    transition: border-color .15s;
+  }
+  .field-textarea:focus { outline: none; border-color: var(--accent); }
+  .field-input {
+    width: 100%; font-size: .84rem; font-family: inherit; color: var(--text);
+    background: var(--bg); border: 1px solid var(--border); border-radius: var(--r-md);
+    padding: .55rem .85rem; line-height: 1.55; transition: border-color .15s;
+  }
+  .field-input:focus { outline: none; border-color: var(--accent); }
+  .field-row { display: flex; gap: .75rem; margin-bottom: .85rem; }
+  .field-row .field-input { flex: 1; }
+  .field-label { font-size: .76rem; font-weight: 600; color: var(--text-2); margin-bottom: .35rem; }
+  .field-btn {
+    display: inline-flex; align-items: center; gap: .4rem;
+    background: var(--accent); color: #fff; border: none; border-radius: var(--r-md);
+    padding: .55rem 1.2rem; font-size: .82rem; font-weight: 600; cursor: pointer;
+    transition: background .15s;
+  }
+  .field-btn:hover { background: var(--accent-hover); }
+  .field-btn:disabled { background: #9ca3af; cursor: not-allowed; }
+  .field-btn-sec {
+    display: inline-flex; align-items: center; gap: .4rem;
+    background: var(--surface); color: var(--text-2); border: 1px solid var(--border);
+    border-radius: var(--r-md); padding: .5rem 1rem; font-size: .82rem; font-weight: 600;
+    cursor: pointer; transition: background .15s, color .15s;
+  }
+  .field-btn-sec:hover { background: var(--bg); color: var(--text); }
+  .field-answer-box {
+    background: var(--surface-2); border: 1px solid var(--border-light);
+    border-radius: var(--r-md); padding: 1.1rem 1.25rem; margin-top: 1rem;
+    font-size: .84rem; line-height: 1.65; white-space: pre-wrap; word-break: break-word;
+    min-height: 3rem;
+  }
+  .field-answer-box.thinking {
+    color: var(--text-3); font-style: italic;
+    animation: field-pulse 1.4s ease-in-out infinite;
+  }
+  @keyframes field-pulse { 0%,100%{opacity:1} 50%{opacity:.45} }
+  .field-sources { margin-top: .5rem; display: flex; flex-wrap: wrap; gap: .4rem; }
+  .field-source-tag {
+    font-size: .72rem; padding: 2px 8px; border-radius: 20px; font-weight: 600;
+    background: var(--accent-dim); color: var(--accent); border: 1px solid rgba(99,102,241,.2);
+  }
+  .field-source-tag.mesh          { background: var(--purple-dim); color: var(--purple); border-color: rgba(124,58,237,.2); }
+  .field-source-tag.kb            { background: var(--green-dim);  color: var(--green);  border-color: rgba(5,150,105,.2); }
+  .field-source-tag.investigation { background: var(--amber-dim);  color: var(--amber);  border-color: rgba(217,119,6,.25); }
+  .field-source-tag.kb-draft      { background: var(--blue-dim);   color: var(--blue);   border-color: rgba(37,99,235,.2); }
+  .chat-msg.team .chat-bubble.investigated {
+    border-color: rgba(217,119,6,.35);
+    background: #fffbeb;
+  }
+  .investigation-banner {
+    display: flex; align-items: center; gap: .4rem;
+    font-size: .72rem; font-weight: 600; color: var(--amber);
+    padding: .3rem 0 .1rem; opacity: .85;
+  }
+  /* Jira lookup */
+  .jira-lookup-row { display: flex; gap: .5rem; align-items: center; margin-bottom: .85rem; }
+  .jira-lookup-row .field-input { flex: 1; text-transform: uppercase; font-weight: 600; letter-spacing: .02em; }
+  .jira-lookup-status { font-size: .76rem; color: var(--text-3); }
+  .jira-ticket-pill {
+    display: inline-flex; align-items: center; gap: .4rem;
+    background: var(--accent-dim); color: var(--accent);
+    border: 1px solid rgba(99,102,241,.2); border-radius: 20px;
+    padding: 2px 10px; font-size: .76rem; font-weight: 700;
+    text-decoration: none; margin-bottom: .65rem;
+  }
+  .jira-ticket-pill:hover { background: #e0e7ff; }
+  .field-autofilled     { border-color: rgba(37,99,235,.4)  !important; background: #eff6ff !important; }
+  .field-ai-synthesised { border-color: rgba(217,119,6,.4)  !important; background: #fffbeb !important; }
+  .field-history { display: flex; flex-direction: column; gap: .75rem; }
+  .field-history-item {
+    background: var(--surface); border: 1px solid var(--border); border-radius: var(--r-md);
+    padding: .9rem 1.1rem; cursor: pointer; transition: border-color .15s, box-shadow .15s;
+  }
+  .field-history-item:hover { border-color: var(--accent); box-shadow: var(--shadow-md); }
+  .field-history-q { font-size: .84rem; font-weight: 600; color: var(--text); margin-bottom: .3rem; }
+  .field-history-meta { font-size: .72rem; color: var(--text-3); }
+  .field-history-answer { font-size: .82rem; color: var(--text-2); margin-top: .55rem; white-space: pre-wrap; }
+  .field-empty { text-align: center; padding: 3rem 1rem; color: var(--text-3); font-size: .88rem; }
+  /* ── Chat thread ── */
+  .chat-thread {
+    display: flex; flex-direction: column; gap: .85rem;
+    max-height: 480px; overflow-y: auto; padding: .25rem .1rem .5rem;
+    scroll-behavior: smooth;
+  }
+  .chat-empty { text-align: center; padding: 2.5rem 1rem; color: var(--text-3); font-size: .84rem; }
+  .chat-msg { display: flex; flex-direction: column; gap: .25rem; max-width: 88%; }
+  .chat-msg.field { align-self: flex-end; align-items: flex-end; }
+  .chat-msg.team   { align-self: flex-start; align-items: flex-start; }
+  .chat-bubble {
+    padding: .6rem .9rem; border-radius: var(--r-lg); font-size: .84rem;
+    line-height: 1.6; white-space: pre-wrap; word-break: break-word;
+  }
+  .chat-msg.field .chat-bubble {
+    background: var(--accent); color: #fff;
+    border-bottom-right-radius: 4px;
+  }
+  .chat-msg.team .chat-bubble {
+    background: var(--surface); color: var(--text);
+    border: 1px solid var(--border); border-bottom-left-radius: 4px;
+    box-shadow: var(--shadow);
+  }
+  .chat-msg.team .chat-bubble.thinking {
+    color: var(--text-3); font-style: italic;
+    animation: field-pulse 1.4s ease-in-out infinite;
+  }
+  .chat-who {
+    font-size: .7rem; font-weight: 700; color: var(--text-3);
+    padding: 0 .2rem; letter-spacing: .02em; text-transform: uppercase;
+  }
+  .chat-msg.field .chat-who { color: var(--accent); }
+  .chat-msg.team   .chat-who { color: var(--text-3); }
+  .chat-sources { display: flex; flex-wrap: wrap; gap: .3rem; padding: 0 .1rem; }
+  .chat-input-row {
+    display: flex; gap: .6rem; align-items: flex-end;
+    margin-top: .85rem; border-top: 1px solid var(--border-light); padding-top: .85rem;
+  }
+  .chat-input-row .field-textarea { min-height: 52px; max-height: 160px; flex: 1; margin: 0; }
+  .chat-send-btn {
+    flex-shrink: 0; display: inline-flex; align-items: center; justify-content: center;
+    width: 40px; height: 40px; background: var(--accent); color: #fff;
+    border: none; border-radius: var(--r-md); cursor: pointer; transition: background .15s;
+  }
+  .chat-send-btn:hover   { background: var(--accent-hover); }
+  .chat-send-btn:disabled { background: #9ca3af; cursor: not-allowed; }
+  .chat-toolbar {
+    display: flex; align-items: center; gap: .6rem; margin-top: .65rem; flex-wrap: wrap;
+  }
+  .field-success { padding: .6rem .9rem; background: var(--green-dim); border: 1px solid rgba(5,150,105,.25);
+    color: var(--green); border-radius: var(--r-md); font-size: .82rem; font-weight: 600; margin-top: .75rem; }
+  .field-error   { padding: .6rem .9rem; background: var(--red-dim); border: 1px solid rgba(220,38,38,.25);
+    color: var(--red); border-radius: var(--r-md); font-size: .82rem; font-weight: 600; margin-top: .75rem; }
+  .field-hero { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.5rem; }
+  .field-hero-avatar {
+    width: 48px; height: 48px; border-radius: 50%; background: linear-gradient(135deg,#6366f1,#8b5cf6);
+    display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+    font-size: 1.3rem; font-weight: 700; color: #fff;
+  }
+  .field-hero-text h2 { font-size: 1.05rem; font-weight: 700; color: var(--text); }
+  .field-hero-text p  { font-size: .82rem; color: var(--text-2); margin-top: .15rem; }
+  .mesh-notify-card {
+    display: flex; gap: .75rem; align-items: flex-start;
+    padding: .75rem 1rem; border-radius: var(--r-md); margin-bottom: .6rem;
+    font-size: .82rem; animation: field-pulse-in .25s ease;
+  }
+  @keyframes field-pulse-in { from { opacity:0; transform:translateY(-4px); } to { opacity:1; transform:none; } }
+  .mesh-notify-card.accepted {
+    background: var(--green-dim); border: 1px solid rgba(5,150,105,.25); color: var(--green);
+  }
+  .mesh-notify-card.flagged {
+    background: #fffbeb; border: 1px solid rgba(217,119,6,.3); color: #92400e;
+  }
+  .mesh-notify-icon { font-size: 1rem; flex-shrink: 0; margin-top: .05rem; }
+  .mesh-notify-body { flex: 1; min-width: 0; }
+  .mesh-notify-title { font-weight: 700; margin-bottom: .2rem; }
+  .mesh-notify-reason { color: inherit; opacity: .8; }
+  .mesh-notify-meta { font-size: .74rem; opacity: .65; margin-top: .25rem; }
+  .mesh-notify-dismiss {
+    flex-shrink: 0; background: none; border: none; cursor: pointer;
+    color: inherit; opacity: .5; font-size: 1rem; padding: 0; line-height: 1;
+  }
+  .mesh-notify-dismiss:hover { opacity: 1; }
+  .mesh-notify-perm {
+    font-size: .75rem; color: var(--text-3); margin-bottom: .5rem;
+  }
+  .mesh-notify-perm a { color: var(--accent); cursor: pointer; text-decoration: underline; }
+`;
+
+function renderFieldAssistant(sessions = []) {
+  const cortex  = require('../runner/cortexLayer');
+  const p2pState = p2pBridge.getState();
+  const cortexOk = cortex.isEnabled();
+  const meshOk   = process.env.PRX_CORTEX_P2P_ENABLED === 'Y' && process.env.PRX_P2P_ENABLED === 'Y';
+  const peerCount = (p2pState.peers || []).length;
+
+  const statusBadge = (ok, label) => ok
+    ? `<span style="display:inline-flex;align-items:center;gap:.3rem;background:var(--green-dim);color:var(--green);border-radius:20px;padding:2px 9px;font-size:.72rem;font-weight:600;border:1px solid rgba(5,150,105,.2)">
+        <span style="width:6px;height:6px;border-radius:50%;background:var(--green);display:inline-block"></span>${label}</span>`
+    : `<span style="display:inline-flex;align-items:center;gap:.3rem;background:var(--border-light);color:var(--text-3);border-radius:20px;padding:2px 9px;font-size:.72rem;font-weight:600;border:1px solid var(--border)">
+        <span style="width:6px;height:6px;border-radius:50%;background:var(--text-3);display:inline-block"></span>${label}</span>`;
+
+  const historyHtml = sessions.length
+    ? sessions.map(s => {
+        const turnCount = Array.isArray(s.turns) ? s.turns.filter(t => t.role === 'field' || t.role === 'team').length : 0;
+        const meta      = turnCount > 1 ? ` · ${Math.ceil(turnCount / 2)} exchange${turnCount > 2 ? 's' : ''}` : '';
+        const preview   = Array.isArray(s.turns)
+          ? s.turns.filter(t => t.role === 'team').map(t => t.content).join('\n\n---\n\n').slice(0, 600)
+          : (s.answer || '').slice(0, 600);
+        const more      = preview.length >= 600 ? '…' : '';
+        return `
+      <div class="field-history-item" onclick="expandSession(${JSON.stringify(JSON.stringify(s))})">
+        <div class="field-history-q">${esc((s.question || '').slice(0, 120))}</div>
+        <div class="field-history-meta">${new Date(s.ts || 0).toLocaleString()}${meta}</div>
+        <div class="field-history-answer" id="hist-${esc(s.id)}" style="display:none">${esc(preview)}${more}</div>
+      </div>`;
+      }).join('')
+    : `<div class="field-empty">No sessions yet — ask your first question in the Ask tab.</div>`;
+
+  return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Field Assistant · Prevoyant</title>
+<style>${BASE_CSS}${_FIELD_CSS}</style>
+</head>
+<body>
+<header>
+  <h1><span class="sun-logo"><svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="2.5" stroke="#fff" stroke-width="2"/><path d="M8.5 4L12 2l3.5 2Z" fill="#fff" stroke="#fff" stroke-width="1.5" stroke-linejoin="round"/><rect x="8.5" y="4" width="7" height="4" rx=".3" fill="#dc2626" stroke="#fff" stroke-width="1.5"/><line x1="12" y1="4" x2="12" y2="8" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><line x1="8.5" y1="6" x2="15.5" y2="6" stroke="rgba(255,255,255,.5)" stroke-width=".8"/><circle cx="12" cy="6" r="1.2" fill="#fbbf24"/><line x1="7" y1="8.3" x2="17" y2="8.3" stroke="#fff" stroke-width="2.5"/><path d="M9.5 8.5h5l.4 2.9H9.1Z" fill="#fff"/><path d="M9.1 11.4h5.8l.4 2.9H8.7Z" fill="#dc2626"/><path d="M8.7 14.3h6.6l.3 2.9H8.4Z" fill="#fff"/><path d="M8.4 17.2h7.2l.4 2.8H8Z" fill="#dc2626"/><path d="M11.2 20v-1.6a.8.8 0 0 1 1.6 0V20Z" fill="#1e293b"/><rect x="6" y="20" width="12" height="2" rx=".5" fill="#fff"/></svg></span>Field Assistant</h1>
+  <div class="meta"></div>
+  <a href="/dashboard" class="header-btn">← Dashboard</a>
+</header>
+
+<div class="field-layout">
+  <div class="field-hero">
+    <div class="field-hero-avatar">F</div>
+    <div class="field-hero-text">
+      <h2>Field Engineer · Record Field Finding</h2>
+      <p>Ask the team any question about txswitch hub events, diagnostics, or system behaviour — or log a field finding to share with the dev team.</p>
+    </div>
+  </div>
+
+  <div style="display:flex;gap:.5rem;margin-bottom:1.25rem;flex-wrap:wrap">
+    ${statusBadge(cortexOk, 'Cortex ' + (cortexOk ? 'active' : 'inactive'))}
+    ${statusBadge(meshOk, 'Mesh ' + (meshOk ? `active (${peerCount} peer${peerCount !== 1 ? 's' : ''})` : 'inactive'))}
+    ${statusBadge(true, 'KB offline-ready')}
+  </div>
+
+  <div id="mesh-notify-area" style="margin-bottom:.25rem"></div>
+
+  <div class="field-tabs">
+    <button class="field-tab active" onclick="switchTab('ask',this)">Ask the Team</button>
+    <button class="field-tab" onclick="switchTab('log',this)">Log Field Finding</button>
+    <button class="field-tab" onclick="switchTab('history',this)">Session History</button>
+    <button class="field-tab" onclick="switchTab('intel',this)">Field Intel KB</button>
+  </div>
+
+  <!-- ASK TAB -->
+  <div class="field-panel active" id="panel-ask">
+    <div class="field-card">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:.65rem">
+        <h3 style="margin:0">Ask the team</h3>
+        <button class="field-btn-sec" id="new-convo-btn" onclick="newConversation()" style="display:none;padding:.3rem .75rem;font-size:.76rem">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          New conversation
+        </button>
+      </div>
+      <p style="font-size:.81rem;color:var(--text-2);margin-bottom:.85rem">
+        Ask follow-up questions until you have full clarity.
+        The team remembers the whole conversation and answers using Cortex, KB, and P2P mesh observations.
+      </p>
+
+      <div class="chat-thread" id="chat-thread">
+        <div class="chat-empty" id="chat-empty">
+          No messages yet — type your first question below.<br>
+          <span style="font-size:.76rem;color:var(--text-3)">Ctrl+Enter / Cmd+Enter to send</span>
+        </div>
+      </div>
+
+      <div class="chat-input-row">
+        <textarea id="ask-question" class="field-textarea" rows="2"
+          placeholder="Ask a question or follow up…"></textarea>
+        <button class="chat-send-btn" id="ask-btn" onclick="submitQuery()" title="Send (Ctrl+Enter)">
+          <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="22" y1="2" x2="11" y2="13"/><polygon points="22 2 15 22 11 13 2 9 22 2"/></svg>
+        </button>
+      </div>
+
+      <div class="chat-toolbar">
+        <span id="ask-status" style="font-size:.78rem;color:var(--text-3)"></span>
+        <div style="margin-left:auto;display:flex;gap:.6rem;align-items:center">
+          <button class="field-btn-sec" id="ask-save-btn" onclick="saveToHistory()" style="display:none;padding:.35rem .85rem;font-size:.76rem">
+            <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+            Save session
+          </button>
+          <span id="ask-save-status" style="font-size:.76rem;color:var(--text-3)"></span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- LOG TAB -->
+  <div class="field-panel" id="panel-log">
+    <div class="field-card">
+      <h3>Log a field finding</h3>
+      <p style="font-size:.81rem;color:var(--text-2);margin-bottom:.85rem">
+        Resolved something at a client site? Link a Jira ticket to auto-populate the form, then save to KB and broadcast to all connected dev machines.
+      </p>
+
+      <div class="field-label">Jira ticket <span style="font-size:.72rem;font-weight:400;color:var(--text-3)">(tab away or press Enter — form fills automatically)</span></div>
+      <div class="jira-lookup-row">
+        <input id="log-jira-key" class="field-input" type="text"
+          placeholder="e.g. PROJ-123"
+          oninput="this.value=this.value.toUpperCase()"
+          onkeydown="if(event.key==='Enter'){event.preventDefault();lookupJira();}"
+          onblur="lookupJira()">
+        <span id="jira-lookup-status" class="jira-lookup-status"></span>
+      </div>
+      <div id="jira-ticket-pill-row" style="display:none;margin-bottom:.75rem"></div>
+
+      <div style="flex:1;margin-bottom:.85rem">
+        <div class="field-label">Component / subsystem</div>
+        <input id="log-component" class="field-input" type="text" placeholder="e.g. txswitch-hub, port-4, alarm-mgr">
+      </div>
+
+      <div style="margin-bottom:.85rem">
+        <div class="field-label">Symptom observed <span style="color:var(--red)">*</span></div>
+        <textarea id="log-symptom" class="field-textarea" rows="3"
+          placeholder="Describe exactly what you saw — include alarm codes and timestamps if available"></textarea>
+      </div>
+
+      <div style="margin-bottom:.85rem">
+        <div class="field-label">Root cause identified <span style="color:var(--red)">*</span></div>
+        <textarea id="log-rootcause" class="field-textarea" rows="2"
+          placeholder="What caused it?"></textarea>
+      </div>
+
+      <div style="margin-bottom:.85rem">
+        <div class="field-label">Fix applied <span style="color:var(--red)">*</span></div>
+        <textarea id="log-fix" class="field-textarea" rows="2"
+          placeholder="What resolved it? Include config change, command, or workaround applied"></textarea>
+      </div>
+
+      <div style="margin-bottom:.85rem">
+        <div class="field-label">Tags <span style="font-size:.72rem;font-weight:400;color:var(--text-3)">(comma-separated)</span></div>
+        <input id="log-tags" class="field-input" type="text" placeholder="e.g. alarm, port-4, cold-start">
+      </div>
+
+      <div style="display:flex;gap:.75rem;align-items:center;margin-top:.85rem">
+        <button class="field-btn" onclick="submitLog()">
+          <svg xmlns="http://www.w3.org/2000/svg" width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="5" x2="12" y2="19"/><line x1="5" y1="12" x2="19" y2="12"/></svg>
+          Save to KB
+        </button>
+        <button class="field-btn-sec" onclick="clearLog()">Clear</button>
+      </div>
+      <div id="log-result"></div>
+    </div>
+  </div>
+
+  <!-- HISTORY TAB -->
+  <div class="field-panel" id="panel-history">
+    <div class="field-card">
+      <h3>Session history</h3>
+      <p style="font-size:.81rem;color:var(--text-2);margin-bottom:.85rem">
+        All Q&amp;A sessions saved from this machine. Click to expand the answer.
+      </p>
+      <div class="field-history" id="history-list">
+        ${historyHtml}
+      </div>
+    </div>
+  </div>
+
+  <!-- INTEL TAB -->
+  <div class="field-panel" id="panel-intel">
+    <div class="field-card">
+      <h3>Field Intelligence KB</h3>
+      <p style="font-size:.81rem;color:var(--text-2);margin-bottom:.85rem">
+        Contents of <code>shared/field-intel.md</code> — all logged field findings, shared with the dev team via P2P.
+      </p>
+      <div id="intel-content" class="field-answer-box" style="min-height:8rem">
+        Loading…
+      </div>
+      <div style="margin-top:.75rem">
+        <button class="field-btn-sec" onclick="loadIntel()">
+          <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 0 .49-4.49"/></svg>
+          Refresh
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+${BASE_SCRIPT}
+<script>
+  // ── Conversation state ────────────────────────────────────────────────────
+  // Each turn: { role: 'field'|'team', content: string, sources: [] }
+  let _conversation = [];
+  let _jiraData = {};
+
+  // ── Tab switching ─────────────────────────────────────────────────────────
+  function switchTab(id, btn) {
+    document.querySelectorAll('.field-tab').forEach(t => t.classList.remove('active'));
+    document.querySelectorAll('.field-panel').forEach(p => p.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('panel-' + id).classList.add('active');
+    if (id === 'intel') loadIntel();
+  }
+
+  // ── Chat thread rendering ─────────────────────────────────────────────────
+  function sourceTags(sources) {
+    if (!sources || !sources.length) return '';
+    const CLS = { mesh: 'mesh', kb: 'kb', investigation: 'investigation', 'kb-draft': 'kb-draft' };
+    return '<div class="chat-sources">' + sources.map(s =>
+      '<span class="field-source-tag ' + (CLS[s.id] || '') + '">' + s.label + '</span>'
+    ).join('') + '</div>';
+  }
+
+  function esc(s) {
+    return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  }
+
+  function renderThread() {
+    const thread = document.getElementById('chat-thread');
+    const empty  = document.getElementById('chat-empty');
+    if (!_conversation.length) {
+      if (!empty) thread.innerHTML = '<div class="chat-empty" id="chat-empty">No messages yet — type your first question below.<br><span style="font-size:.76rem;color:var(--text-3)">Ctrl+Enter / Cmd+Enter to send</span></div>';
+      return;
+    }
+    if (empty) empty.remove();
+    // Rebuild all bubbles from state so the thread is always consistent
+    thread.innerHTML = _conversation.map((turn, i) => {
+      if (turn.role === 'field') {
+        return '<div class="chat-msg field" id="msg-' + i + '">' +
+          '<span class="chat-who">You</span>' +
+          '<div class="chat-bubble">' + esc(turn.content) + '</div>' +
+          '</div>';
+      }
+      if (turn.role === 'thinking') {
+        return '<div class="chat-msg team" id="msg-' + i + '">' +
+          '<span class="chat-who">Team</span>' +
+          '<div class="chat-bubble thinking" id="thinking-bubble">Searching knowledge base…</div>' +
+          '</div>';
+      }
+      const invBanner = turn.investigated
+        ? '<div class="investigation-banner">' +
+          '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>' +
+          'KB miss — answered from source code' +
+          (turn.kbEntryAdded ? ' · draft added to KB' : '') +
+          '</div>'
+        : '';
+      return '<div class="chat-msg team" id="msg-' + i + '">' +
+        '<span class="chat-who">Team</span>' +
+        invBanner +
+        '<div class="chat-bubble' + (turn.investigated ? ' investigated' : '') + '">' + esc(turn.content) + '</div>' +
+        (turn.sources && turn.sources.length ? sourceTags(turn.sources) : '') +
+        '</div>';
+    }).join('');
+    thread.scrollTop = thread.scrollHeight;
+
+    // Show/hide controls
+    const hasTurns = _conversation.some(t => t.role === 'team');
+    document.getElementById('ask-save-btn').style.display  = hasTurns ? '' : 'none';
+    document.getElementById('new-convo-btn').style.display = _conversation.length ? '' : 'none';
+  }
+
+  // ── Submit a question ─────────────────────────────────────────────────────
+  async function submitQuery() {
+    const input = document.getElementById('ask-question');
+    const q = input.value.trim();
+    if (!q) return;
+
+    const btn    = document.getElementById('ask-btn');
+    const status = document.getElementById('ask-status');
+
+    // Add the field engineer's message immediately
+    _conversation.push({ role: 'field', content: q });
+    // Add a thinking placeholder
+    _conversation.push({ role: 'thinking' });
+    input.value = '';
+    renderThread();
+
+    // After 8s with no answer, note that investigation may be running
+    const thinkingTimer = setTimeout(() => {
+      const b = document.getElementById('thinking-bubble');
+      if (b) b.textContent = 'KB miss detected — investigating source code (may take up to a minute)…';
+    }, 8000);
+
+    btn.disabled  = true;
+    status.textContent = 'Searching KB and source code if needed…';
+
+    // Build history for the server: all confirmed turns before the thinking placeholder
+    const history = _conversation
+      .filter(t => t.role === 'field' || t.role === 'team')
+      .slice(0, -1)  // exclude the current question (last field engineer turn)
+      .map(t => ({ role: t.role, content: t.content }));
+
+    try {
+      const r = await fetch('/dashboard/field/query', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ question: q, history }),
+      });
+      const data = await r.json();
+      clearTimeout(thinkingTimer);
+      if (!data.ok) throw new Error(data.error || 'Unknown error');
+
+      // Replace the thinking placeholder with the real answer
+      const thinkingIdx = _conversation.findLastIndex(t => t.role === 'thinking');
+      if (thinkingIdx >= 0) {
+        _conversation[thinkingIdx] = {
+          role:         'team',
+          content:      data.answer,
+          sources:      data.sources || [],
+          investigated: !!data.investigated,
+          kbEntryAdded: !!data.kbEntryAdded,
+        };
+      }
+    } catch (e) {
+      clearTimeout(thinkingTimer);
+      const thinkingIdx = _conversation.findLastIndex(t => t.role === 'thinking');
+      if (thinkingIdx >= 0) {
+        _conversation[thinkingIdx] = { role: 'team', content: 'Error: ' + e.message, sources: [] };
+      }
+    }
+
+    renderThread();
+    btn.disabled = false;
+    status.textContent = '';
+  }
+
+  // ── New conversation ──────────────────────────────────────────────────────
+  function newConversation() {
+    _conversation = [];
+    document.getElementById('ask-save-btn').style.display  = 'none';
+    document.getElementById('new-convo-btn').style.display = 'none';
+    document.getElementById('ask-save-status').textContent = '';
+    renderThread();
+  }
+
+  // ── Save full session ─────────────────────────────────────────────────────
+  async function saveToHistory() {
+    const turns = _conversation.filter(t => t.role === 'field' || t.role === 'team');
+    if (!turns.length) return;
+    const ss = document.getElementById('ask-save-status');
+    ss.textContent = 'Saving…';
+    // Derive a title from the first question for the history list
+    const firstQ = (turns.find(t => t.role === 'field') || {}).content || '';
+    const r = await fetch('/dashboard/field/save-session', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ question: firstQ, turns, sources: (turns.find(t => t.role === 'team') || {}).sources || [] }),
+    });
+    const d = await r.json();
+    ss.textContent = d.ok ? 'Saved.' : 'Error: ' + (d.error || '');
+    setTimeout(() => { ss.textContent = ''; }, 2500);
+  }
+
+  // ── Log tab — Jira lookup ─────────────────────────────────────────────────
+  async function lookupJira() {
+    const raw    = document.getElementById('log-jira-key').value.trim().toUpperCase();
+    const status = document.getElementById('jira-lookup-status');
+    const pill   = document.getElementById('jira-ticket-pill-row');
+    if (!raw) return;
+    if (_jiraData.key === raw) return; // already loaded for this key
+
+    status.textContent = 'Fetching…';
+    pill.style.display = 'none';
+
+    try {
+      const r = await fetch('/dashboard/field/jira-lookup?key=' + encodeURIComponent(raw));
+      const d = await r.json();
+      if (!d.ok) { status.textContent = d.error || 'Not found'; return; }
+
+      _jiraData = d;
+
+      // Ticket pill — key + summary + status + priority + type
+      pill.innerHTML =
+        '<a class="jira-ticket-pill" href="' + d.jiraUrl + '" target="_blank" rel="noopener">' +
+        '<svg xmlns="http://www.w3.org/2000/svg" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>' +
+        d.key + '</a>' +
+        '<span style="font-size:.76rem;color:var(--text-2);margin-left:.4rem">' + esc(d.summary.slice(0, 80)) + '</span>' +
+        '<span style="margin-left:.5rem;font-size:.72rem;font-weight:600;color:var(--text-3)">' + esc(d.status) + '</span>' +
+        (d.priority  ? '<span style="margin-left:.4rem;font-size:.72rem;font-weight:600;color:var(--amber)">' + esc(d.priority)  + '</span>' : '') +
+        (d.issueType ? '<span style="margin-left:.4rem;font-size:.72rem;color:var(--text-3)">'                 + esc(d.issueType) + '</span>' : '');
+      pill.style.display = 'block';
+
+      // Auto-fill fields — only set if currently empty
+      if (d.component) _setIfEmpty('log-component', d.component);
+      if (d.symptom)   _setIfEmpty('log-symptom',   d.symptom);
+      if (d.fix)       _setIfEmpty('log-fix',        d.fix);
+      if (d.tags && d.tags.length) {
+        const tagsEl = document.getElementById('log-tags');
+        if (!tagsEl.value.trim()) tagsEl.value = d.tags.join(', ');
+      }
+
+      status.textContent = 'Fetched — AI is synthesising…';
+      synthesiseFields(); // runs in background; updates fields when done
+    } catch (e) {
+      status.textContent = 'Error: ' + e.message;
+    }
+  }
+
+  function _setIfEmpty(id, value) {
+    const el = document.getElementById(id);
+    if (el && !el.value.trim()) { el.value = value; el.classList.add('field-autofilled'); }
+  }
+
+  function _setSynthesised(id, value) {
+    if (!value) return;
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.value = value;
+    el.classList.remove('field-autofilled');
+    el.classList.add('field-ai-synthesised');
+  }
+
+  // ── Log tab — AI synthesis ────────────────────────────────────────────────
+  async function synthesiseFields() {
+    if (!_jiraData.key) return;
+    const status = document.getElementById('jira-lookup-status');
+    try {
+      const r = await fetch('/dashboard/field/synthesise', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ key: _jiraData.key }),
+      });
+      const d = await r.json();
+      if (!d.ok) { status.textContent = 'AI synthesis failed — Jira data used.'; return; }
+
+      _setSynthesised('log-symptom',   d.symptom);
+      _setSynthesised('log-rootcause', d.rootCause);
+      _setSynthesised('log-fix',       d.fix);
+      if (d.component) _setSynthesised('log-component', d.component);
+      if (d.tags && d.tags.length) {
+        const tagsEl = document.getElementById('log-tags');
+        tagsEl.value = d.tags.join(', ');
+        tagsEl.classList.remove('field-autofilled');
+        tagsEl.classList.add('field-ai-synthesised');
+      }
+      status.textContent = 'AI synthesised — review and save.';
+    } catch (e) {
+      status.textContent = 'AI synthesis failed — Jira data used.';
+    }
+  }
+
+  // ── Log tab — submit ──────────────────────────────────────────────────────
+  async function submitLog() {
+    const symptom   = document.getElementById('log-symptom').value.trim();
+    const rootCause = document.getElementById('log-rootcause').value.trim();
+    const fix       = document.getElementById('log-fix').value.trim();
+    const component = document.getElementById('log-component').value.trim();
+    const tags      = document.getElementById('log-tags').value
+      .split(',').map(t => t.trim().toLowerCase().replace(/\s+/g, '-')).filter(Boolean);
+    const res       = document.getElementById('log-result');
+    if (!symptom || !rootCause || !fix) {
+      res.innerHTML = '<div class="field-error">Symptom, root cause, and fix are required.</div>';
+      return;
+    }
+    res.innerHTML = '<div style="color:var(--text-3);font-size:.82rem;margin-top:.75rem">Saving…</div>';
+    const r = await fetch('/dashboard/field/log', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        symptom, rootCause, fix, component, tags,
+        jiraKey:      _jiraData.key       || '',
+        jiraUrl:      _jiraData.jiraUrl   || '',
+        jiraSummary:  _jiraData.summary   || '',
+        jiraStatus:   _jiraData.status    || '',
+        jiraPriority: _jiraData.priority  || '',
+        jiraIssueType: _jiraData.issueType || '',
+      }),
+    });
+    const d = await r.json();
+    if (d.ok) {
+      res.innerHTML = '<div class="field-success">Saved to KB and broadcast to connected peers.</div>';
+      clearLog(true);
+    } else {
+      res.innerHTML = '<div class="field-error">Error: ' + (d.error || 'Unknown') + '</div>';
+    }
+  }
+
+  function clearLog(keepResult) {
+    ['log-jira-key','log-symptom','log-rootcause','log-fix','log-component','log-tags'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) { el.value = ''; el.classList.remove('field-autofilled', 'field-ai-synthesised'); }
+    });
+    document.getElementById('jira-ticket-pill-row').style.display = 'none';
+    document.getElementById('jira-ticket-pill-row').innerHTML = '';
+    document.getElementById('jira-lookup-status').textContent = '';
+    _jiraData = {};
+    if (!keepResult) document.getElementById('log-result').innerHTML = '';
+  }
+
+  // ── History tab ───────────────────────────────────────────────────────────
+  function expandSession(raw) {
+    const s = JSON.parse(raw);
+    const el = document.getElementById('hist-' + s.id);
+    if (!el) return;
+    el.style.display = el.style.display === 'none' ? 'block' : 'none';
+  }
+
+  // ── Intel tab ─────────────────────────────────────────────────────────────
+  async function loadIntel() {
+    const box = document.getElementById('intel-content');
+    box.textContent = 'Loading…';
+    try {
+      const r = await fetch('/dashboard/field/intel');
+      const d = await r.json();
+      box.textContent = d.content || '(No field intelligence logged yet. Use the Log tab to add the first entry.)';
+    } catch (e) {
+      box.textContent = 'Error loading: ' + e.message;
+    }
+  }
+
+  // ── Keyboard shortcut: Ctrl+Enter / Cmd+Enter to send ────────────────────
+  document.getElementById('ask-question').addEventListener('keydown', e => {
+    if (e.key === 'Enter' && (e.ctrlKey || e.metaKey)) {
+      e.preventDefault();
+      submitQuery();
+    }
+  });
+
+  // ── Mesh validation notifications ─────────────────────────────────────────
+  function _notifPermPrompt() {
+    const area = document.getElementById('mesh-notify-area');
+    if (!area) return;
+    if (Notification.permission === 'default') {
+      const p = document.createElement('p');
+      p.className = 'mesh-notify-perm';
+      p.id = 'notif-perm-prompt';
+      p.innerHTML = '<a onclick="requestMeshNotifPerm()">Enable browser notifications</a> to receive mesh validation alerts even when this tab is in the background.';
+      area.before(p);
+    }
+  }
+
+  async function requestMeshNotifPerm() {
+    const result = await Notification.requestPermission();
+    if (result !== 'default') {
+      const p = document.getElementById('notif-perm-prompt');
+      if (p) p.remove();
+    }
+  }
+
+  function renderMeshNotification(item) {
+    const area = document.getElementById('mesh-notify-area');
+    if (!area) return;
+    const accepted = item.valid;
+    const id       = 'mn-' + item.ts;
+    const refText  = item.ref ? item.ref : '';
+    const title    = accepted
+      ? 'Field finding ACCEPTED' + (refText ? ' — ' + refText : '')
+      : 'Field finding FLAGGED'  + (refText ? ' — ' + refText : '');
+    const icon     = accepted ? '✓' : '⚠';
+    const meta     = accepted
+      ? item.confirmCount + ' mesh node' + (item.confirmCount !== 1 ? 's' : '') + ' confirmed'
+      : 'Review recommended';
+    const card = document.createElement('div');
+    card.className = 'mesh-notify-card ' + (accepted ? 'accepted' : 'flagged');
+    card.id = id;
+    card.innerHTML =
+      '<span class="mesh-notify-icon">' + icon + '</span>' +
+      '<div class="mesh-notify-body">' +
+        '<div class="mesh-notify-title">' + esc(title) + '</div>' +
+        '<div class="mesh-notify-reason">' + esc(item.reason || '') + '</div>' +
+        '<div class="mesh-notify-meta">' + esc(meta) + '</div>' +
+      '</div>' +
+      '<button class="mesh-notify-dismiss" onclick="this.parentElement.remove()" title="Dismiss">×</button>';
+    area.prepend(card);
+
+    if (Notification.permission === 'granted') {
+      try {
+        new Notification('[Field Intel] ' + (accepted ? 'ACCEPTED' : 'FLAGGED') + (refText ? ': ' + refText : ''), {
+          body: item.reason || '',
+          tag:  'field-intel-' + (item.ref || item.ts),
+        });
+      } catch (_) {}
+    }
+  }
+
+  async function pollMeshNotifications() {
+    try {
+      const r = await fetch('/dashboard/field/notifications');
+      if (!r.ok) return;
+      const d = await r.json();
+      if (d.items && d.items.length) d.items.forEach(renderMeshNotification);
+    } catch (_) {}
+  }
+
+  if ('Notification' in window) {
+    _notifPermPrompt();
+    setInterval(pollMeshNotifications, 5000);
+    pollMeshNotifications();
+  }
+<\/script>
+</body>
+</html>`;
+}
+
+router.get('/field', (_req, res) => {
+  const { listSessions } = require('../runner/fieldIntelAgent');
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(renderFieldAssistant(listSessions(50)));
+});
+
+router.post('/field/query', express.json({ limit: '128kb' }), async (req, res) => {
+  const b        = req.body || {};
+  const question = (b.question || '').toString().trim().slice(0, 4000);
+  if (!question) return res.status(400).json({ ok: false, error: 'question is required' });
+
+  // history: array of { role: 'field'|'team', content: string } — cap at 20 turns server-side too
+  const rawHistory = Array.isArray(b.history) ? b.history : [];
+  const history = rawHistory
+    .filter(t => t && (t.role === 'field' || t.role === 'team') && typeof t.content === 'string')
+    .map(t => ({ role: t.role, content: t.content.slice(0, 4000) }))
+    .slice(-20);
+
+  try {
+    const { runFieldQuery } = require('../runner/fieldIntelAgent');
+    const result = await runFieldQuery(question, history);
+    activityLog.record(
+      result.investigated ? 'field_investigation' : 'field_query',
+      null, 'field-engineer',
+      { questionLen: question.length, turnCount: history.length + 1, sourceCount: (result.sources || []).length, kbEntryAdded: !!result.kbEntryAdded }
+    );
+    res.json({ ok: true, answer: result.answer, sources: result.sources, investigated: !!result.investigated, kbEntryAdded: !!result.kbEntryAdded });
+  } catch (e) {
+    console.error('[field/query]', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+router.post('/field/save-session', express.json({ limit: '512kb' }), (req, res) => {
+  const { saveSession } = require('../runner/fieldIntelAgent');
+  const b = req.body || {};
+  const question = (b.question || '').toString().trim().slice(0, 4000);
+  // Multi-turn sessions send { question, turns: [{role,content,sources}] }
+  // Single-turn (legacy) sends { question, answer, sources }
+  const turns   = Array.isArray(b.turns) ? b.turns.slice(0, 100) : null;
+  const answer  = turns
+    ? (turns.filter(t => t.role === 'team').map(t => t.content).join('\n\n---\n\n') || '')
+    : ((b.answer || '').toString().trim().slice(0, 32000));
+  const sources = Array.isArray(b.sources) ? b.sources.slice(0, 10) : [];
+  if (!question || !answer) return res.status(400).json({ ok: false, error: 'question and answer required' });
+  try {
+    const id = saveSession({ question, answer, sources, turns });
+    res.json({ ok: true, id });
+  } catch (e) {
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+router.post('/field/log', express.json({ limit: '64kb' }), async (req, res) => {
+  const b             = req.body || {};
+  const symptom       = (b.symptom       || '').toString().trim().slice(0, 2000);
+  const rootCause     = (b.rootCause     || '').toString().trim().slice(0, 2000);
+  const fix           = (b.fix           || '').toString().trim().slice(0, 2000);
+  const jiraKey       = (b.jiraKey       || '').toString().trim().slice(0, 30);
+  const jiraUrl       = (b.jiraUrl       || '').toString().trim().slice(0, 200);
+  const jiraSummary   = (b.jiraSummary   || '').toString().trim().slice(0, 300);
+  const jiraStatus    = (b.jiraStatus    || '').toString().trim().slice(0, 50);
+  const jiraPriority  = (b.jiraPriority  || '').toString().trim().slice(0, 30);
+  const jiraIssueType = (b.jiraIssueType || '').toString().trim().slice(0, 50);
+  const component     = (b.component     || '').toString().trim().slice(0, 100);
+  const tags          = Array.isArray(b.tags) ? b.tags.map(t => String(t).trim().slice(0, 40)).filter(Boolean).slice(0, 10) : [];
+
+  if (!symptom || !rootCause || !fix)
+    return res.status(400).json({ ok: false, error: 'symptom, rootCause, and fix are required' });
+
+  try {
+    const obsKey = `field-intel-${Date.now()}`;
+    const { writeFieldIntelLog } = require('../runner/fieldIntelAgent');
+    const result = writeFieldIntelLog({ symptom, rootCause, fix, jiraKey, jiraUrl, jiraSummary, jiraStatus, jiraPriority, jiraIssueType, component, tags, obsKey });
+
+    activityLog.record('field_intel_logged', null, 'field-engineer', { jiraKey: jiraKey || null, component: component || null, tagCount: tags.length });
+
+    // Broadcast to P2P mesh — include full payload in `raw` so it survives
+    // mergeObservation (which only preserves standard fields) and reaches peer validators.
+    if (process.env.PRX_P2P_ENABLED === 'Y' && process.env.PRX_CORTEX_P2P_ENABLED === 'Y') {
+      try {
+        const cortex  = require('../runner/cortexLayer');
+        const mem     = cortex.memory();
+        const obsTagList = ['field-intel', ...tags];
+        mem.observe({
+          key:     obsKey,
+          summary: `[FIELD] ${jiraKey ? jiraKey + ' · ' : ''}${component ? component + ': ' : ''}${symptom.slice(0, 120)}`,
+          type:    'field-intel',
+          persona: 'field-engineer',
+          tags:    obsTagList,
+          value:   {
+            type: 'field-intel',
+            summary: `[FIELD] ${jiraKey ? jiraKey + ' · ' : ''}${component ? component + ': ' : ''}${symptom.slice(0, 120)}`,
+            // raw carries the full payload so mergeObservation doesn't lose it
+            raw: JSON.stringify({
+              obsKey, symptom, rootCause, fix, component, tags,
+              jiraKey, jiraUrl, jiraSummary, jiraStatus, jiraPriority, jiraIssueType,
+              loggedAt: new Date().toISOString(),
+            }),
+          },
+        });
+        // Use cortex-observation-written so the quality gate in index.js can broadcast it
+        serverEvents.emit('cortex-observation-written', { key: obsKey, tags: obsTagList });
+        // Tell index.js this machine originated this finding (triggers threshold monitoring)
+        serverEvents.emit('field-intel-originated', { obsKey });
+      } catch (broadcastErr) {
+        console.warn('[field/log] P2P broadcast failed (non-fatal):', broadcastErr.message);
+      }
+    }
+
+    res.json({ ok: true, path: result.path });
+  } catch (e) {
+    console.error('[field/log]', e.message);
+    res.status(500).json({ ok: false, error: e.message });
+  }
+});
+
+// Fetch a Jira issue and extract fields relevant to the field-intel log form.
+// Returns a flat object with whatever it can find — callers must tolerate empties.
+router.get('/field/jira-lookup', (req, res) => {
+  const key = ((req.query.key || '').toString().trim().toUpperCase()).slice(0, 32);
+  if (!key || !/^[A-Z]+-\d+$/.test(key))
+    return res.status(400).json({ ok: false, error: 'Invalid Jira key format (expected e.g. PROJ-123)' });
+
+  const jiraUrl = (process.env.JIRA_URL || '').replace(/\/$/, '');
+  const user    = process.env.JIRA_USERNAME  || '';
+  const token   = process.env.JIRA_API_TOKEN || process.env.JIRA_TOKEN || '';
+  if (!jiraUrl || !user || !token)
+    return res.status(400).json({ ok: false, error: 'Jira not configured (JIRA_URL / JIRA_USERNAME / JIRA_API_TOKEN missing)' });
+
+  const fields = 'summary,description,status,priority,issuetype,components,labels,comment,customfield_10014';
+  let urlObj;
+  try { urlObj = new URL(`/rest/api/2/issue/${encodeURIComponent(key)}?fields=${fields}`, jiraUrl); }
+  catch (_) { return res.status(500).json({ ok: false, error: 'Invalid JIRA_URL' }); }
+
+  const auth = Buffer.from(`${user}:${token}`).toString('base64');
+  const mod  = urlObj.protocol === 'https:' ? require('https') : require('http');
+
+  const jiraReq = mod.request(
+    {
+      hostname: urlObj.hostname,
+      port:     urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
+      path:     urlObj.pathname + urlObj.search,
+      method:   'GET',
+      headers:  { Authorization: `Basic ${auth}`, Accept: 'application/json' },
+    },
+    jiraRes => {
+      let raw = '';
+      jiraRes.on('data', c => { raw += c.toString(); });
+      jiraRes.on('end', () => {
+        if (jiraRes.statusCode === 404)
+          return res.status(404).json({ ok: false, error: `Jira ticket ${key} not found` });
+        if (jiraRes.statusCode !== 200)
+          return res.status(502).json({ ok: false, error: `Jira returned HTTP ${jiraRes.statusCode}` });
+        try {
+          const issue  = JSON.parse(raw);
+          const f      = issue.fields || {};
+
+          // Recursively extract plain text from ADF (Atlassian Document Format).
+          // Jira Cloud returns descriptions as deeply nested ADF objects — tables,
+          // list items, and panels are all multi-level. A shallow flatMap misses them.
+          function adfToText(node) {
+            if (!node) return '';
+            if (typeof node === 'string') return node;
+            if (node.type === 'text') return node.text || '';
+            if (node.type === 'hardBreak') return '\n';
+            const BLOCK = new Set(['paragraph','heading','bulletList','orderedList',
+                                   'listItem','blockquote','codeBlock','panel',
+                                   'tableRow','tableCell','tableHeader']);
+            if (Array.isArray(node.content)) {
+              const t = node.content.map(adfToText).join('');
+              return BLOCK.has(node.type) ? t + '\n' : t;
+            }
+            return '';
+          }
+
+          const descRaw = f.description || '';
+          const desc    = typeof descRaw === 'string'
+            ? descRaw
+            : adfToText(descRaw);
+
+          // Extract all comment bodies (ADF or plain string)
+          const commentBodies = ((f.comment || {}).comments || []).map(c => {
+            const body = c.body || '';
+            return typeof body === 'string' ? body : adfToText(body);
+          }).filter(Boolean);
+          const commentsText = commentBodies.join('\n\n');
+
+          // Heuristic field mapping — pull out the most useful fragments
+          // A well-written Jira ticket often has sections like "Symptom:", "Root Cause:", "Fix:"
+          function extractSection(text, ...labels) {
+            for (const lbl of labels) {
+              const rx = new RegExp(`(?:${lbl})[:\\s]+([^\\n]{10,}(?:\\n(?!(?:root ?cause|fix|resolution|workaround|steps)[:\\s]).*$){0,4})`, 'im');
+              const m  = text.match(rx);
+              if (m) return m[1].trim().slice(0, 800);
+            }
+            return '';
+          }
+
+          // Symptom: search description and comments independently; combine when both yield content
+          const symptomFromDesc     = extractSection(desc,         'symptom', 'issue', 'problem', 'observed', 'behaviour', 'behavior', 'description');
+          const symptomFromComments = extractSection(commentsText, 'symptom', 'issue', 'problem', 'observed', 'behaviour', 'behavior');
+          const symptom = (
+            symptomFromDesc && symptomFromComments && symptomFromDesc !== symptomFromComments
+              ? `${symptomFromDesc}\n\n${symptomFromComments}`
+              : symptomFromDesc || symptomFromComments
+                || [desc.slice(0, 500), commentsText.slice(0, 300)].filter(Boolean).join('\n\n')
+                || f.summary
+                || ''
+          ).slice(0, 800);
+
+          const rootCause = extractSection(desc, 'root cause', 'root_cause', 'cause', 'analysis', 'reason');
+          const fix       = extractSection(desc, 'fix', 'resolution', 'resolved by', 'solution', 'workaround', 'applied');
+
+          const components = (f.components || []).map(c => c.name).filter(Boolean);
+          const labels     = (f.labels || []).map(l => l.toLowerCase().replace(/\s+/g, '-')).filter(Boolean);
+          const priority   = f.priority?.name  ? f.priority.name.toLowerCase()  : '';
+          const issueType  = f.issuetype?.name ? f.issuetype.name.toLowerCase() : '';
+          const status     = f.status?.name    ? f.status.name.toLowerCase().replace(/\s+/g, '-') : '';
+
+          // Auto-tags from Jira metadata
+          const autoTags = [...new Set([
+            issueType && issueType !== 'task' ? issueType : '',
+            priority === 'high' || priority === 'highest' || priority === 'critical' ? priority : '',
+            status,
+            ...labels,
+          ].filter(Boolean))].slice(0, 8);
+
+          res.json({
+            ok: true,
+            key,
+            summary:    f.summary    || '',
+            status:     f.status?.name || '',
+            priority:   f.priority?.name || '',
+            issueType:  f.issuetype?.name || '',
+            symptom,
+            rootCause,
+            fix,
+            component:  components.join(', '),
+            tags:       autoTags,
+            jiraUrl:    `${jiraUrl}/browse/${key}`,
+          });
+        } catch (parseErr) {
+          res.status(500).json({ ok: false, error: 'Failed to parse Jira response' });
+        }
+      });
+    }
+  );
+  jiraReq.on('error', e => res.status(502).json({ ok: false, error: `Jira request failed: ${e.message}` }));
+  jiraReq.setTimeout(12000, () => { jiraReq.destroy(); res.status(504).json({ ok: false, error: 'Jira request timed out' }); });
+  jiraReq.end();
+});
+
+// AI synthesis: fetch Jira ticket and ask Claude to produce structured KB fields.
+router.post('/field/synthesise', express.json({ limit: '16kb' }), (req, res) => {
+  const key = ((req.body || {}).key || '').toString().trim().toUpperCase().slice(0, 32);
+  if (!key) return res.status(400).json({ ok: false, error: 'key is required' });
+
+  const jiraUrl = (process.env.JIRA_URL || '').replace(/\/$/, '');
+  const user    = process.env.JIRA_USERNAME  || '';
+  const token   = process.env.JIRA_API_TOKEN || process.env.JIRA_TOKEN || '';
+  if (!jiraUrl || !user || !token)
+    return res.status(400).json({ ok: false, error: 'Jira not configured' });
+
+  let urlObj;
+  try { urlObj = new URL(`/rest/api/2/issue/${encodeURIComponent(key)}?fields=summary,description,status,priority,issuetype,components,comment`, jiraUrl); }
+  catch (_) { return res.status(500).json({ ok: false, error: 'Invalid JIRA_URL' }); }
+
+  const auth = Buffer.from(`${user}:${token}`).toString('base64');
+  const mod  = urlObj.protocol === 'https:' ? require('https') : require('http');
+
+  const jiraReq = mod.request(
+    { hostname: urlObj.hostname, port: urlObj.port || (urlObj.protocol === 'https:' ? 443 : 80),
+      path: urlObj.pathname + urlObj.search, method: 'GET',
+      headers: { Authorization: `Basic ${auth}`, Accept: 'application/json' } },
+    jiraRes => {
+      let raw = '';
+      jiraRes.on('data', c => { raw += c.toString(); });
+      jiraRes.on('end', async () => {
+        if (jiraRes.statusCode !== 200)
+          return res.status(502).json({ ok: false, error: `Jira returned HTTP ${jiraRes.statusCode}` });
+        try {
+          const f = (JSON.parse(raw)).fields || {};
+
+          function adfToText(node) {
+            if (!node) return '';
+            if (typeof node === 'string') return node;
+            if (node.type === 'text') return node.text || '';
+            if (node.type === 'hardBreak') return '\n';
+            const BLOCK = new Set(['paragraph','heading','bulletList','orderedList','listItem',
+                                   'blockquote','codeBlock','panel','tableRow','tableCell','tableHeader']);
+            if (Array.isArray(node.content)) {
+              const t = node.content.map(adfToText).join('');
+              return BLOCK.has(node.type) ? t + '\n' : t;
+            }
+            return '';
+          }
+
+          const descRaw = f.description || '';
+          const description = (typeof descRaw === 'string' ? descRaw : adfToText(descRaw)).slice(0, 3000);
+          const comments = ((f.comment || {}).comments || [])
+            .map(c => { const b = c.body || ''; return (typeof b === 'string' ? b : adfToText(b)).slice(0, 600); })
+            .filter(Boolean).slice(0, 15);
+
+          const { synthesiseFromJira } = require('../runner/fieldIntelAgent');
+          const result = await synthesiseFromJira({
+            key,
+            summary:    f.summary          || '',
+            description,
+            comments,
+            component:  ((f.components || [])[0] || {}).name || '',
+            issueType:  f.issuetype?.name  || '',
+            priority:   f.priority?.name   || '',
+            status:     f.status?.name     || '',
+          });
+          res.json({ ok: true, ...result });
+        } catch (e) {
+          console.error('[field/synthesise]', e.message);
+          res.status(500).json({ ok: false, error: e.message });
+        }
+      });
+    }
+  );
+  jiraReq.on('error', e => res.status(502).json({ ok: false, error: `Jira request failed: ${e.message}` }));
+  jiraReq.setTimeout(120000, () => { jiraReq.destroy(); res.status(504).json({ ok: false, error: 'Synthesis timed out' }); });
+  jiraReq.end();
+});
+
+router.get('/field/intel', (_req, res) => {
+  const kbCache = require('../kb/kbCache');
+  const cache   = kbCache.get();
+  const content = cache['shared/field-intel.md'] || '';
+  res.json({ ok: true, content: content || '' });
+});
+
+// Returns and drains pending mesh validation notifications for the browser.
+// Polled every 5 seconds by the Field Assistant page.
+router.get('/field/notifications', (_req, res) => {
+  const queue = require('../notifications/browserQueue');
+  res.json({ ok: true, items: queue.drain() });
 });
 
 module.exports = router;
