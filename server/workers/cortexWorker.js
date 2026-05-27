@@ -424,7 +424,10 @@ function synthesizeAutonomyQueue() {
 
 function synthesizeSessionMemory() {
   const mem  = cortex.memory();
-  const keys = mem.byTag('session-memory');
+  // Exclude synthesized fact keys (fact:*) — the storage loop at runSynthesis
+  // tags the output with f.id ('session-memory'), which would otherwise cause
+  // each run to re-ingest its own previous output and snowball the file.
+  const keys = mem.byTag('session-memory').filter(k => !k.startsWith('fact:'));
 
   if (!keys.length)
     return withHeader('# Cortex — Session Memory\n\n_(no session summaries recorded yet)_\n');
