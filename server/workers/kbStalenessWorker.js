@@ -132,6 +132,46 @@ function checkRef(ref, repo) {
   return { status: 'file-missing', fileExists: false };
 }
 
+// ── DRAFT entry scanner ────────────────────────────────────────────────────────
+//
+// Finds [DRAFT — code investigation, pending human review] entries in
+// shared/field-intel.md that are older than PRX_FIELD_INTEL_DRAFT_DAYS (default 30).
+// Reports them in the stale-refs.md output so humans know to review or discard.
+
+const DRAFT_MARKER    = '[DRAFT — code investigation, pending human review]';
+const DRAFT_STAMP_RE  = /<!-- code-investigation · (\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} UTC) -->/;
+const DRAFT_DAYS_ENV  = () => Math.max(1, parseInt(process.env.PRX_FIELD_INTEL_DRAFT_DAYS || '30', 10));
+
+function scanStaleDrafts() {
+  const filePath   = path.join(kbDir(), 'shared', 'field-intel.md');
+  let content;
+  try { content = fs.readFileSync(filePath, 'utf8'); } catch (_) { return []; }
+
+  const thresholdMs = DRAFT_DAYS_ENV() * 86_400_000;
+  const now         = Date.now();
+  const stale       = [];
+
+  // Split on --- block separators, check each block for DRAFT + age
+  const blocks = content.split(/\n---\n/);
+  for (const block of blocks) {
+    if (!block.includes(DRAFT_MARKER)) continue;
+    const m = block.match(DRAFT_STAMP_RE);
+    if (!m) continue;
+    const stampMs = new Date(m[1]).getTime();
+    if (isNaN(stampMs)) continue;
+    const ageMs = now - stampMs;
+    if (ageMs > thresholdMs) {
+      const headingMatch = block.match(/^##\s+(.+)/m);
+      stale.push({
+        ref:      m[1],
+        heading:  headingMatch ? headingMatch[1].trim() : '(no heading)',
+        ageDays:  Math.floor(ageMs / 86_400_000),
+      });
+    }
+  }
+  return stale;
+}
+
 // ── Main scan ──────────────────────────────────────────────────────────────────
 
 function runScan(state) {
@@ -172,12 +212,17 @@ function runScan(state) {
     fs.writeFileSync(REPORT_FILE, JSON.stringify(results, null, 2), 'utf8');
   } catch (_) {}
 
+  // Scan for unreviewed DRAFT entries in field-intel.md
+  const staleDrafts = scanStaleDrafts();
+
   // Write human-readable stale-refs.md
-  if (results.details.length) {
+  if (results.details.length || staleDrafts.length) {
     try {
       fs.mkdirSync(BUILDUP_DIR, { recursive: true });
       const date = scannedAt.slice(0, 10);
-      const header = [
+      const parts = [];
+
+      parts.push([
         `# KB Stale References — scan ${date}`,
         ``,
         `**KB files scanned:** ${results.kbFiles}  **Refs checked:** ${results.refsChecked}`,
@@ -187,28 +232,48 @@ function runScan(state) {
         `Review each entry. For stale refs: update the line number, mark \`[STALE]\`,`,
         `or delete the entry if the symbol no longer exists.`,
         ``,
-      ].join('\n');
+      ].join('\n'));
 
-      const rows = results.details.map(d => {
-        const issue = d.issue === 'file-missing' ? '`file missing`' : `\`line stale (file has ${d.lineCount} lines)\``;
-        return `| \`${d.ref}\` | ${d.kbFile} | ${issue} |`;
-      });
+      if (results.details.length) {
+        const rows = results.details.map(d => {
+          const issue = d.issue === 'file-missing' ? '`file missing`' : `\`line stale (file has ${d.lineCount} lines)\``;
+          return `| \`${d.ref}\` | ${d.kbFile} | ${issue} |`;
+        });
+        parts.push([
+          `## Stale file references`,
+          ``,
+          `| Ref | KB File | Issue |`,
+          `|-----|---------|-------|`,
+          ...rows,
+          ``,
+        ].join('\n'));
+      }
 
-      const table = [
-        `| Ref | KB File | Issue |`,
-        `|-----|---------|-------|`,
-        ...rows,
-        ``,
-      ].join('\n');
+      if (staleDrafts.length) {
+        const draftRows = staleDrafts.map(d =>
+          `| ${d.heading} | ${d.ref} | ${d.ageDays}d old — unreviewed |`
+        );
+        parts.push([
+          `## Unreviewed field-intel DRAFT entries (older than ${DRAFT_DAYS_ENV()} days)`,
+          ``,
+          `These code-investigation drafts have not been reviewed. Promote to KB, edit, or delete.`,
+          ``,
+          `| Entry | Logged at | Status |`,
+          `|-------|-----------|--------|`,
+          ...draftRows,
+          ``,
+        ].join('\n'));
+      }
 
-      fs.writeFileSync(STALE_MD_FILE, header + table, 'utf8');
+      fs.writeFileSync(STALE_MD_FILE, parts.join('\n'), 'utf8');
     } catch (_) {}
   }
 
   log('info',
     `Scan complete — ${results.kbFiles} KB files, ` +
     `${results.refsChecked} refs checked, ` +
-    `${results.missing} missing, ${results.lineStale} line-stale` +
+    `${results.missing} missing, ${results.lineStale} line-stale, ` +
+    `${staleDrafts.length} unreviewed field-intel draft(s)` +
     (repo ? '' : ' (PRX_REPO_DIR not set — file-existence checks skipped)')
   );
 

@@ -366,7 +366,11 @@ function startKbP2p() {
       });
     }
     if (msg.type === 'reconcile-needed') {
-      if (kbP2pWorker) kbP2pWorker.postMessage({ type: 'trigger-reconcile-sync', peerId: msg.peerId });
+      if (msg.cortexOnly) {
+        if (kbP2pWorker) kbP2pWorker.postMessage({ type: 'trigger-cortex-dump', machine: msg.machine });
+      } else {
+        if (kbP2pWorker) kbP2pWorker.postMessage({ type: 'trigger-reconcile-sync', peerId: msg.peerId });
+      }
     }
     if (msg.type === 'transfer-progress') {
       p2pBridge.updateState({

@@ -7544,7 +7544,7 @@ router.post('/cortex/memory/observe', express.json(), (req, res) => {
   const ticketKey = (b.ticketKey || '').toString().toUpperCase().slice(0, 32) || null;
   const persona   = (b.persona   || '').toString().slice(0, 64) || null;
 
-  const VALID_TYPES = new Set(['pattern', 'decision', 'business-rule', 'anomaly', 'hotspot', 'context', 'session-summary']);
+  const VALID_TYPES = new Set(['pattern', 'decision', 'business-rule', 'anomaly', 'hotspot', 'context', 'session-summary', 'field-intel']);
   const type    = VALID_TYPES.has(b.type) ? b.type : 'context';
   // Accept summary directly, or fall back to a stringified value for backward compat.
   const summary = (
@@ -11153,24 +11153,22 @@ router.post('/field/log', express.json({ limit: '64kb' }), async (req, res) => {
         const cortex  = require('../runner/cortexLayer');
         const mem     = cortex.memory();
         const obsTagList = ['field-intel', ...tags];
-        mem.observe({
-          key:     obsKey,
-          summary: `[FIELD] ${jiraKey ? jiraKey + ' · ' : ''}${component ? component + ': ' : ''}${symptom.slice(0, 120)}`,
-          type:    'field-intel',
-          persona: 'field-engineer',
-          tags:    obsTagList,
-          value:   {
-            type: 'field-intel',
-            summary: `[FIELD] ${jiraKey ? jiraKey + ' · ' : ''}${component ? component + ': ' : ''}${symptom.slice(0, 120)}`,
-            // raw carries the full payload so mergeObservation doesn't lose it
-            raw: JSON.stringify({
-              obsKey, symptom, rootCause, fix, component, tags,
-              jiraKey, jiraUrl, jiraSummary, jiraStatus, jiraPriority, jiraIssueType,
-              loggedAt: new Date().toISOString(),
-            }),
-          },
-        });
-        // Use cortex-observation-written so the quality gate in index.js can broadcast it
+        const obsSum = `[FIELD] ${jiraKey ? jiraKey + ' · ' : ''}${component ? component + ': ' : ''}${symptom.slice(0, 120)}`;
+        mem.put(obsKey, {
+          type:         'field-intel',
+          summary:      obsSum,
+          persona:      'field-engineer',
+          ts:           Date.now(),
+          confirmCount: 1,
+          promoted:     false,
+          rejected:     false,
+          raw: JSON.stringify({
+            obsKey, symptom, rootCause, fix, component, tags,
+            jiraKey, jiraUrl, jiraSummary, jiraStatus, jiraPriority, jiraIssueType,
+            loggedAt: new Date().toISOString(),
+          }),
+        }, { tags: obsTagList, ttl: 0 });
+        // Broadcast to mesh and trigger cortex re-synthesis
         serverEvents.emit('cortex-observation-written', { key: obsKey, tags: obsTagList });
         // Tell index.js this machine originated this finding (triggers threshold monitoring)
         serverEvents.emit('field-intel-originated', { obsKey });

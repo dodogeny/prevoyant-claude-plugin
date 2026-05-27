@@ -37,6 +37,7 @@ const PROMOTE_TARGETS = {
   'anomaly':        'shared/patterns.md',
   'context':        'shared/architecture.md',
   'session-summary': 'shared/session-memory.md',
+  'field-intel':    'shared/field-intel.md',
 };
 
 // ── Core promotion helper ────────────────────────────────────────────────────

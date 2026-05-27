@@ -234,6 +234,11 @@ function _parseIntelEntry(text) {
   return m ? m[1].trim() : null;
 }
 
+// Normalise a question string for duplicate detection
+function _normaliseQ(text) {
+  return text.toLowerCase().replace(/[^a-z0-9 ]/g, '').replace(/\s+/g, ' ').trim().slice(0, 120);
+}
+
 // Write a draft KB entry from a code investigation into shared/field-intel.md
 function _writeInvestigationEntry(entryMarkdown, question) {
   const kbDir     = kbCache.kbDir();
@@ -259,6 +264,13 @@ function _writeInvestigationEntry(entryMarkdown, question) {
     existing = '# Field Intelligence Log\n\n> Entries logged via the Field Assistant. Each entry is peer-reviewed and promoted to shared KB patterns once verified.\n\n---\n\n';
   }
 
+  // Deduplication: skip if a normalised form of the question already appears in the file
+  const normQ = _normaliseQ(question);
+  if (normQ && existing.toLowerCase().replace(/[^a-z0-9 ]/g, '').includes(normQ)) {
+    console.log('[fieldIntelAgent] Skipping duplicate KB entry for question:', question.slice(0, 80));
+    return filePath;
+  }
+
   const insertAt = (() => {
     const i = existing.indexOf('\n---\n');
     return i >= 0 ? i + 5 : existing.length;
@@ -274,17 +286,20 @@ function _writeInvestigationEntry(entryMarkdown, question) {
 function _broadcastObservation(summary, tags = []) {
   if (process.env.PRX_P2P_ENABLED !== 'Y' || process.env.PRX_CORTEX_P2P_ENABLED !== 'Y') return;
   try {
-    const mem = cortexLayer.memory();
-    const key = `field-intel-inv-${Date.now()}`;
-    mem.observe({
-      key,
+    const mem     = cortexLayer.memory();
+    const key     = `field-intel-inv-${Date.now()}`;
+    const obsTags = ['field-intel', 'agent-observed', 'code-investigation', ...tags];
+    mem.put(key, {
+      type:           'field-intel',
       summary,
-      type:    'field-intel',
-      persona: 'field-engineer',
-      tags:    ['field-intel', 'code-investigation', ...tags],
-      value:   { summary, investigatedAt: new Date().toISOString() },
-    });
-    serverEvents.emit('cortex-obs-broadcast', { key });
+      persona:        'field-engineer',
+      ts:             Date.now(),
+      confirmCount:   1,
+      promoted:       false,
+      rejected:       false,
+      investigatedAt: new Date().toISOString(),
+    }, { tags: obsTags, ttl: 0 });
+    serverEvents.emit('cortex-observation-written', { key, tags: obsTags });
   } catch (e) {
     console.warn('[fieldIntelAgent] P2P broadcast failed (non-fatal):', e.message);
   }
@@ -616,6 +631,52 @@ function markFieldIntelValidated(obsKey, confirmCount) {
 
   fs.writeFileSync(filePath, content, 'utf8');
   kbCache.invalidate();
+
+  // Pipeline: promote validated field-intel entry to kbflow-pending.md for team review
+  _promoteToKbflow(obsKey, content);
+}
+
+// Write a kbflow proposal for a mesh-validated field-intel entry so the KB Flow
+// Analyst review cycle picks it up. Idempotent — skips if obsKey already present.
+function _promoteToKbflow(obsKey, fieldIntelContent) {
+  const buildupDir  = path.join(os.homedir(), '.prevoyant', 'knowledge-buildup');
+  const pendingFile = path.join(buildupDir, 'kbflow-pending.md');
+  try {
+    let pending = '';
+    try { pending = fs.readFileSync(pendingFile, 'utf8'); } catch (_) {}
+    if (pending.includes(obsKey)) return; // already present
+
+    // Extract the entry block from field-intel content for this obsKey
+    const obsIdx = fieldIntelContent.indexOf(`obs:${obsKey}`);
+    if (obsIdx === -1) return;
+    const blockStart = fieldIntelContent.lastIndexOf('\n## ', obsIdx);
+    const blockEnd   = fieldIntelContent.indexOf('\n---\n', obsIdx);
+    const entryBlock = fieldIntelContent.slice(blockStart >= 0 ? blockStart + 1 : 0, blockEnd > 0 ? blockEnd : undefined).trim();
+
+    const date  = new Date().toISOString().slice(0, 10);
+    const block = [
+      '',
+      `## FIELD-${obsKey} — Field Intelligence (mesh-validated)`,
+      '',
+      `Date: ${date}`,
+      `Source: field-intel · obs:${obsKey}`,
+      `Status: PENDING APPROVAL`,
+      `Type: CMM-GOTCHA`,
+      `Action: NEW`,
+      '',
+      '### Summary',
+      '',
+      entryBlock,
+      '',
+      '---',
+      '',
+    ].join('\n');
+
+    fs.mkdirSync(buildupDir, { recursive: true });
+    fs.appendFileSync(pendingFile, block, 'utf8');
+  } catch (e) {
+    console.warn('[fieldIntelAgent] kbflow promotion failed (non-fatal):', e.message);
+  }
 }
 
 // Write a field-intel KB entry on a peer machine that has confirmed the finding.

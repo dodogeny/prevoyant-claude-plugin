@@ -818,11 +818,21 @@ async function applyUpdate(raw) {
 
 async function applyReconcile(payload, node) {
   if (payload.machine === machineName()) return;
-  const localFp = await kbFingerprint(kbDir());
-  if (payload.fingerprint === localFp) return; // already in sync
+  const localFp  = await kbFingerprint(kbDir());
+  const fpMatch  = payload.fingerprint === localFp;
+  const peerObs  = typeof payload.observationCount === 'number' ? payload.observationCount : null;
+  const obsDrift = peerObs !== null && peerObs !== cortexCache.size;
+
+  if (fpMatch && !obsDrift) return; // fully in sync
+
+  if (fpMatch && obsDrift) {
+    // KB files match but observations diverge — request only a cortex dump
+    log('info', `Reconcile: observation drift with ${payload.machine} (peer=${peerObs} local=${cortexCache.size}) — requesting cortex dump`);
+    if (parentPort) parentPort.postMessage({ type: 'reconcile-needed', machine: payload.machine, cortexOnly: true });
+    return;
+  }
 
   log('info', `Reconcile fingerprint mismatch with ${payload.machine} — requesting delta sync`);
-  // requestDeltaSync is defined later inside main(); we schedule it via a message
   if (parentPort) parentPort.postMessage({ type: 'reconcile-needed', machine: payload.machine });
 }
 
@@ -1238,7 +1248,7 @@ if (parentPort) {
   // Every reconcileMins(), broadcast our KB fingerprint so peers can detect drift.
   async function broadcastReconcile() {
     const fp = await kbFingerprint(kbDir());
-    const payload = { type: 'reconcile', machine: machineName(), fingerprint: fp, ts: Date.now() };
+    const payload = { type: 'reconcile', machine: machineName(), fingerprint: fp, observationCount: cortexCache.size, ts: Date.now() };
     try {
       const envelope = signEnvelope(payload);
       await libp2pNode.services.pubsub.publish(TOPIC, new TextEncoder().encode(envelope));
@@ -1254,6 +1264,11 @@ if (parentPort) {
       if (msg?.type === 'trigger-reconcile-sync') {
         const peers = buildPeerList(libp2pNode);
         if (peers.length) requestDeltaSync(peers[0].id, loadLastSyncTs());
+      }
+      if (msg?.type === 'trigger-cortex-dump') {
+        // Observation-only drift — pull cortex observations without a full KB file sync
+        const peers = buildPeerList(libp2pNode);
+        if (peers.length) requestCortexDump(libp2pNode, peers[0].id, 0);
       }
     });
   }
