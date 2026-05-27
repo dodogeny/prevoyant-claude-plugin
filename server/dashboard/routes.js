@@ -9815,6 +9815,9 @@ ${isRunning ? '<meta http-equiv="refresh" content="30">' : ''}
   .btn[disabled] { background:#9ca3af; cursor:not-allowed; }
   .btn-sm { padding:.25rem .65rem; font-size:.75rem; border-radius:5px; background:#f3f4f6; color:#374151; border:1px solid #d1d5db; cursor:pointer; }
   .btn-sm:hover { background:#e5e7eb; }
+  .btn-sm-danger { background:#fee2e2; color:#991b1b; border-color:#fca5a5; }
+  .btn-sm-danger:hover { background:#fecaca; }
+  .btn-sm-danger:disabled { background:#f3f4f6; color:#9ca3af; border-color:#d1d5db; cursor:not-allowed; }
   .row-hdr { display:flex; align-items:center; justify-content:space-between; gap:1rem; margin-bottom:.9rem; }
   .row-hdr h2 { margin:0; }
   code { background:#f3f4f6; padding:1px 5px; border-radius:4px; font-size:.78rem; color:#374151; }
@@ -9975,6 +9978,7 @@ ${isRunning ? '<meta http-equiv="refresh" content="30">' : ''}
               <th>Proposed</th>
               <th>Incidents</th>
               <th>Status</th>
+              <th style="width:60px"></th>
             </tr>
           </thead>
           <tbody>
@@ -9998,9 +10002,12 @@ ${isRunning ? '<meta http-equiv="refresh" content="30">' : ''}
                 <td style="font-size:.8rem;white-space:nowrap">${esc(it.proposed || '—')}</td>
                 <td>${linkIncidents(it.incidents, jiraBase)}</td>
                 <td>${statusBadge(it.status)}</td>
+                <td style="text-align:center" onclick="event.stopPropagation()">
+                  ${statusKey !== 'approved' ? `<button class="btn-sm btn-sm-danger" data-del-safe="${safeId}" data-del-raw="${esc(it.id)}" onclick="deleteContrib(this,event)" title="Delete this contribution">✕</button>` : ''}
+                </td>
               </tr>
               <tr class="detail-row row-hidden" id="detail-${safeId}" data-status="${statusKey}">
-                <td colspan="8">
+                <td colspan="9">
                   <div class="detail-content">
                     <div class="detail-body">${it.body ? esc(it.body) : '<span style="color:#9ca3af;font-style:italic">No body text</span>'}</div>
                     <div class="detail-meta">
@@ -10120,6 +10127,36 @@ ${isRunning ? '<meta http-equiv="refresh" content="30">' : ''}
     setTimeout(() => { btn.textContent = 'Copy content'; }, 1600);
   }
 
+  function deleteContrib(btn, evt) {
+    evt.stopPropagation();
+    const safeId = btn.dataset.delSafe;
+    const rawId  = btn.dataset.delRaw;
+    if (!confirm('Delete contribution ' + rawId + '?\\n\\nThis removes it from kbflow-pending.md and cannot be undone.')) return;
+    btn.disabled = true;
+    btn.textContent = 'Deleting…';
+    fetch('/dashboard/knowledge-builder/contribution/delete', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id: rawId })
+    }).then(r => r.json()).then(data => {
+      if (data.ok) {
+        const mainRow   = document.querySelector('.main-row[data-id="' + safeId + '"]');
+        const detailRow = document.getElementById('detail-' + safeId);
+        if (mainRow)   mainRow.remove();
+        if (detailRow) detailRow.remove();
+        applyFilters();
+      } else {
+        alert('Delete failed: ' + (data.error || 'unknown error'));
+        btn.disabled = false;
+        btn.textContent = 'Delete';
+      }
+    }).catch(err => {
+      alert('Delete failed: ' + err.message);
+      btn.disabled = false;
+      btn.textContent = 'Delete';
+    });
+  }
+
   ${isRunning ? `
   (function() {
     var secs = 30;
@@ -10157,6 +10194,47 @@ router.post('/knowledge-builder/review-now', (_req, res) => {
   enqueue('KB-REVIEW', 'kb-review');
   activityLog.record('kbflow_review_nudge', null, 'user', { trigger: 'manual' });
   res.redirect(303, '/dashboard/ticket/KB-REVIEW');
+});
+
+router.post('/knowledge-builder/contribution/delete', express.json(), (req, res) => {
+  const { id } = req.body || {};
+  if (!id || typeof id !== 'string' || !/^[A-Za-z0-9][A-Za-z0-9\-._]*$/.test(id)) {
+    return res.status(400).json({ ok: false, error: 'Invalid or missing id' });
+  }
+  const pendingFile = path.join(os.homedir(), '.prevoyant', 'knowledge-buildup', 'kbflow-pending.md');
+  let raw;
+  try { raw = fs.readFileSync(pendingFile, 'utf8'); } catch (_) {
+    return res.status(404).json({ ok: false, error: 'kbflow-pending.md not found' });
+  }
+
+  const lines = raw.split('\n');
+  const blockStarts = [];
+  let inFence = false;
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].startsWith('```')) inFence = !inFence;
+    if (!inFence && /^## [^#]/.test(lines[i])) blockStarts.push(i);
+  }
+
+  const escapedId = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const idRe = new RegExp('^##\\s+' + escapedId + '(?:\\s+[\\u2014\\u2013-]|\\s*$)');
+  const targetBlockIdx = blockStarts.findIndex(lineIdx => idRe.test(lines[lineIdx]));
+
+  if (targetBlockIdx < 0) {
+    return res.status(404).json({ ok: false, error: 'Contribution not found: ' + id });
+  }
+
+  const startLine = blockStarts[targetBlockIdx];
+  const endLine   = targetBlockIdx + 1 < blockStarts.length ? blockStarts[targetBlockIdx + 1] : lines.length;
+  const newLines  = [...lines.slice(0, startLine), ...lines.slice(endLine)];
+  while (newLines.length > 0 && newLines[newLines.length - 1].trim() === '') newLines.pop();
+
+  try {
+    fs.writeFileSync(pendingFile, newLines.join('\n') + (newLines.length ? '\n' : ''), 'utf8');
+  } catch (e) {
+    return res.status(500).json({ ok: false, error: 'Write failed: ' + e.message });
+  }
+  activityLog.record('kbflow_contribution_deleted', null, 'user', { id });
+  res.json({ ok: true });
 });
 
 router.post('/settings/pattern-miner/run-now', express.json(), (_req, res) => {
