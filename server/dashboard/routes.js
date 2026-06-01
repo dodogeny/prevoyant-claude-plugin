@@ -2531,7 +2531,6 @@ const EVENT_DISPLAY = {
   hermes_jira_comment:   { label: 'Hermes Jira Comment',    bg: '#fef3c7', color: '#92400e' },
   merge_conflict_warning:  { label: 'Merge Conflict Warning', bg: '#fee2e2', color: '#991b1b' },
   silent_conflict_warning: { label: 'Silent Conflict (co-change)', bg: '#fef3c7', color: '#92400e' },
-  stale_branches_scanned:  { label: 'Stale Branches Scan',    bg: '#fef3c7', color: '#92400e' },
   decisions_reviewed:      { label: 'Decisions Reviewed',     bg: '#eff6ff', color: '#1d4ed8' },
   cortex_started:          { label: 'Cortex Started',         bg: '#fdf4ff', color: '#a21caf' },
   cortex_stopped:          { label: 'Cortex Stopped',         bg: '#f3f4f6', color: '#6b7280' },
@@ -6240,88 +6239,6 @@ function renderSettings(vals, flash) {
         </div>
       </details>
 
-      <!-- Advanced / disabled-by-default workers -->
-      <details class="s-section" id="advanced-workers">
-        <summary>
-          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M4.93 4.93a10 10 0 0 0 0 14.14"/><path d="M15.54 8.46a5 5 0 0 1 0 7.07M8.46 8.46a5 5 0 0 0 0 7.07"/></svg>
-          Advanced Workers
-          <span class="s-opt">Disabled by default</span>
-          <span class="s-chevron">›</span>
-        </summary>
-        <div class="s-body">
-
-          <!-- Decision-Outcome Linker -->
-          <div class="s-field span2" style="border-bottom:1px solid var(--border);padding-bottom:1rem;margin-bottom:.5rem">
-            <span class="s-label" style="font-weight:600">Decision-Outcome Linker</span>
-            <span class="s-hint">Joins KB decision entries against agent retros and grades each decision <code>CONFIRMED</code>, <code>CONTRADICTED</code>, or <code>PENDING</code>. Proposals go to <code>~/.prevoyant/knowledge-buildup/decision-outcomes.md</code> — nothing is written to the KB directly.</span>
-          </div>
-          ${fld('PRX_DECISION_OUTCOME_ENABLED','Enable Decision-Outcome Linker','select',v('PRX_DECISION_OUTCOME_ENABLED') || 'N','','Starts the Decision-Outcome Linker background worker.',
-            [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
-          ${fld('PRX_DECISION_OUTCOME_RUN_AT','Run at time (HH:MM)','text',v('PRX_DECISION_OUTCOME_RUN_AT'),'','24-hour clock time to run each day, e.g. 02:00. Deterministic — ignores server start time. Leave blank to use interval-based scheduling.')}
-          ${fld('PRX_DECISION_OUTCOME_INTERVAL_DAYS','Run interval (days)','text',v('PRX_DECISION_OUTCOME_INTERVAL_DAYS'),'7','Used when Run at time is blank. Days between runs. Default: 7.')}
-          ${fld('PRX_DECISION_OUTCOME_LOOKBACK_DAYS','Retro lookback (days)','number',v('PRX_DECISION_OUTCOME_LOOKBACK_DAYS'),'90','Only consider retros modified within this many days. Default: 90.')}
-          ${fld('PRX_DECISION_OUTCOME_MIN_EVIDENCE','Min confirmations for CONFIRMED','number',v('PRX_DECISION_OUTCOME_MIN_EVIDENCE'),'2','Confirmations required to grade a decision CONFIRMED (zero contradictions). Default: 2.')}
-          <div class="s-field span2" style="margin-top:4px">
-            <button type="button" onclick="decisionOutcomeRunNow()"
-              style="font-size:11px;padding:3px 12px;border:1px solid #6366f1;border-radius:6px;background:#eef2ff;color:#4338ca;cursor:pointer">
-              ▶ Run now
-            </button>
-          </div>
-
-          <!-- Stale Branch Detector -->
-          <div class="s-field span2" style="border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:.75rem 0 1rem;margin:.75rem 0 .5rem">
-            <span class="s-label" style="font-weight:600">Stale Branch Detector</span>
-            <span class="s-hint">Lists feature/fix branches in <code>PRX_REPO_DIR</code>, cross-references against KB sessions and Jira PRs, and flags branches with a completed KB session but no PR. Requires <code>PRX_REPO_DIR</code> and Jira credentials.</span>
-          </div>
-          ${fld('PRX_STALE_BRANCH_ENABLED','Enable Stale Branch Detector','select',v('PRX_STALE_BRANCH_ENABLED') || 'N','','Starts the Stale Branch Detector background worker.',
-            [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
-          ${fld('PRX_STALE_BRANCH_RUN_AT','Run at time (HH:MM)','text',v('PRX_STALE_BRANCH_RUN_AT'),'','24-hour clock time to run each day, e.g. 03:00. Deterministic — ignores server start time. Leave blank to use interval-based scheduling.')}
-          ${fld('PRX_STALE_BRANCH_DAYS','Stale after (days quiet)','number',v('PRX_STALE_BRANCH_DAYS'),'14','Branches with no commit activity for this many days are flagged. Default: 14.')}
-          ${fld('PRX_STALE_BRANCH_INTERVAL_DAYS','Run interval (days)','text',v('PRX_STALE_BRANCH_INTERVAL_DAYS'),'1','Used when Run at time is blank. Days between runs. Default: 1.')}
-          <div class="s-field span2" style="margin-top:4px">
-            <button type="button" onclick="staleBranchRunNow()"
-              style="font-size:11px;padding:3px 12px;border:1px solid #6366f1;border-radius:6px;background:#eef2ff;color:#4338ca;cursor:pointer">
-              ▶ Run now
-            </button>
-          </div>
-
-          <!-- Memory Pattern Miner -->
-          <div class="s-field span2" style="border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:.75rem 0 1rem;margin:.75rem 0 .5rem">
-            <span class="s-label" style="font-weight:600">Memory Pattern Miner</span>
-            <span class="s-hint">Scans agent persona memory files for learnings recurring across 3+ distinct tickets. Candidates go to <code>~/.prevoyant/knowledge-buildup/pattern-proposals.md</code> (PENDING APPROVAL) — nothing is written to the KB directly.</span>
-          </div>
-          ${fld('PRX_PATTERN_MINER_ENABLED','Enable Pattern Miner','select',v('PRX_PATTERN_MINER_ENABLED') || 'N','','Starts the Memory Pattern Miner background worker.',
-            [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
-          ${fld('PRX_PATTERN_MINER_RUN_AT','Run at time (HH:MM)','text',v('PRX_PATTERN_MINER_RUN_AT'),'','24-hour clock time to run each day, e.g. 04:00. Deterministic — ignores server start time. Leave blank to use interval-based scheduling.')}
-          ${fld('PRX_PATTERN_MINER_INTERVAL_DAYS','Run interval (days)','text',v('PRX_PATTERN_MINER_INTERVAL_DAYS'),'7','Used when Run at time is blank. Days between scan runs. Default: 7.')}
-          ${fld('PRX_PATTERN_MINER_MIN_TICKETS','Min tickets for pattern','number',v('PRX_PATTERN_MINER_MIN_TICKETS'),'3','Minimum distinct tickets a learning must appear in. Min enforced: 2. Default: 3.')}
-          ${fld('PRX_PATTERN_MINER_MAX_PROPOSALS','Max proposals per run','number',v('PRX_PATTERN_MINER_MAX_PROPOSALS'),'20','Maximum proposals written per run. Default: 20.')}
-          <div class="s-field span2" style="margin-top:4px">
-            <button type="button" onclick="patternMinerRunNow()"
-              style="font-size:11px;padding:3px 12px;border:1px solid #6366f1;border-radius:6px;background:#eef2ff;color:#4338ca;cursor:pointer">
-              ▶ Run now
-            </button>
-          </div>
-
-          <!-- KB Staleness Scanner -->
-          <div class="s-field span2" style="border-top:1px solid var(--border);border-bottom:1px solid var(--border);padding:.75rem 0 1rem;margin:.75rem 0 .5rem">
-            <span class="s-label" style="font-weight:600">KB Staleness Scanner</span>
-            <span class="s-hint">Walks all <code>.md</code> files in the KB, extracts <code>ref: file:line</code> references, and checks whether those source files still exist at <code>PRX_REPO_DIR</code>. Stale refs go to <code>~/.prevoyant/knowledge-buildup/stale-refs.md</code>. Requires <code>PRX_REPO_DIR</code>.</span>
-          </div>
-          ${fld('PRX_STALENESS_ENABLED','Enable Staleness Scanner','select',v('PRX_STALENESS_ENABLED') || 'N','','Starts the KB Staleness Scanner background worker.',
-            [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
-          ${fld('PRX_STALENESS_RUN_AT','Run at time (HH:MM)','text',v('PRX_STALENESS_RUN_AT'),'','24-hour clock time to run each day, e.g. 05:00. Deterministic — ignores server start time. Leave blank to use interval-based scheduling.')}
-          ${fld('PRX_STALENESS_INTERVAL_DAYS','Run interval (days)','text',v('PRX_STALENESS_INTERVAL_DAYS'),'7','Used when Run at time is blank. Days between scan runs. Default: 7.')}
-          <div class="s-field span2" style="margin-top:4px">
-            <button type="button" onclick="stalenessRunNow()"
-              style="font-size:11px;padding:3px 12px;border:1px solid #6366f1;border-radius:6px;background:#eef2ff;color:#4338ca;cursor:pointer">
-              ▶ Run now
-            </button>
-          </div>
-
-        </div>
-      </details>
-
       <!-- Hermes Integration -->
       <details class="s-section" id="hermes" onToggle="if(this.open) hermesCheckStatus()">
         <summary>
@@ -6528,83 +6445,6 @@ function renderSettings(vals, flash) {
         .then(() => hermesCheckStatus())
         .catch(() => hermesCheckStatus())
         .finally(() => { btn.disabled = false; });
-    }
-
-    // ── Pattern Miner / Staleness run-now ────────────────────────────────────
-    async function patternMinerRunNow() {
-      const btn = event.target;
-      btn.disabled = true; btn.textContent = 'Queued…';
-      try {
-        const r = await fetch('/dashboard/settings/pattern-miner/run-now', { method: 'POST' });
-        const d = await r.json();
-        btn.textContent = d.ok ? '✓ Queued' : (d.error || 'Error');
-        btn.style.background = d.ok ? '#dcfce7' : '#fee2e2';
-        btn.style.borderColor = d.ok ? '#86efac' : '#fca5a5';
-        btn.style.color       = d.ok ? '#166534' : '#991b1b';
-      } catch (_) {
-        btn.textContent = 'Error';
-      }
-      setTimeout(() => {
-        btn.disabled = false; btn.textContent = '▶ Run now';
-        btn.style.background = ''; btn.style.borderColor = ''; btn.style.color = '';
-      }, 4000);
-    }
-
-    async function stalenessRunNow() {
-      const btn = event.target;
-      btn.disabled = true; btn.textContent = 'Queued…';
-      try {
-        const r = await fetch('/dashboard/settings/staleness/run-now', { method: 'POST' });
-        const d = await r.json();
-        btn.textContent = d.ok ? '✓ Queued' : (d.error || 'Error');
-        btn.style.background = d.ok ? '#dcfce7' : '#fee2e2';
-        btn.style.borderColor = d.ok ? '#86efac' : '#fca5a5';
-        btn.style.color       = d.ok ? '#166534' : '#991b1b';
-      } catch (_) {
-        btn.textContent = 'Error';
-      }
-      setTimeout(() => {
-        btn.disabled = false; btn.textContent = '▶ Run now';
-        btn.style.background = ''; btn.style.borderColor = ''; btn.style.color = '';
-      }, 4000);
-    }
-
-    async function decisionOutcomeRunNow() {
-      const btn = event.target;
-      btn.disabled = true; btn.textContent = 'Queued…';
-      try {
-        const r = await fetch('/dashboard/settings/decision-outcome/run-now', { method: 'POST' });
-        const d = await r.json();
-        btn.textContent = d.ok ? '✓ Queued' : (d.error || 'Error');
-        btn.style.background = d.ok ? '#dcfce7' : '#fee2e2';
-        btn.style.borderColor = d.ok ? '#86efac' : '#fca5a5';
-        btn.style.color       = d.ok ? '#166534' : '#991b1b';
-      } catch (_) {
-        btn.textContent = 'Error';
-      }
-      setTimeout(() => {
-        btn.disabled = false; btn.textContent = '▶ Run now';
-        btn.style.background = ''; btn.style.borderColor = ''; btn.style.color = '';
-      }, 4000);
-    }
-
-    async function staleBranchRunNow() {
-      const btn = event.target;
-      btn.disabled = true; btn.textContent = 'Queued…';
-      try {
-        const r = await fetch('/dashboard/settings/stale-branch/run-now', { method: 'POST' });
-        const d = await r.json();
-        btn.textContent = d.ok ? '✓ Queued' : (d.error || 'Error');
-        btn.style.background = d.ok ? '#dcfce7' : '#fee2e2';
-        btn.style.borderColor = d.ok ? '#86efac' : '#fca5a5';
-        btn.style.color       = d.ok ? '#166534' : '#991b1b';
-      } catch (_) {
-        btn.textContent = 'Error';
-      }
-      setTimeout(() => {
-        btn.disabled = false; btn.textContent = '▶ Run now';
-        btn.style.background = ''; btn.style.borderColor = ''; btn.style.color = '';
-      }, 4000);
     }
 
     // ── Notifications ─────────────────────────────────────────────────────────
@@ -8419,10 +8259,6 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'PRX_WATCH_ENABLED', 'PRX_WATCH_POLL_INTERVAL', 'PRX_WATCH_MAX_POLLS',
     'PRX_WATCH_LOG_KEEP_DAYS', 'PRX_WATCH_LOG_KEEP_PER_TICKET',
     'PRX_KBFLOW_ENABLED', 'PRX_KBFLOW_INTERVAL_DAYS', 'PRX_KBFLOW_LOOKBACK_DAYS', 'PRX_KBFLOW_MAX_FLOWS',
-    'PRX_PATTERN_MINER_ENABLED', 'PRX_PATTERN_MINER_INTERVAL_DAYS', 'PRX_PATTERN_MINER_MIN_TICKETS', 'PRX_PATTERN_MINER_MAX_PROPOSALS', 'PRX_PATTERN_MINER_RUN_AT',
-    'PRX_STALENESS_ENABLED', 'PRX_STALENESS_INTERVAL_DAYS', 'PRX_STALENESS_RUN_AT',
-    'PRX_STALE_BRANCH_ENABLED', 'PRX_STALE_BRANCH_DAYS', 'PRX_STALE_BRANCH_INTERVAL_DAYS', 'PRX_STALE_BRANCH_RUN_AT',
-    'PRX_DECISION_OUTCOME_ENABLED', 'PRX_DECISION_OUTCOME_INTERVAL_DAYS', 'PRX_DECISION_OUTCOME_LOOKBACK_DAYS', 'PRX_DECISION_OUTCOME_MIN_EVIDENCE', 'PRX_DECISION_OUTCOME_RUN_AT',
     'PRX_COCHANGE_WINDOW_DAYS', 'PRX_COCHANGE_CACHE_TTL_DAYS',
     'PRX_CORTEX_ENABLED', 'PRX_CORTEX_DEBOUNCE_SECS', 'PRX_CORTEX_RESYNC_HOURS', 'PRX_CORTEX_DISTRIBUTED', 'PRX_CORTEX_FORCE_BUILDER',
     'PRX_CORTEX_AUTONOMY_LEVEL', 'PRX_CORTEX_AUTO_PROMOTE_THRESHOLD', 'PRX_CORTEX_AUTO_PROMOTE_DELAY_HOURS', 'PRX_CORTEX_AUTO_PROMOTE_MIN_AGE_DAYS',
@@ -10234,38 +10070,6 @@ router.post('/knowledge-builder/contribution/delete', express.json(), (req, res)
     return res.status(500).json({ ok: false, error: 'Write failed: ' + e.message });
   }
   activityLog.record('kbflow_contribution_deleted', null, 'user', { id });
-  res.json({ ok: true });
-});
-
-router.post('/settings/pattern-miner/run-now', express.json(), (_req, res) => {
-  if (process.env.PRX_PATTERN_MINER_ENABLED !== 'Y') {
-    return res.status(400).json({ ok: false, error: 'Pattern Miner is not enabled' });
-  }
-  serverEvents.emit('pattern-miner-run-now');
-  res.json({ ok: true });
-});
-
-router.post('/settings/staleness/run-now', express.json(), (_req, res) => {
-  if (process.env.PRX_STALENESS_ENABLED !== 'Y') {
-    return res.status(400).json({ ok: false, error: 'Staleness Scanner is not enabled' });
-  }
-  serverEvents.emit('staleness-run-now');
-  res.json({ ok: true });
-});
-
-router.post('/settings/stale-branch/run-now', express.json(), (_req, res) => {
-  if (process.env.PRX_STALE_BRANCH_ENABLED !== 'Y') {
-    return res.status(400).json({ ok: false, error: 'Stale Branch Detector is not enabled' });
-  }
-  serverEvents.emit('stale-branch-run-now');
-  res.json({ ok: true });
-});
-
-router.post('/settings/decision-outcome/run-now', express.json(), (_req, res) => {
-  if (process.env.PRX_DECISION_OUTCOME_ENABLED !== 'Y') {
-    return res.status(400).json({ ok: false, error: 'Decision-Outcome Linker is not enabled' });
-  }
-  serverEvents.emit('decision-outcome-run-now');
   res.json({ ok: true });
 });
 
