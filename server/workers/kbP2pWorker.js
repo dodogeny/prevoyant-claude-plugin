@@ -816,7 +816,7 @@ async function applyUpdate(raw) {
 
 // ── Inbound: reconcile fingerprint broadcast ──────────────────────────────────
 
-async function applyReconcile(payload, node) {
+async function applyReconcile(payload, node, onSync) {
   if (payload.machine === machineName()) return;
   const localFp  = await kbFingerprint(kbDir());
   const fpMatch  = payload.fingerprint === localFp;
@@ -826,14 +826,15 @@ async function applyReconcile(payload, node) {
   if (fpMatch && !obsDrift) return; // fully in sync
 
   if (fpMatch && obsDrift) {
-    // KB files match but observations diverge — request only a cortex dump
     log('info', `Reconcile: observation drift with ${payload.machine} (peer=${peerObs} local=${cortexCache.size}) — requesting cortex dump`);
     if (parentPort) parentPort.postMessage({ type: 'reconcile-needed', machine: payload.machine, cortexOnly: true });
+    if (onSync) onSync({ cortexOnly: true });
     return;
   }
 
   log('info', `Reconcile fingerprint mismatch with ${payload.machine} — requesting delta sync`);
   if (parentPort) parentPort.postMessage({ type: 'reconcile-needed', machine: payload.machine });
+  if (onSync) onSync({ cortexOnly: false });
 }
 
 // ── Signal file watcher ───────────────────────────────────────────────────────
@@ -1070,7 +1071,12 @@ if (parentPort) {
       // Dispatch by message type
       if (innerPeek?.type === 'reconcile') {
         const payload = verifyEnvelope(raw);
-        if (payload) await applyReconcile(payload, libp2pNode);
+        if (payload) await applyReconcile(payload, libp2pNode, ({ cortexOnly }) => {
+          const peers = buildPeerList(libp2pNode);
+          if (!peers.length) return;
+          if (cortexOnly) requestCortexDump(libp2pNode, peers[0].id, 0).catch(() => {});
+          else requestDeltaSync(peers[0].id, loadLastSyncTs());
+        });
       } else {
         await applyUpdate(raw);
       }
@@ -1256,21 +1262,6 @@ if (parentPort) {
     } catch (e) {
       log('warn', `Reconcile broadcast failed: ${e.message}`);
     }
-  }
-
-  // Handle reconcile-needed from main thread (triggered when a peer's fingerprint mismatches)
-  if (parentPort) {
-    parentPort.on('message', msg => {
-      if (msg?.type === 'trigger-reconcile-sync') {
-        const peers = buildPeerList(libp2pNode);
-        if (peers.length) requestDeltaSync(peers[0].id, loadLastSyncTs());
-      }
-      if (msg?.type === 'trigger-cortex-dump') {
-        // Observation-only drift — pull cortex observations without a full KB file sync
-        const peers = buildPeerList(libp2pNode);
-        if (peers.length) requestCortexDump(libp2pNode, peers[0].id, 0);
-      }
-    });
   }
 
   const reconcileInterval = setInterval(async () => {

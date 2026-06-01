@@ -4974,10 +4974,10 @@ const NOTIFY_EVENTS = [
 
 function renderSettings(vals, flash) {
   const v     = k => vals[k] || '';
-  const p2pOn = v('PRX_P2P_ENABLED') === 'Y'; // P2P takes precedence over Redis/Upstash KB sync
+  const p2pOn = v('PRX_P2P_ENABLED') === 'Y';
 
-  const kbKeys     = ['PRX_KB_MODE','PRX_SOURCE_REPO_URL','PRX_KNOWLEDGE_DIR','PRX_KB_REPO','PRX_KB_LOCAL_CLONE','PRX_KB_KEY','PRX_REALTIME_KB_SYNC','PRX_UPSTASH_REDIS_URL','PRX_UPSTASH_REDIS_TOKEN','PRX_KB_SYNC_MACHINE','PRX_KB_SYNC_POLL_SECS','PRX_KB_SYNC_TRIGGER','PRX_KB_SYNC_DEBOUNCE_SECS','PRX_P2P_ENABLED','PRX_P2P_PORT','PRX_P2P_MDNS_ENABLED','PRX_P2P_BOOTSTRAP_NODES','PRX_P2P_SECRET','PRX_P2P_RECONCILE_MINS','PRX_P2P_ENCRYPT','PRX_P2P_TRICKLE','PRX_P2P_RSA_PRIVATE_KEY','PRX_P2P_RSA_PUBLIC_KEY'];
-  const memKeys    = ['PRX_MEMORY_INDEX_ENABLED','PRX_MEMORY_LIMIT','PRX_REDIS_ENABLED','PRX_REDIS_URL','PRX_REDIS_PASSWORD','PRX_REDIS_PREFIX','PRX_REDIS_TTL_DAYS','PRX_BASIC_MEMORY_ENABLED','BASIC_MEMORY_HOME'];
+  const kbKeys     = ['PRX_KB_MODE','PRX_SOURCE_REPO_URL','PRX_KNOWLEDGE_DIR','PRX_KB_REPO','PRX_KB_LOCAL_CLONE','PRX_KB_KEY','PRX_KB_SYNC_MACHINE','PRX_KB_SYNC_TRIGGER','PRX_KB_SYNC_DEBOUNCE_SECS','PRX_P2P_ENABLED','PRX_P2P_PORT','PRX_P2P_MDNS_ENABLED','PRX_P2P_BOOTSTRAP_NODES','PRX_P2P_SECRET','PRX_P2P_RECONCILE_MINS','PRX_P2P_ENCRYPT','PRX_P2P_TRICKLE','PRX_P2P_RSA_PRIVATE_KEY','PRX_P2P_RSA_PUBLIC_KEY'];
+  const memKeys    = ['PRX_MEMORY_INDEX_ENABLED','PRX_MEMORY_LIMIT','PRX_BASIC_MEMORY_ENABLED','BASIC_MEMORY_HOME'];
   const emailKeys  = ['PRX_EMAIL_TO','PRX_SMTP_HOST','PRX_SMTP_PORT','PRX_SMTP_USER','PRX_SMTP_PASS'];
   const bryanKeys  = ['PRX_INCLUDE_SM_IN_SESSIONS_ENABLED','PRX_SKILL_UPGRADE_MIN_SESSIONS','PRX_SKILL_COMPACTION_INTERVAL','PRX_MONTHLY_BUDGET'];
   const autoKeys   = ['AUTO_MODE','FORCE_FULL_RUN','PRX_REPORT_VERBOSITY','PRX_JIRA_PROJECT','PRX_ATTACHMENT_MAX_MB'];
@@ -5318,38 +5318,17 @@ function renderSettings(vals, flash) {
             ${fld('PRX_KB_KEY','Encryption Key (distributed)','password',v('PRX_KB_KEY'),'your-strong-passphrase','AES-256-CBC passphrase for encrypting KB files. Optional. Never commit this value.')}
           </div>
           <div class="s-field span2" style="border-top:1px solid #e5e7eb;padding-top:1rem;margin-top:.5rem">
-            <span class="s-label" style="font-weight:600;${p2pOn ? 'opacity:.5' : ''}">Real-time KB Sync <span style="font-size:10px;font-weight:400;color:#6b7280;margin-left:.4rem">Redis doorbell · Git mail carrier · <a href="https://upstash.com/" target="_blank" rel="noopener" style="color:#6b7280">upstash.com</a></span></span>
-            <span class="s-hint" style="${p2pOn ? 'opacity:.5' : ''}">Push/pull KB changes across machines the moment a session finishes. Redis carries only a ~100-byte notification (machine, ticket, commit). Git carries the actual KB files. Requires distributed mode.</span>
-          </div>
-          ${p2pOn ? `
-          <div class="s-field span2">
             <div style="display:flex;align-items:flex-start;gap:.6rem;background:linear-gradient(135deg,#e0f7fa,#f0f9ff);border:1px solid #0891b2;border-left:4px solid #0891b2;border-radius:6px;padding:.65rem .85rem;font-size:.79rem;color:#0c4a6e">
               <svg xmlns="http://www.w3.org/2000/svg" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#0891b2" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="flex-shrink:0;margin-top:.05rem"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
-              <span><strong>P2P sync is active — Redis/Upstash is not used.</strong><br>
-              When <code>PRX_P2P_ENABLED=Y</code>, peer-to-peer sync via libp2p GossipSub takes full precedence over both Git push/pull and Redis/Upstash signaling.
-              KB files are transferred directly between peers — no git remote or Upstash account is required.
-              The fields below are disabled; configure sync behaviour in the <strong>P2P KB Sync</strong> section instead.
-              <em style="display:block;margin-top:.35rem;color:#0891b2">Machine Name, Outbound Trigger, and Filesystem Debounce are still read by the P2P worker and remain editable.</em></span>
+              <span><strong>KB sync is handled by P2P.</strong><br>
+              KB files are propagated directly between peers via libp2p GossipSub — no external service required.
+              Configure sync behaviour in the <strong>P2P KB Sync</strong> section below.</span>
             </div>
-          </div>` : ''}
-          ${(!p2pOn && v('PRX_REALTIME_KB_SYNC') === 'Y' && (v('PRX_KB_MODE') || 'local') !== 'distributed') ? `
-          <div class="s-field span2" style="margin-top:-.5rem">
-            <div style="background:#fef3c7;border:1px solid #f59e0b;border-radius:6px;padding:.5rem .75rem;font-size:.78rem;color:#92400e">
-              <strong>Inactive setting:</strong> <code>PRX_REALTIME_KB_SYNC=Y</code> has no effect while <code>PRX_KB_MODE=local</code>.
-              Real-time sync only activates in distributed mode. Set <code>PRX_KB_MODE=distributed</code> to enable it, or set <code>PRX_REALTIME_KB_SYNC=N</code> to clear this warning.
-            </div>
-          </div>` : ''}
-          ${fld('PRX_REALTIME_KB_SYNC','Enable Real-time Sync','select',v('PRX_REALTIME_KB_SYNC') || 'N','','Requires PRX_KB_MODE=distributed and Upstash credentials below.',
-            [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}], p2pOn)}
-          ${fld('PRX_UPSTASH_REDIS_URL','Upstash REST URL','text',v('PRX_UPSTASH_REDIS_URL'),'https://your-endpoint.upstash.io','REST endpoint from console.upstash.com → Database → REST API. Free tier is sufficient.', undefined, p2pOn)}
-          <div class="s-field">
-            ${fld('PRX_UPSTASH_REDIS_TOKEN','Upstash REST Token','password',v('PRX_UPSTASH_REDIS_TOKEN'),'your-token-here','REST token from console.upstash.com. Never commit this value.', undefined, p2pOn)}
           </div>
-          ${fld('PRX_KB_SYNC_MACHINE','Machine Name','text',v('PRX_KB_SYNC_MACHINE'),require('os').hostname(),'Override hostname used in sync notifications — also used by the P2P worker to identify this node.')}
-          ${fld('PRX_KB_SYNC_POLL_SECS','Poll Interval (seconds)','text',v('PRX_KB_SYNC_POLL_SECS'),'10','How often each machine checks Redis for new KB updates. Default: 10. Not used when P2P sync is active.', undefined, p2pOn)}
-          ${fld('PRX_KB_SYNC_TRIGGER','Outbound trigger','select',v('PRX_KB_SYNC_TRIGGER') || 'session','','What triggers an outbound KB sync. Used by both the Redis poller and the P2P worker.',
+          ${fld('PRX_KB_SYNC_MACHINE','Machine Name','text',v('PRX_KB_SYNC_MACHINE'),require('os').hostname(),'Override hostname used to identify this node in the P2P network. Defaults to os.hostname().')}
+          ${fld('PRX_KB_SYNC_TRIGGER','Outbound trigger','select',v('PRX_KB_SYNC_TRIGGER') || 'session','','What triggers an outbound KB sync to peers.',
             [{v:'session',l:'session — SKILL.md signals after git push (recommended)'},{v:'filesystem',l:'filesystem — watch KB dir for manual edits'},{v:'both',l:'both — session + filesystem'}])}
-          ${fld('PRX_KB_SYNC_DEBOUNCE_SECS','Filesystem debounce (seconds)','text',v('PRX_KB_SYNC_DEBOUNCE_SECS'),'3','Seconds to wait after the last file change before syncing. Used by both filesystem watcher and P2P worker.')}
+          ${fld('PRX_KB_SYNC_DEBOUNCE_SECS','Filesystem debounce (seconds)','text',v('PRX_KB_SYNC_DEBOUNCE_SECS'),'3','Seconds to wait after the last file change before syncing. Applies when trigger includes filesystem.')}
         </div>
       </details>
 
@@ -5500,55 +5479,15 @@ function renderSettings(vals, flash) {
               memory file. On each new ticket only the most relevant entries are injected
               (scored by Jira component + label match) — replacing ~700 lines of raw session
               excerpts with a compact ~20-line table (<strong>~96% token reduction</strong>
-              on the agent memory section). Supports two backends:
-              <br><br>
-              <strong>JSON</strong> (local) — single-machine, zero setup, zero dependencies.<br>
-              <strong>Redis</strong> (team-shared) — all developers share one memory store
-              across machines and parallel sessions. Requires a Redis instance.
+              on the agent memory section).
             </div>
           </div>
 
           <div class="s-field span2"><hr style="border:none;border-top:1px solid #e5e7eb;margin:.2rem 0 .8rem"></div>
 
-          <div class="s-field span2" style="font-weight:600;font-size:.8rem;color:#6366f1;margin-bottom:-.3rem">JSON backend (local fallback)</div>
-          ${fld('PRX_MEMORY_INDEX_ENABLED','Enable JSON memory','select',v('PRX_MEMORY_INDEX_ENABLED')||'Y','','Local JSON index at ~/.prevoyant/memory/index.json. Used when Redis is disabled or unreachable.',
+          ${fld('PRX_MEMORY_INDEX_ENABLED','Enable memory index','select',v('PRX_MEMORY_INDEX_ENABLED')||'Y','','Local JSON index at ~/.prevoyant/memory/index.json.',
             [{v:'Y',l:'Y — enabled (default)'},{v:'N',l:'N — disabled'}])}
           ${fld('PRX_MEMORY_LIMIT','Max learnings per prompt','number',v('PRX_MEMORY_LIMIT'),'15','Max indexed entries injected per session prompt. Lower = fewer tokens. Default: 15.')}
-
-          <div class="s-field span2"><hr style="border:none;border-top:1px solid #e5e7eb;margin:.5rem 0 .8rem"></div>
-
-          <div class="s-field span2" style="font-weight:600;font-size:.8rem;color:#6366f1;margin-bottom:-.3rem">Redis backend (team-shared, primary)</div>
-          <div class="s-field span2">
-            <div class="s-hint" style="margin-top:0">
-              Team-shared store — all developers see the same indexed learnings across machines and parallel sessions.
-              Takes priority over JSON when connected; JSON stays warm as a hot-standby.
-              <br><br>
-              <strong>Using the same Upstash instance as KB sync?</strong><br>
-              The REST token in <code>PRX_UPSTASH_REDIS_TOKEN</code> is <em>not</em> the Redis password.
-              To get the native Redis connection string:
-              <ol style="margin:.4rem 0 0 1.1rem;padding:0;line-height:1.8">
-                <li>Open your <strong>Upstash Console</strong> → select your database</li>
-                <li>Click <strong>Connect</strong> → select the <strong>ioredis</strong> tab</li>
-                <li>Copy the <code>rediss://</code> URL — it contains the correct password</li>
-                <li>Paste it into <strong>Redis URL</strong> below and leave <strong>Redis password</strong> blank</li>
-              </ol>
-              <br>Key spaces don't clash — memory uses prefix <code>prx:mem:</code>, KB sync uses its own stream key.
-            </div>
-          </div>
-          ${fld('PRX_REDIS_ENABLED','Enable Redis memory','select',v('PRX_REDIS_ENABLED')||'N','','Team-shared memory via Redis. Takes priority over JSON when connected.',
-            [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
-          ${fld('PRX_REDIS_URL','Redis URL','text',v('PRX_REDIS_URL'),'rediss://default:<password>@<host>:6379','Connection URL. Use rediss:// for TLS (required for Upstash). Embed credentials directly in the URL.')}
-          ${fld('PRX_REDIS_PASSWORD','Redis password','password',v('PRX_REDIS_PASSWORD'),'','Leave blank when credentials are already embedded in the URL above (recommended for Upstash).')}
-          ${fld('PRX_REDIS_PREFIX','Key prefix','text',v('PRX_REDIS_PREFIX'),'prx:mem:','Namespace prefix for all Redis keys. Change if sharing a Redis instance with other apps.')}
-          ${fld('PRX_REDIS_TTL_DAYS','Memory TTL (days)','number',v('PRX_REDIS_TTL_DAYS'),'0','Days before indexed entries expire. 0 = never expire (recommended).')}
-
-          <div class="s-field span2">
-            <button type="button" onclick="testRedisConnection()"
-              style="padding:.4rem 1rem;background:#1a1a2e;color:#fff;border:none;border-radius:6px;font-size:.78rem;cursor:pointer;font-family:inherit">
-              Test Redis connection
-            </button>
-            <span id="redis-test-result" style="margin-left:.75rem;font-size:.78rem;color:#6b7280"></span>
-          </div>
 
           <div class="s-field span2"><hr style="border:none;border-top:1px solid #e5e7eb;margin:.5rem 0 .8rem"></div>
 
@@ -5569,27 +5508,6 @@ function renderSettings(vals, flash) {
       </details>
 
       <script>
-        async function testRedisConnection() {
-          const el = document.getElementById('redis-test-result');
-          el.textContent = 'Testing…';
-          try {
-            const r = await fetch('/dashboard/api/memory-status');
-            const d = await r.json();
-            if (d.backend === 'redis' && d.connected) {
-              el.textContent = '✓ Redis connected — ' + d.total + ' learnings indexed';
-              el.style.color = '#16a34a';
-            } else if (d.backend === 'redis' && !d.connected) {
-              el.textContent = '✗ Redis unreachable — check URL and server';
-              el.style.color = '#dc2626';
-            } else {
-              el.textContent = 'Redis disabled — using ' + (d.backend || 'none');
-              el.style.color = '#9ca3af';
-            }
-          } catch (_) {
-            el.textContent = 'Request failed';
-            el.style.color = '#dc2626';
-          }
-        }
         // Auto-load status badge on page open
         (async () => {
           try {
@@ -5597,10 +5515,7 @@ function renderSettings(vals, flash) {
             const d = await r.json();
             const badge = document.getElementById('mem-status-badge');
             if (!badge) return;
-            if (d.backend === 'redis' && d.connected) {
-              badge.textContent = 'Redis ✓';
-              badge.style.background = '#dcfce7'; badge.style.color = '#16a34a';
-            } else if (d.backend === 'json' && d.connected) {
+            if (d.backend === 'json' && d.connected) {
               badge.textContent = 'JSON ✓';
               badge.style.background = '#eff6ff'; badge.style.color = '#2563eb';
             } else {
@@ -5924,7 +5839,7 @@ function renderSettings(vals, flash) {
           </div>
           ${fld('PRX_CORTEX_ENABLED','Enable Cortex','select',v('PRX_CORTEX_ENABLED') || 'N','','Starts the always-on cortex worker.',
             [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled'}])}
-          ${fld('PRX_CORTEX_DISTRIBUTED','Distributed (share via KB)','select',v('PRX_CORTEX_DISTRIBUTED') || 'N','','Y → cortex files live inside the KB (`&lt;KB&gt;/cortex/`) and ride along with KB sync (git push or Upstash). Other devs auto-pickup. N → per-machine (~/.prevoyant/cortex/, default).',
+          ${fld('PRX_CORTEX_DISTRIBUTED','Distributed (share via KB)','select',v('PRX_CORTEX_DISTRIBUTED') || 'N','','Y → cortex files live inside the KB (`&lt;KB&gt;/cortex/`) and ride along with P2P KB sync. Other devs auto-pickup. N → per-machine (~/.prevoyant/cortex/, default).',
             [{v:'N',l:'N — per-machine (default)'},{v:'Y',l:'Y — shared via KB'}])}
           ${fld('PRX_CORTEX_FORCE_BUILDER','Force builder role','select',v('PRX_CORTEX_FORCE_BUILDER') || 'N','','Only meaningful when distributed=Y. Y forces this machine to take over the builder lock even if another machine is actively claiming it — use when the previous builder is offline and you want immediate takeover. Default: N (auto-elect; takeover happens automatically after 10min of silence).',
             [{v:'N',l:'N — auto-elect (default)'},{v:'Y',l:'Y — force this machine as builder'}])}
@@ -5963,7 +5878,7 @@ function renderSettings(vals, flash) {
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
           P2P KB Sync
           <svg id="s-p2p-live-icon" width="22" height="14" viewBox="0 0 44 14" xmlns="http://www.w3.org/2000/svg" style="opacity:${process.env.PRX_P2P_ENABLED === 'Y' ? '.35' : '.12'};flex-shrink:0;transition:opacity .5s;margin-left:.25rem"><style>#s-p2p-live-icon.live polyline{animation:sLiveWire 1s linear infinite}@keyframes sLiveWire{to{stroke-dashoffset:-24}}</style><polyline points="0,7 6,7 10,1 14,13 18,3 22,11 26,7 44,7" fill="none" stroke="#22d3ee" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" stroke-dasharray="8 4"/></svg>
-          <span class="s-opt">Optional — replaces Redis signaling</span>
+          <span class="s-opt">Active by default</span>
           ${process.env.PRX_P2P_ENABLED === 'Y' ? '<span class="nav-menu-flag" style="background:rgba(34,197,94,.2);color:#4ade80;border-color:rgba(34,197,94,.4)">active</span>' : ''}
           <span class="s-chevron">›</span>
         </summary>
@@ -5971,8 +5886,7 @@ function renderSettings(vals, flash) {
           <div class="s-field span2">
             <div class="s-hint" style="margin-top:0">
               Propagate KB updates peer-to-peer via <a href="https://github.com/libp2p/js-libp2p" target="_blank" rel="noopener">libp2p</a>
-              (GossipSub + TCP + Noise + Yamux). When active, replaces the Redis/Upstash
-              notification layer — no Upstash account needed.<br><br>
+              (GossipSub + TCP + Noise + Yamux). No external service required.<br><br>
               Requires <strong>PRX_KB_MODE=distributed</strong>. Changed <code>.md</code> files are
               bundled inline in the GossipSub message and written directly on receipt —
               no git operations involved on either side. In local mode the KB stays on
@@ -5983,7 +5897,7 @@ function renderSettings(vals, flash) {
               Requires: <code>cd server &amp;&amp; npm install</code> after enabling.
             </div>
           </div>
-          ${fld('PRX_P2P_ENABLED','Enable P2P KB sync','select',v('PRX_P2P_ENABLED') || 'N','','When Y, replaces Redis/Upstash signaling with libp2p GossipSub.',
+          ${fld('PRX_P2P_ENABLED','Enable P2P KB sync','select',v('PRX_P2P_ENABLED') || 'Y','','When Y, KB files are propagated peer-to-peer via libp2p GossipSub.',
             [{v:'N',l:'N — disabled (default)'},{v:'Y',l:'Y — enabled (install deps first)'}])}
           ${fld('PRX_P2P_PORT','Listen port','number',v('PRX_P2P_PORT'),'7001','TCP port for the libp2p node. Must be open on your firewall for WAN peers. Default: 7001.')}
           ${fld('PRX_P2P_MDNS_ENABLED','LAN mDNS discovery','select',v('PRX_P2P_MDNS_ENABLED') || 'Y','','Y = auto-discover peers on the same LAN via multicast UDP. Set N in Docker or VMs where multicast is unavailable.',
@@ -8239,8 +8153,7 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'WEBHOOK_PORT', 'WEBHOOK_SECRET', 'WEBHOOK_POLL_INTERVAL_DAYS',
     'PRX_KB_MODE', 'PRX_SOURCE_REPO_URL', 'PRX_KNOWLEDGE_DIR',
     'PRX_KB_REPO', 'PRX_KB_LOCAL_CLONE', 'PRX_KB_KEY',
-    'PRX_REALTIME_KB_SYNC', 'PRX_UPSTASH_REDIS_URL', 'PRX_UPSTASH_REDIS_TOKEN',
-    'PRX_KB_SYNC_MACHINE', 'PRX_KB_SYNC_POLL_SECS', 'PRX_KB_SYNC_TRIGGER', 'PRX_KB_SYNC_DEBOUNCE_SECS',
+    'PRX_KB_SYNC_MACHINE', 'PRX_KB_SYNC_TRIGGER', 'PRX_KB_SYNC_DEBOUNCE_SECS',
     'PRX_P2P_ENABLED', 'PRX_P2P_PORT', 'PRX_P2P_MDNS_ENABLED', 'PRX_P2P_BOOTSTRAP_NODES', 'PRX_P2P_SECRET', 'PRX_P2P_RECONCILE_MINS', 'PRX_P2P_ENCRYPT', 'PRX_P2P_TRICKLE', 'PRX_P2P_RSA_PRIVATE_KEY', 'PRX_P2P_RSA_PUBLIC_KEY',
     'CLAUDE_REPORT_DIR',
     'AUTO_MODE', 'FORCE_FULL_RUN', 'PRX_REPORT_VERBOSITY',
@@ -8251,7 +8164,6 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     'PRX_INCLUDE_SM_IN_SESSIONS_ENABLED', 'PRX_SKILL_UPGRADE_MIN_SESSIONS',
     'PRX_SKILL_COMPACTION_INTERVAL', 'PRX_MONTHLY_BUDGET',
     'PRX_MEMORY_INDEX_ENABLED', 'PRX_MEMORY_LIMIT',
-    'PRX_REDIS_ENABLED', 'PRX_REDIS_URL', 'PRX_REDIS_PASSWORD', 'PRX_REDIS_PREFIX', 'PRX_REDIS_TTL_DAYS',
     'PRX_BASIC_MEMORY_ENABLED', 'BASIC_MEMORY_HOME',
     'PRX_WATCHDOG_ENABLED', 'PRX_WATCHDOG_INTERVAL_SECS', 'PRX_WATCHDOG_FAIL_THRESHOLD',
     'PRX_DISK_MONITOR_ENABLED', 'PRX_DISK_MONITOR_INTERVAL_MINS', 'PRX_PREVOYANT_MAX_SIZE_MB', 'PRX_DISK_CAPACITY_ALERT_PCT', 'PRX_DISK_CLEANUP_INTERVAL_DAYS',
@@ -8289,12 +8201,6 @@ router.post('/settings', express.urlencoded({ extended: false }), (req, res) => 
     // Bust budget cache so new admin key / budget takes effect immediately
     _budgetCache    = null;
     _budgetCachedAt = 0;
-
-    // Reset Redis client whenever Redis config changes so any stale connection
-    // (e.g. wrong password) is dropped and the new settings take effect immediately.
-    if (['PRX_REDIS_ENABLED','PRX_REDIS_URL','PRX_REDIS_PASSWORD','PRX_REDIS_PREFIX'].some(k => k in updates)) {
-      try { require('../memory/memoryAdapter').resetRedisClient(); } catch (_) {}
-    }
 
     activityLog.record('settings_saved', null, 'user', {
       fields: Object.keys(updates).filter(k => updates[k] !== '').join(','),

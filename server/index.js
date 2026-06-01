@@ -64,7 +64,6 @@ if (!config.hermesEnabled) {
 let watchdogWorker       = null;
 let diskWorker           = null;
 let updateWorker            = null;
-let kbSyncWorker            = null;
 let kbP2pWorker             = null;
 let ticketWatcherWorker     = null;
 let kbFlowAnalystWorker     = null;
@@ -195,56 +194,6 @@ function stopUpdateChecker() {
   }
 }
 
-function startKbSync() {
-  if (process.env.PRX_REALTIME_KB_SYNC !== 'Y') return;
-  if (process.env.PRX_KB_MODE !== 'distributed') return;
-  if (kbSyncWorker) return;
-  // P2P takes precedence — skip Redis/Upstash sync when P2P is active.
-  if (process.env.PRX_P2P_ENABLED === 'Y') {
-    console.log('[prevoyant-server] KB sync: P2P active — Redis/Upstash signaling skipped');
-    return;
-  }
-
-  const kbSync = require('./kb/kbSync');
-  const workerData = {
-    upstashUrl:   process.env.PRX_UPSTASH_REDIS_URL   || '',
-    upstashToken: process.env.PRX_UPSTASH_REDIS_TOKEN  || '',
-    kbDir:        kbSync.kbCloneDir(),
-    machineName:  kbSync.machineName(),
-    pollSecs:     parseInt(process.env.PRX_KB_SYNC_POLL_SECS     || '10', 10),
-    trigger:               (process.env.PRX_KB_SYNC_TRIGGER       || 'session').toLowerCase(),
-    debounceSecs: parseInt(process.env.PRX_KB_SYNC_DEBOUNCE_SECS || '3',  10),
-  };
-
-  kbSyncWorker = new Worker(
-    path.join(__dirname, 'workers', 'kbSyncWorker.js'),
-    { workerData, resourceLimits: workerLimits('light') }
-  );
-
-  kbSyncWorker.on('message', msg => {
-    if (msg?.type === 'kb-synced') {
-      // Another machine pushed — invalidate our local KB cache.
-      require('./kb/kbCache').invalidate();
-    }
-  });
-  kbSyncWorker.on('error', err =>
-    console.error('[kb-sync] Worker thread error:', err.message)
-  );
-  kbSyncWorker.on('exit', code => {
-    kbSyncWorker = null;
-    if (code !== 0) console.error(`[kb-sync] Worker exited with code ${code}`);
-  });
-
-  console.log(`[prevoyant-server] KB real-time sync active — polling every ${workerData.pollSecs}s (machine: ${workerData.machineName})`);
-}
-
-function stopKbSync() {
-  if (kbSyncWorker) {
-    kbSyncWorker.postMessage({ type: 'graceful-stop' });
-    kbSyncWorker = null;
-  }
-}
-
 // Required libp2p packages — checked at runtime so a fresh clone without
 // node_modules gets auto-healed before the worker thread starts.
 const P2P_REQUIRED_PACKAGES = [
@@ -361,13 +310,6 @@ function startKbP2p() {
         filesOut:      s.filesOut + (msg.filesCount || 0),
       });
     }
-    if (msg.type === 'reconcile-needed') {
-      if (msg.cortexOnly) {
-        if (kbP2pWorker) kbP2pWorker.postMessage({ type: 'trigger-cortex-dump', machine: msg.machine });
-      } else {
-        if (kbP2pWorker) kbP2pWorker.postMessage({ type: 'trigger-reconcile-sync', peerId: msg.peerId });
-      }
-    }
     if (msg.type === 'transfer-progress') {
       p2pBridge.updateState({
         transfer: msg.phase === 'done' ? null
@@ -440,6 +382,8 @@ function startKbP2p() {
               }
             } else if (!_validatedFieldIntelKeys.has(obsKey)) {
               // ── Peer node: validate and re-broadcast ─────────────────────
+              // add() is synchronous — deduplicates before the setImmediate runs,
+              // so duplicate messages arriving in the same event turn are correctly skipped.
               _validatedFieldIntelKeys.add(obsKey);
               const currentCount = msg.value.confirmCount || 1;
 
@@ -711,8 +655,8 @@ function stopCortex() {
   try { require('./runner/autonomyScheduler').stop(); } catch (_) {}
 }
 
-process.on('SIGTERM', () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopKbP2p(); stopTicketWatcher(); stopKbFlowAnalyst(); stopCortex(); setTimeout(() => process.exit(0), 600); });
-process.on('SIGINT',  () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbSync(); stopKbP2p(); stopTicketWatcher(); stopKbFlowAnalyst(); stopCortex(); setTimeout(() => process.exit(0), 600); });
+process.on('SIGTERM', () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbP2p(); stopTicketWatcher(); stopKbFlowAnalyst(); stopCortex(); setTimeout(() => process.exit(0), 600); });
+process.on('SIGINT',  () => { stopWatchdog(); stopDiskMonitor(); stopUpdateChecker(); stopKbP2p(); stopTicketWatcher(); stopKbFlowAnalyst(); stopCortex(); setTimeout(() => process.exit(0), 600); });
 
 // Reactively start/stop workers when settings are saved from the dashboard.
 // This avoids requiring a full server restart for monitor enable/disable toggles.
@@ -720,9 +664,6 @@ serverEvents.on('settings-saved', () => {
   const diskEnabled        = process.env.PRX_DISK_MONITOR_ENABLED === 'Y';
   const watchdogEnabled    = process.env.PRX_WATCHDOG_ENABLED     === 'Y';
   const p2pEnabled         = process.env.PRX_P2P_ENABLED           === 'Y';
-  const kbSyncEnabled      = process.env.PRX_REALTIME_KB_SYNC     === 'Y'
-                          && process.env.PRX_KB_MODE               === 'distributed'
-                          && !p2pEnabled;
   const watcherEnabled     = process.env.PRX_WATCH_ENABLED              === 'Y';
   const kbflowEnabled      = process.env.PRX_KBFLOW_ENABLED             === 'Y';
   const cortexOn           = process.env.PRX_CORTEX_ENABLED             === 'Y';
@@ -731,8 +672,6 @@ serverEvents.on('settings-saved', () => {
   if (!diskEnabled && diskWorker)                         stopDiskMonitor();
   if (watchdogEnabled && !watchdogWorker)                 startWatchdog();
   if (!watchdogEnabled && watchdogWorker)                 stopWatchdog();
-  if (kbSyncEnabled && !kbSyncWorker)                    startKbSync();
-  if (!kbSyncEnabled && kbSyncWorker)                    stopKbSync();
   if (p2pEnabled && !kbP2pWorker)                        ensureP2pDepsAndStart();
   if (!p2pEnabled && kbP2pWorker)                        stopKbP2p();
   if (watcherEnabled && !ticketWatcherWorker)             startTicketWatcher();
@@ -822,7 +761,8 @@ function isMeshQualityObservation(value) {
 serverEvents.on('cortex-observation-written', (detail) => {
   if (cortexWorker) cortexWorker.postMessage({ type: 'observe-written', detail });
 
-  if (kbP2pWorker && process.env.PRX_CORTEX_P2P_ENABLED === 'Y' && !detail.fromNetwork) {
+  if (kbP2pWorker && process.env.PRX_CORTEX_P2P_ENABLED === 'Y' && !detail.fromNetwork
+      && p2pBridge.getState().peers.length > 0) {
     try {
       const cortexLayer = require('./runner/cortexLayer');
       const value = cortexLayer.memory().get(detail.key);
@@ -857,7 +797,6 @@ app.listen(config.port, () => {
   startWatchdog();
   startDiskMonitor();
   startUpdateChecker();
-  startKbSync();
   ensureP2pDepsAndStart();
   setTimeout(() => { startTicketWatcher(); startKbFlowAnalyst(); }, 2000);
   setTimeout(() => startCortex(), 6000);
@@ -872,12 +811,6 @@ app.listen(config.port, () => {
 
   // Config-coherence warnings — logged once at startup so they surface in logs
   // without requiring the user to open the settings page.
-  if (process.env.PRX_REALTIME_KB_SYNC === 'Y' && (process.env.PRX_KB_MODE || 'local') !== 'distributed') {
-    console.warn('[prevoyant-server] CONFIG WARNING: PRX_REALTIME_KB_SYNC=Y has no effect when PRX_KB_MODE=local. ' +
-      'Real-time sync requires PRX_KB_MODE=distributed and Upstash credentials. ' +
-      'Either set PRX_KB_MODE=distributed or set PRX_REALTIME_KB_SYNC=N to silence this warning.');
-  }
-
   if (config.hermesEnabled) {
     // Hermes owns scheduling — run one startup sweep to catch tickets missed
     // while offline, then hand control to Hermes's cron.
