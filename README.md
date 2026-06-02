@@ -1,11 +1,11 @@
-# Prevoyant - Claude Code Plugin `v1.4.0`
+# Prevoyant - Claude Code Plugin `v1.3.6`
 
 **Prevoyant** is a [Claude Code](https://claude.ai/code) plugin — an AI agent team that runs a structured, end-to-end developer workflow for Jira tickets. Four modes:
 
 - **Dev Mode** — hand Claude a ticket key and it walks through the full cycle: ticket ingestion → root cause analysis → proposed fix → PDF report → KB update → Bryan's retrospective.
 - **PR Review Mode** — hand Claude a ticket key with the word `review` and Prevoyant's Engineering Panel reviews the code changes on the associated feature branch, producing a structured PDF findings report.
 - **Estimate Mode** — hand Claude a ticket key with the word `estimate` and Prevoyant's Engineering Panel runs Planning Poker. Each engineer scores the ticket across three dimensions (complexity, risk, repetition) drawing on their acquired system knowledge and the shared KB, then votes simultaneously. Structured debate continues until the team reaches unanimous consensus.
-- **KB Review Mode** — run `/prevoyant:dev kb review` (no ticket needed) to process all three knowledge-buildup queues in one pass: Step 13j (KB Flow Analyst proposals), Step 13k (Pattern Miner proposals), Step 13l (Decision Outcome grades). Closes the intelligence loops without consuming a Jira ticket.
+- **KB Review Mode** — run `/prevoyant:dev kb review` (no ticket needed) to process the KB Flow Analyst queue in one pass: Step 13j (KB Flow Analyst proposals → `core-mental-map/`). Closes the intelligence loop without consuming a Jira ticket.
 
 ---
 
@@ -29,7 +29,7 @@ Invoke the skill with a Jira ticket key and Claude runs a structured multi-step 
 12. **Session stats** — elapsed time, actual token usage and cost via codeburn (falls back to estimation if Node.js unavailable)
 13. **PDF report** — full-detail report saved to `CLAUDE_REPORT_DIR`; emailed if `PRX_EMAIL_TO` is set
 14. **Update KB** — write session record; push to shared repo if distributed
-15. **KB buildup steps** — 13j: Sam's Step 13j reviews KB Flow Analyst proposals in `kbflow-pending.md`; 13k: Jordan chairs panel vote on Pattern Miner proposals in `pattern-proposals.md`; 13l: apply CONFIRMED/CONTRADICTED Decision Outcome grades from `decision-outcomes.md` back to KB source files
+15. **KB buildup steps** — 13j: Sam reviews KB Flow Analyst proposals in `kbflow-pending.md`; unanimous panel vote; approved entries written to `core-mental-map/`
 16. **Bryan's retrospective** — Scrum Master audits token spend, flags process friction, proposes one SKILL.md improvement; unanimous team vote; pushes to main after `PRX_SKILL_UPGRADE_MIN_SESSIONS` sessions
 
 ### PR Review Mode — `/prevoyant:dev review PROJ-1234`
@@ -68,6 +68,28 @@ Each engineer draws on their **acquired system knowledge** and the shared KB (`c
 
 ---
 
+## ⚠️ Human Oversight Required
+
+Prevoyant is an AI-assisted development tool. Like all AI systems, it **can and does make mistakes** — misread intent, propose incorrect fixes, draw wrong conclusions from incomplete evidence, or promote an observation that later proves wrong.
+
+**Every output requires human review before it is acted on:**
+
+| What the AI produces | What you must do |
+|---|---|
+| Root cause statement and fix proposal | Read and validate before applying to the branch |
+| PR review findings | Treat as a second opinion — not a final verdict |
+| Estimates | Use as a starting point; team context overrides |
+| KB entries and `[KB+]` markers written at session end | Review the commit diff before pushing |
+| Cortex observations queued for auto-promotion | Check `/dashboard/cortex` regularly; reject anything that looks wrong |
+| Field intel entries promoted via P2P mesh consensus | Verify the finding is factually correct before it becomes KB truth |
+| KB Flow Analyst proposals in `kbflow-pending.md` | Panel vote (Step 13j) exists precisely because the AI can misidentify flows |
+
+**Autonomous features reduce friction, not accountability.** `AUTO_MODE=Y`, Cortex autonomy level 2+, and P2P mesh consensus promotion all reduce the number of manual steps — but they do not remove your responsibility to monitor what enters the shared KB. Set `PRX_CORTEX_AUTONOMY_LEVEL=0` or `1` on a new team while you build confidence in the system's output quality.
+
+> Prevoyant is a force-multiplier for skilled developers, not a replacement for professional engineering judgment. The AI panel debates, proposes, and records — **you decide what ships.**
+
+---
+
 ## Quick Start
 
 ### Step 1 — Clone and run setup (one command)
@@ -102,6 +124,8 @@ The setup script:
 ```
 
 That's it. The plugin is ready.
+
+> **Reminder:** Review every proposed fix, KB entry, and Cortex promotion before accepting it. AI output always requires human judgment. See [Human Oversight Required](#️-human-oversight-required).
 
 ---
 
@@ -205,20 +229,17 @@ Set `PRX_EMAIL_TO` to enable. Leave it unset to disable email entirely.
 
 ### Intelligence Workers (optional)
 
-These workers run autonomously in the background and feed the knowledge-buildup queues consumed by Steps 13j, 13k, and 13l (and KB Review Mode).
+These workers run autonomously in the background and feed the knowledge-buildup queue consumed by Step 13j (and KB Review Mode).
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `PRX_KBFLOW_ENABLED` | `Y` | Set to `Y` to enable the KB Flow Analyst worker. Queries Jira for recent incidents, traces the highest-impact business flows in the codebase, and writes proposed CMM updates to `~/.prevoyant/knowledge-buildup/kbflow-pending.md`. Consumed by Step 13j. |
-| `PRX_PATTERN_MINER_ENABLED` | `Y` | Set to `Y` to enable the Memory Pattern Miner. Scans all seven agents' personal memory files, finds learnings that appear across ≥3 tickets, and proposes `shared/patterns.md` entries to `~/.prevoyant/knowledge-buildup/pattern-proposals.md`. Consumed by Step 13k. |
-| `PRX_DECISION_OUTCOME_ENABLED` | `Y` | Set to `Y` to enable the Decision Outcome Worker. Grades KB decisions `CONFIRMED`, `CONTRADICTED`, or `PENDING` from retro evidence and writes `~/.prevoyant/knowledge-buildup/decision-outcomes.md`. Consumed by Step 13l. |
-| `PRX_STALENESS_ENABLED` | `Y` | Set to `Y` to enable the KB Staleness Scanner. Validates `file:line` references in KB files against the live codebase and marks stale or relocated anchors. |
 
 ### Cortex Intelligence Layer (optional)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PRX_CORTEX_ENABLED` | `Y` | Set to `Y` to enable the Cortex layer. Distils the KB into 9 curated fact files (architecture, business-rules, patterns, decisions, hotspots, glossary, observations, autonomy-queue, session-memory) read by agents at Step 0. |
+| `PRX_CORTEX_ENABLED` | `Y` (default) | Enables the Cortex layer. Distils the KB into 9 curated fact files (architecture, business-rules, patterns, decisions, hotspots, glossary, observations, autonomy-queue, session-memory) read by agents at Step 0. |
 | `PRX_CORTEX_AUTONOMY_LEVEL` | `2` | `0` — disabled (no auto-promotion). `1` — tracking only (builds LMDB observation store, no promotion). `2` — confidence-gated: LMDB observations with ≥3 confirmations and ≥2-day age are queued for KB promotion after a 24 h review window. `3` — fully automatic (no review window). |
 | `PRX_CORTEX_AUTO_PROMOTE_THRESHOLD` | `3` | Number of cross-session confirmations required before an LMDB observation is queued for auto-promotion (level 2+). |
 | `PRX_CORTEX_AUTO_PROMOTE_DELAY_HOURS` | `24` | Hours in the review window before a queued observation is actually promoted to KB (level 2+). |
@@ -267,19 +288,19 @@ Connects Prevoyant to a local [Hermes](https://github.com/nousresearch/hermes-ag
 | `PRX_HERMES_GATEWAY_URL` | `http://localhost:8080` | Base URL of the Hermes gateway process. Prevoyant POSTs job results here so Hermes can deliver them to Telegram, Slack, Discord, etc. |
 | `PRX_HERMES_SECRET` | — | Shared secret Hermes must send in the `X-Hermes-Secret` header when calling `/internal/enqueue`. Leave blank to skip validation (trusted network only). |
 
-### P2P KB Sync + Collective Intelligence Mesh (optional)
+### P2P KB Sync + Collective Intelligence Mesh
 
-Peer-to-peer knowledge-base propagation via libp2p. When `PRX_P2P_ENABLED=Y`, the server starts a libp2p node that discovers peers via mDNS (LAN) and optional bootstrap nodes, then broadcasts KB changes over GossipSub — no Redis or Upstash account needed. When P2P is active, the Redis/Upstash real-time sync fields in Settings are automatically disabled.
+Peer-to-peer knowledge-base propagation via libp2p — the primary KB sync mechanism. The server starts a libp2p node that discovers peers via mDNS (LAN) and public bootstrap nodes, then broadcasts KB changes directly over GossipSub. No external service or account required.
 
 When `PRX_CORTEX_P2P_ENABLED=Y`, extends into the **Collective Intelligence Mesh**: every node's Cortex observations are broadcast across all connected nodes, confirmed by cross-node evidence, and auto-promoted to KB when consensus thresholds are met. New nodes joining the mesh instantly inherit the accumulated intelligence of all connected nodes via the `/prevoyant/cortex-query/1` stream protocol.
 
 → **[Full documentation: docs/P2P.md](docs/P2P.md)**
 
-Set `PRX_P2P_ENABLED=Y` to activate Tier 1 (KB sync). Add `PRX_CORTEX_P2P_ENABLED=Y` for Tier 2 (intelligence mesh).
+All three tiers are **active by default** on a fresh install: `PRX_P2P_ENABLED=Y` (KB sync), `PRX_CORTEX_ENABLED=Y` (intelligence layer), and `PRX_CORTEX_P2P_ENABLED=Y` (mesh). Set any to `N` to disable.
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PRX_P2P_ENABLED` | `N` | Set to `Y` to start the libp2p node and enable P2P KB sync. Hot-toggled from Settings — no restart required. |
+| `PRX_P2P_ENABLED` | `Y` | Set to `Y` to start the libp2p node and enable P2P KB sync. Hot-toggled from Settings — no restart required. |
 | `PRX_P2P_PORT` | `7001` | TCP port the libp2p node listens on. Must be open and reachable by peers. |
 | `PRX_P2P_MDNS_ENABLED` | `Y` | Set to `Y` to enable mDNS LAN peer discovery. Disable on networks where mDNS is blocked. |
 | `PRX_P2P_BOOTSTRAP_NODES` | — | Comma-separated list of bootstrap node multiaddrs for WAN peer discovery, e.g. `/ip4/1.2.3.4/tcp/7001/p2p/<peerId>`. Leave blank to rely on mDNS only. |
@@ -294,11 +315,11 @@ Set `PRX_P2P_ENABLED=Y` to activate Tier 1 (KB sync). Add `PRX_CORTEX_P2P_ENABLE
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `PRX_CORTEX_P2P_ENABLED` | `N` | Set to `Y` to enable the Collective Intelligence Mesh. Broadcasts Cortex observations across nodes; new nodes inherit the network's full observation cache on first connect. Requires `PRX_P2P_ENABLED=Y` and `PRX_CORTEX_ENABLED=Y`. |
-| `PRX_CORTEX_QUERY_ENABLED` | `N` | Expose `GET /dashboard/cortex/network/query` for agent Layer 0c queries. |
+| `PRX_CORTEX_P2P_ENABLED` | `Y` | Set to `Y` to enable the Collective Intelligence Mesh. Broadcasts Cortex observations across nodes; new nodes inherit the network's full observation cache on first connect. Requires `PRX_P2P_ENABLED=Y` and `PRX_CORTEX_ENABLED=Y`. |
+| `PRX_CORTEX_QUERY_ENABLED` | `Y` | Expose `GET /dashboard/cortex/network/query` for agent Layer 0c queries. |
 | `PRX_CORTEX_P2P_CONSENSUS_PROMOTE_PCT` | `0` | Minimum % of connected peers that must have confirmed an observation before it can auto-promote to KB. `0` disables the peer-consensus gate (local `PRX_CORTEX_AUTO_PROMOTE_THRESHOLD` still applies). |
 
-> **Precedence:** when `PRX_P2P_ENABLED=Y`, `startKbSync()` (Redis/Upstash) is skipped automatically. `PRX_REALTIME_KB_SYNC`, `PRX_UPSTASH_REDIS_URL`, `PRX_UPSTASH_REDIS_TOKEN`, and `PRX_KB_SYNC_POLL_SECS` have no effect while P2P is active. `PRX_KB_SYNC_TRIGGER`, `PRX_KB_SYNC_MACHINE`, and `PRX_KB_SYNC_DEBOUNCE_SECS` are still read by the P2P worker.
+> `PRX_KB_SYNC_TRIGGER`, `PRX_KB_SYNC_MACHINE`, and `PRX_KB_SYNC_DEBOUNCE_SECS` are read by the P2P worker to control outbound sync behaviour.
 
 ### Notifications (optional)
 
@@ -567,8 +588,6 @@ In `KB_MODE=distributed` all files on disk are `.md.enc`; the plain `.md` files 
 |------|-----------|-------------|
 | `kbflow-pending.md` | KB Flow Analyst (Javed worker) | Step 13j — Sam chairs panel vote; approved entries written to `core-mental-map/` |
 | `kbflow-sessions.md` | KB Flow Analyst | Run log only — not consumed by skill steps |
-| `pattern-proposals.md` | Memory Pattern Miner worker | Step 13k — Jordan chairs panel vote; approved entries written to `shared/patterns.md` |
-| `decision-outcomes.md` | Decision Outcome Worker | Step 13l — grades applied back to KB source files (CONFIRMED increments counters; CONTRADICTED adds warning blocks) |
 
 `INDEX.md` holds two sections:
 - **Memory Palace** — vivid trigger phrases mapped to system rooms; primary retrieval (≤ 3 reads regardless of KB size)
@@ -582,7 +601,7 @@ In `KB_MODE=distributed` all files on disk are `.md.enc`; the plain `.md` files 
 | `core-mental-map/` | Codebase | Architecture, data flows, tech stack, gotchas (compressed facts) |
 | `personas/memory/` | Sessions | Each agent's personal memory — observations, calibration, surprises — one file per session per agent |
 | `lessons-learned/` | Developers | Per-person sprint retrospective entries: pitfalls and hard-won insights |
-| `~/.prevoyant/knowledge-buildup/` *(outside KB tree)* | KB Flow Analyst · Pattern Miner · Decision Outcome Worker | Three buildup queues (`kbflow-pending.md`, `pattern-proposals.md`, `decision-outcomes.md`) + run log — never committed to the KB repo |
+| `~/.prevoyant/knowledge-buildup/` *(outside KB tree)* | KB Flow Analyst | Buildup queue (`kbflow-pending.md`) + run log — never committed to the KB repo |
 
 Every session starts by reading relevant `core-mental-map/` sections, all `lessons-learned/` files, and the last five personal memory files for each agent. Agents emit `[CMM+]` markers for codebase facts and `[LL+]` markers for lessons; both are written back to the KB at the end of every session. Each agent also writes a personal memory file (Step 13i) capturing what they observed, predicted, and got surprised by — so agents get sharper with every session they participate in.
 
@@ -673,16 +692,13 @@ An optional Node.js service that runs alongside the plugin as an always-on ambie
 - **Pipeline dashboard** — live job queue with stop/kill, session history, cost tracking (30-day sparkline), and PDF report viewer
 - **Cortex intelligence layer** — always-on, self-updating distillation of the KB into 9 curated fact files; backed by a 3-tier fast memory store (LRU hot cache → LMDB mmap disk store → JSONL fallback) for sub-millisecond reads and crash-proof persistence; agents read the facts in Step 0 instead of trawling raw KB files. Autonomy level 2 (confidence-gated): LMDB observations with ≥3 confirmations and ≥2-day age are queued for auto-promotion after a 24 h review window. **→ [docs/CORTEX.md](docs/CORTEX.md)**
 - **KB Flow Analyst** — autonomous background worker that queries Jira for recent incidents, identifies the highest-impact business flows, traces them in the codebase, and proposes Core Mental Map updates to `~/.prevoyant/knowledge-buildup/kbflow-pending.md` for team vote at Step 13j; manageable via the Knowledge Builder dashboard page
-- **Memory Pattern Miner** — scans all seven agents' personal memory files after each run, finds learnings that appear across three or more tickets, and writes proposed `shared/patterns.md` entries (with frequency evidence) to `~/.prevoyant/knowledge-buildup/pattern-proposals.md` for Step 13k panel vote
-- **Decision Outcome Worker** — grades every KB decision entry `CONFIRMED`, `CONTRADICTED`, or `PENDING` by correlating it against retro evidence from recent sessions; writes grades to `~/.prevoyant/knowledge-buildup/decision-outcomes.md`; Step 13l applies grades back to the KB source files (adds warning blocks for contradicted decisions, increments `confirmed:` counters, adds `[KB+ ARCH]` markers)
-- **KB Staleness Scanner** — validates `file:line` references in KB files against the live codebase; marks stale or relocated anchors
 - **Health watchdog** — polls `/health` on a configurable interval and emails on DOWN/UP transitions
 - **Ticket watcher** — monitors watched Jira tickets and sends digest alerts on status changes
 - **Disk monitor** — tracks `~/.prevoyant/` disk usage against a configurable quota; alerts at threshold and runs periodic cleanup (sessions, server logs, watch logs, KB Flow Analyst run logs)
 - **Update checker** — polls GitHub for new plugin releases and surfaces an upgrade prompt on the dashboard
 - **WhatsApp notifications** — sends ticket and report events via WaSender API (zero new dependencies)
-- **P2P KB sync + Collective Intelligence Mesh** — optional libp2p transport layer (TCP · Noise · Yamux · GossipSub) for direct machine-to-machine KB propagation without Redis or Upstash; supports trickle mode, AES-256-GCM encryption, mDNS LAN discovery, and RSA-2048 node identity. When `PRX_CORTEX_P2P_ENABLED=Y`, extends into a Collective Intelligence Mesh: Cortex observations are broadcast across all connected nodes, confirmed by cross-node evidence, and auto-promoted to KB when consensus thresholds are met — new nodes inherit the full network's accumulated intelligence on first connect. Dashboard shows live peer count, animated mesh topology, and sync counters. Takes precedence over Redis sync when active. **→ [docs/P2P.md](docs/P2P.md)**
-- **Redis memory index** — dual-backend agent memory (Redis primary, JSON fallback) for KB query enrichment
+- **P2P KB sync + Collective Intelligence Mesh** — libp2p transport layer (TCP · Noise · Yamux · GossipSub) for direct machine-to-machine KB propagation; active by default; supports trickle mode, AES-256-GCM encryption, mDNS LAN discovery, and RSA-2048 node identity. When `PRX_CORTEX_P2P_ENABLED=Y`, extends into a Collective Intelligence Mesh: Cortex observations are broadcast across all connected nodes, confirmed by cross-node evidence, and auto-promoted to KB when consensus thresholds are met — new nodes inherit the full network's accumulated intelligence on first connect. Dashboard shows live peer count, animated mesh topology, and sync counters. **→ [docs/P2P.md](docs/P2P.md)**
+- **Agent memory index** — JSON file-based index (`~/.prevoyant/memory/index.json`) for KB query enrichment; zero-dependency, zero-setup
 - **Session persistence** — state survives server restarts; automatic PDF report discovery
 
 **Running it 24/7:** the server is designed to run continuously. A macOS launchd plist (`scripts/com.prevoyant.server.plist`) and Linux systemd unit (`scripts/prevoyant-server.service`) are provided for auto-start and crash restart.
@@ -712,8 +728,6 @@ An optional Node.js service that runs alongside the plugin as an always-on ambie
 | **12** | Generate PDF report → save to `CLAUDE_REPORT_DIR`; email if `PRX_EMAIL_TO` is set |
 | **13** | Write session record to KB; push if distributed |
 | **13j** | Sam reviews KB Flow Analyst proposals (`kbflow-pending.md`) — unanimous panel vote; approved entries written to `core-mental-map/` |
-| **13k** | Jordan chairs panel vote on Pattern Miner proposals (`pattern-proposals.md`) — approved entries promoted to `shared/patterns.md` with frequency counter |
-| **13l** | Apply Decision Outcome grades (`decision-outcomes.md`) — CONFIRMED: increments `confirmed:`, adds `[KB+ ARCH]`; CONTRADICTED: inserts warning block with `[KB+ RISK]`; PENDING: skipped |
 
 ### PR Review Mode (10 steps)
 
@@ -749,13 +763,13 @@ Story points = **Complexity + Risk + Repetition** (not hours). Scale: 1 · 2 · 
 
 ### KB Review Mode (3 stages) — `/prevoyant:dev kb review`
 
-Standalone mode with no Jira ticket. Processes all three knowledge-buildup queues in one pass.
+Standalone mode with no Jira ticket. Processes the KB Flow Analyst queue.
 
 | Stage | What happens |
 |-------|-------------|
-| **KR0** | Count pending entries across all three buildup files (`kbflow-pending.md`, `pattern-proposals.md`, `decision-outcomes.md`); skip if all are empty |
-| **KR1** | Run all three review steps in sequence — KR1-a: Step 13j (KB Flow Analyst proposals); KR1-b: Step 13k (Pattern Miner proposals); KR1-c: Step 13l (Decision Outcome apply) |
-| **KR2** | Combined completion block — reports counts promoted, confirmed, contradicted, and skipped across all three reviews |
+| **KR0** | Count pending entries in `kbflow-pending.md`; skip if empty |
+| **KR1** | Step 13j — Sam chairs unanimous panel vote on KB Flow Analyst proposals; approved entries written to `core-mental-map/` |
+| **KR2** | Completion block — reports counts promoted and skipped |
 
 ---
 
@@ -797,14 +811,12 @@ Standalone mode with no Jira ticket. Processes all three knowledge-buildup queue
 │   │   ├── activityLog.js        # Activity event recorder and reader
 │   │   ├── stages.json           # Pipeline stage definitions for all modes
 │   │   └── stage-instructions/   # Per-stage Claude prompt overrides (runtime-generated)
-│   ├── kb/                       # KB query, sync, and cache layer
-│   │   ├── kbCache.js            # In-memory KB cache (invalidated on sync)
-│   │   ├── kbQuery.js            # Semantic KB query with indexed memory retrieval
-│   │   └── kbSync.js             # Real-time KB sync core (Redis doorbell + Git)
-│   ├── memory/                   # Indexed agent memory — dual-backend (JSON + Redis)
-│   │   ├── memoryAdapter.js      # Unified adapter: Redis primary, JSON fallback
-│   │   ├── redisMemory.js        # Redis backend (PRX_REDIS_ENABLED)
-│   │   └── jsonMemory.js         # JSON backend (PRX_MEMORY_INDEX_ENABLED)
+│   ├── kb/                       # KB query and cache layer
+│   │   ├── kbCache.js            # In-memory KB cache (invalidated on P2P sync)
+│   │   └── kbQuery.js            # Semantic KB query with indexed memory retrieval
+│   ├── memory/                   # Indexed agent memory — JSON file-based
+│   │   ├── memoryAdapter.js      # Memory adapter: delegates to JSON backend
+│   │   └── jsonMemory.js         # JSON index at ~/.prevoyant/memory/index.json
 │   ├── notifications/            # Notification dispatchers
 │   │   ├── email.js              # Email stub (wired via activityLog)
 │   │   ├── whatsapp.js           # WaSenderAPI WhatsApp client (zero new deps)
@@ -822,10 +834,6 @@ Standalone mode with no Jira ticket. Processes all three knowledge-buildup queue
 │   │   ├── healthMonitor.js      # Watchdog: polls /health, emails on DOWN/UP
 │   │   ├── kbFlowAnalystWorker.js # Autonomous KB Flow Analyst: Jira-driven CMM proposals → kbflow-pending.md
 │   │   ├── kbP2pWorker.js        # P2P KB sync worker: libp2p node, GossipSub broadcast, trickle/bulk transfer
-│   │   ├── kbSyncWorker.js       # KB sync worker: Redis XREAD poll loop
-│   │   ├── kbStalenessScanner.js # Validates file:line KB refs against live codebase
-│   │   ├── memoryPatternMinerWorker.js # Scans agent memories → pattern-proposals.md
-│   │   ├── decisionOutcomeWorker.js    # Grades KB decisions CONFIRMED/CONTRADICTED → decision-outcomes.md
 │   │   ├── ticketWatcherWorker.js # Jira ticket watcher: scheduled digest polls
 │   │   └── updateChecker.js      # Checks GitHub for plugin updates
 │   └── scripts/
@@ -1449,16 +1457,16 @@ curl -sS -X POST http://localhost:3000/internal/kb/insights \
   -H "X-Hermes-Secret: test-secret" \
   -d @- <<'EOF'
 {
-  "title": "Recurring Redis auth failure on Upstash after May 8 image bump",
-  "body": "## What we see\n\nFive tickets (PROJ-1234, PROJ-1456, PROJ-2003, PROJ-2200, PROJ-2241) all show `WRONGPASS invalid username-password pair` on the redis-memory worker at startup, beginning 2026-05-08.\n\n## Root cause\n\nUpstash rolled out a new redis image (`redis:7.2.5-r2`) that requires a different auth handshake.\n\n## Recommended action\n\nPin to the previous tag in `server/memory/redisMemory.js` until upstream patches.",
+  "title": "GossipSub message backpressure causes silent drops on slow peers",
+  "body": "## What we see\n\nFive tickets (PROJ-1234, PROJ-1456, PROJ-2003, PROJ-2200, PROJ-2241) all show KB files missing on a peer after sync, beginning 2026-05-08.\n\n## Root cause\n\nPeers with high CPU load fall behind the GossipSub publish rate; messages are silently dropped after the internal queue overflows.\n\n## Recommended action\n\nEnable trickle mode (`PRX_P2P_TRICKLE=Y`) on high-latency or low-throughput links; it self-tunes batch size and inter-batch delay based on measured RTT.",
   "tickets": ["PROJ-1234", "PROJ-1456", "PROJ-2003", "PROJ-2200", "PROJ-2241"],
   "category": "bug-pattern",
-  "tags": ["redis", "auth", "upstash"],
+  "tags": ["p2p", "gossipsub", "sync"],
   "confidence": "high",
   "self_assessment": {
     "score": 9,
     "criteria": { "specificity": 2, "evidence": 2, "actionability": 2, "originality": 2, "clarity": 1 },
-    "reason": "5 tickets sharing WRONGPASS error; specific image tag named; clear action."
+    "reason": "5 tickets sharing same symptom; root cause named; actionable fix with specific config flag."
   }
 }
 EOF
@@ -1675,6 +1683,14 @@ rm -rf ~/.prevoyant/reports   # or the path set in CLAUDE_REPORT_DIR
 - **Knowledge Builder — `PRX_JIRA_PROJECT` scope enforced on all Jira calls:** previously only the Step J2 initial query included `project = IV AND ...`; Claude's subsequent Jira MCP calls (follow-up lookups, linked issues, subtasks) had no project filter and pulled tickets from other projects. Fixed by adding a `HARD CONSTRAINT` in the prompt preamble and a per-step reminder at Step J2 — both conditional on `PRX_JIRA_PROJECT` being set — that require every Jira MCP call in the session to include the project scope.
 
 - **New files:** `server/runner/fieldIntelAgent.js` (context builder, KB writer, AI synthesiser, mesh validator, session store), `server/notifications/email.js` (reusable SMTP module), `server/notifications/browserQueue.js` (in-memory notification queue for browser polling), `docs/FIELD_ASSISTANT.md`, `plugin/config/personas/field-engineer.md`.
+
+- **P2P is now the primary KB sync mechanism — Redis/Upstash removed:** `server/kb/kbSync.js`, `server/workers/kbSyncWorker.js`, and `server/memory/redisMemory.js` removed. `memoryAdapter.js` simplified to JSON-only. `PRX_REALTIME_KB_SYNC`, `PRX_UPSTASH_REDIS_URL`, `PRX_UPSTASH_REDIS_TOKEN`, `PRX_KB_SYNC_POLL_SECS`, `PRX_REDIS_ENABLED`, `PRX_REDIS_URL`, `PRX_REDIS_PASSWORD`, `PRX_REDIS_PREFIX`, and `PRX_REDIS_TTL_DAYS` removed from `.env`. `PRX_P2P_ENABLED` defaults to `Y`. Agent memory index remains JSON-backed (`~/.prevoyant/memory/index.json`). Discovery falls back to mDNS + public IPFS bootstrap nodes.
+
+- **Four advanced workers removed:** Decision-Outcome Linker (`decisionOutcomeWorker.js`), Stale Branch Detector (`staleBranchWorker.js`), Memory Pattern Miner (`memoryPatternMinerWorker.js`), and KB Staleness Scanner (`kbStalenessWorker.js`) removed. KB Review Mode now processes Step 13j (KB Flow Analyst) only. Steps 13k and 13l removed from the dev skill workflow.
+
+- **P2P reconcile routing fix:** the `reconcile-needed` main-thread roundtrip was a dead loop — `msg.peerId` was always `undefined` and the worker used `peers[0]` regardless. Fixed by passing the sync callback directly into `applyReconcile()` so delta sync and cortex dump are triggered inline with the correct `libp2pNode` scope. Dead `trigger-reconcile-sync` / `trigger-cortex-dump` message handlers removed.
+
+- **Cortex broadcast peer-connection guard:** `cortex-observation-written` now checks `p2pBridge.getState().peers.length > 0` before posting a `cortex-broadcast` message — no-ops silently when no peers are connected rather than queueing into a disconnected worker.
 
 ### v1.3.5 — Collective Intelligence Mesh
 
